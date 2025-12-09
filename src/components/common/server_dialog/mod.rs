@@ -21,7 +21,19 @@ pub enum DialogSection {
 pub struct ServerDialogState {
     pub visible: bool,
     pub is_edit: bool,
+    /// 编辑模式下的服务器 ID
+    pub edit_server_id: Option<String>,
+    /// 待加载编辑数据标记（在下一次 ensure_inputs_created 时加载）
+    pub pending_load_edit_data: bool,
     pub current_section: DialogSection,
+    /// 标记是否需要刷新服务器列表（保存成功后设置为 true）
+    pub needs_refresh: bool,
+    // 分组选择
+    pub group_input: Option<Entity<InputState>>,
+    pub show_group_dropdown: bool,
+    pub available_groups: Vec<String>,
+    /// 待应用到输入框的分组值（由下拉选中时设置）
+    pub pending_group_value: Option<String>,
     // 表单 InputState 实体（延迟创建）
     pub label_input: Option<Entity<InputState>>,
     pub host_input: Option<Entity<InputState>>,
@@ -49,7 +61,14 @@ impl Default for ServerDialogState {
         Self {
             visible: false,
             is_edit: false,
+            edit_server_id: None,
+            pending_load_edit_data: false,
             current_section: DialogSection::BasicInfo,
+            needs_refresh: false,
+            group_input: None,
+            show_group_dropdown: false,
+            available_groups: Vec::new(),
+            pending_group_value: None,
             label_input: None,
             host_input: None,
             port_input: None,
@@ -73,6 +92,24 @@ impl Default for ServerDialogState {
 impl ServerDialogState {
     /// 确保输入框已创建（在有 window 上下文时调用）
     pub fn ensure_inputs_created(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // 分组输入
+        if self.group_input.is_none() {
+            self.group_input =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("选择或输入分组名称")));
+            // 加载可用分组
+            if let Ok(groups) = storage::get_groups() {
+                self.available_groups = groups.into_iter().map(|g| g.name).collect();
+            }
+        }
+
+        // 应用待设置的分组值
+        if let Some(value) = self.pending_group_value.take() {
+            if let Some(input) = &self.group_input {
+                input.update(cx, |input_state, cx| {
+                    input_state.set_value(value, window, cx);
+                });
+            }
+        }
         if self.label_input.is_none() {
             self.label_input =
                 Some(cx.new(|cx| InputState::new(window, cx).placeholder("请输入服务器名称")));
@@ -135,16 +172,126 @@ impl ServerDialogState {
                     .masked(true)
             }));
         }
+
+        // 如果是编辑模式且有待加载标记，加载服务器数据
+        if self.pending_load_edit_data {
+            self.pending_load_edit_data = false;
+            if let Some(server_id) = &self.edit_server_id {
+                if let Ok(config) = storage::load_servers() {
+                    if let Some(server_data) = config.servers.iter().find(|s| &s.id == server_id) {
+                        // 加载分组名称
+                        if let Some(group_id) = &server_data.group_id {
+                            if let Some(group) = config.groups.iter().find(|g| &g.id == group_id) {
+                                if let Some(input) = &self.group_input {
+                                    input.update(cx, |s, cx| {
+                                        s.set_value(group.name.clone(), window, cx)
+                                    });
+                                }
+                            }
+                        }
+                        // 加载基本信息
+                        if let Some(input) = &self.label_input {
+                            input.update(cx, |s, cx| {
+                                s.set_value(server_data.label.clone(), window, cx)
+                            });
+                        }
+                        if let Some(input) = &self.host_input {
+                            input.update(cx, |s, cx| {
+                                s.set_value(server_data.host.clone(), window, cx)
+                            });
+                        }
+                        if let Some(input) = &self.port_input {
+                            input.update(cx, |s, cx| {
+                                s.set_value(server_data.port.to_string(), window, cx)
+                            });
+                        }
+                        if let Some(input) = &self.username_input {
+                            input.update(cx, |s, cx| {
+                                s.set_value(server_data.username.clone(), window, cx)
+                            });
+                        }
+                        // 设置认证类型
+                        self.auth_type = server_data.auth_type.clone();
+                        // 加载密码或私钥
+                        if let Some(pwd) = &server_data.password_encrypted {
+                            if let Some(input) = &self.password_input {
+                                input.update(cx, |s, cx| s.set_value(pwd.clone(), window, cx));
+                            }
+                        }
+                        if let Some(key_path) = &server_data.private_key_path {
+                            if let Some(input) = &self.private_key_input {
+                                input.update(cx, |s, cx| s.set_value(key_path.clone(), window, cx));
+                            }
+                        }
+                        if let Some(passphrase) = &server_data.key_passphrase_encrypted {
+                            if let Some(input) = &self.passphrase_input {
+                                input.update(cx, |s, cx| {
+                                    s.set_value(passphrase.clone(), window, cx)
+                                });
+                            }
+                        }
+                        // 加载跳板机设置
+                        if let Some(jump_host) = &server_data.jump_host_id {
+                            self.enable_jump_host = true;
+                            if let Some(input) = &self.jump_host_input {
+                                input
+                                    .update(cx, |s, cx| s.set_value(jump_host.clone(), window, cx));
+                            }
+                        }
+                        // 加载代理设置
+                        if let Some(proxy) = &server_data.proxy {
+                            self.enable_proxy = proxy.enabled;
+                            self.proxy_type = proxy.proxy_type.clone();
+                            if let Some(input) = &self.proxy_host_input {
+                                input.update(cx, |s, cx| {
+                                    s.set_value(proxy.host.clone(), window, cx)
+                                });
+                            }
+                            if let Some(input) = &self.proxy_port_input {
+                                input.update(cx, |s, cx| {
+                                    s.set_value(proxy.port.to_string(), window, cx)
+                                });
+                            }
+                            if let Some(username) = &proxy.username {
+                                if let Some(input) = &self.proxy_username_input {
+                                    input.update(cx, |s, cx| {
+                                        s.set_value(username.clone(), window, cx)
+                                    });
+                                }
+                            }
+                            if let Some(password) = &proxy.password_encrypted {
+                                if let Some(input) = &self.proxy_password_input {
+                                    input.update(cx, |s, cx| {
+                                        s.set_value(password.clone(), window, cx)
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn open_add(&mut self) {
         self.visible = true;
         self.is_edit = false;
+        self.edit_server_id = None;
+        self.current_section = DialogSection::BasicInfo;
+    }
+
+    /// 打开编辑服务器弹窗
+    pub fn open_edit(&mut self, server_id: String) {
+        self.visible = true;
+        self.is_edit = true;
+        self.edit_server_id = Some(server_id);
+        self.pending_load_edit_data = true;
         self.current_section = DialogSection::BasicInfo;
     }
 
     pub fn close(&mut self) {
         self.visible = false;
+        self.edit_server_id = None;
     }
 
     /// 从表单状态提取 ServerData
@@ -156,6 +303,7 @@ impl ServerDialogState {
                 .unwrap_or_default()
         };
 
+        let group_name = get_text(&self.group_input);
         let label = get_text(&self.label_input);
         let host = get_text(&self.host_input);
         let port_str = get_text(&self.port_input);
@@ -171,9 +319,34 @@ impl ServerDialogState {
         let proxy_username = get_text(&self.proxy_username_input);
         let proxy_password = get_text(&self.proxy_password_input);
 
+        // 根据分组名称查找 group_id，如果不存在则使用分组名称作为新 ID
+        let group_id = if group_name.is_empty() {
+            None
+        } else {
+            // 尝试从已有分组中查找
+            if let Ok(groups) = storage::get_groups() {
+                groups
+                    .iter()
+                    .find(|g| g.name == group_name)
+                    .map(|g| g.id.clone())
+                    .or_else(|| Some(group_name.clone()))
+            } else {
+                Some(group_name.clone())
+            }
+        };
+
+        // 如果是编辑模式，保留原始 ID，否则生成新 ID
+        let id = if self.is_edit {
+            self.edit_server_id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        };
+
         ServerData {
-            id: uuid::Uuid::new_v4().to_string(),
-            group_id: None,
+            id,
+            group_id,
             label,
             host,
             port,
@@ -259,10 +432,70 @@ pub fn render_server_dialog_overlay(
         .child(render_dialog_content(state_for_content, cx))
 }
 
+/// 渲染分组下拉菜单覆盖层（在对话框最顶层）
+fn render_group_dropdown_overlay(
+    state: Entity<ServerDialogState>,
+    cx: &App,
+) -> Option<impl IntoElement> {
+    let state_read = state.read(cx);
+    let show_dropdown = state_read.show_group_dropdown;
+    let available_groups = state_read.available_groups.clone();
+
+    if !show_dropdown || available_groups.is_empty() {
+        return None;
+    }
+
+    let state_for_dropdown = state.clone();
+
+    Some(
+        div()
+            .id("group-dropdown-overlay")
+            .absolute()
+            // 定位到对话框内分组输入框下方
+            // 左侧菜单 180px + 右侧内边距
+            .left(px(180. + 24. - 8.))
+            // 标题栏高度 56px + 表单内边距 + 分组标签和输入框高度
+            .top(px(56. + 24. + 24. + 32. + 4.)) // 约 140px
+            // 与输入框宽度一致
+            .w(px(700. - 180. - 48. - 32. + 8.))
+            .bg(rgb(0xffffff))
+            .border_1()
+            .border_color(rgb(0xe2e8f0))
+            .rounded_md()
+            .shadow_lg()
+            .max_h(px(200.))
+            .children(available_groups.into_iter().map(move |group_name| {
+                let state_for_select = state_for_dropdown.clone();
+                let group_name_for_display = group_name.clone();
+                let group_name_for_click = group_name.clone();
+                div()
+                    .id(SharedString::from(format!("group-overlay-{}", group_name)))
+                    .px_3()
+                    .py_2()
+                    .bg(rgb(0xffffff))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(0xf1f5f9)))
+                    .on_click(move |_, _, cx| {
+                        state_for_select.update(cx, |s, _| {
+                            s.pending_group_value = Some(group_name_for_click.clone());
+                            s.show_group_dropdown = false;
+                        });
+                    })
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0x374151))
+                            .child(group_name_for_display),
+                    )
+            })),
+    )
+}
+
 /// 渲染弹窗内容
 fn render_dialog_content(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
     let state_for_section = state.clone();
     let state_for_cancel = state.clone();
+    let state_for_dropdown = state.clone();
 
     div()
         .id("server-dialog-content")
@@ -272,6 +505,7 @@ fn render_dialog_content(state: Entity<ServerDialogState>, cx: &App) -> impl Int
         .rounded_lg()
         .shadow_lg()
         .flex()
+        .relative() // 添加 relative 使下拉菜单相对于此容器定位
         .overflow_hidden()
         // 阻止鼠标事件传播到底层的遮罩
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
@@ -279,6 +513,8 @@ fn render_dialog_content(state: Entity<ServerDialogState>, cx: &App) -> impl Int
         })
         .child(render_left_menu(state_for_section))
         .child(render_right_content(state, state_for_cancel, cx))
+        // 下拉菜单覆盖层 - 在对话框内容最后渲染，确保在最顶层
+        .children(render_group_dropdown_overlay(state_for_dropdown, cx))
 }
 
 /// 渲染左侧导航菜单
@@ -400,6 +636,14 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
     let state_read = state.read(cx);
     let auth_type = state_read.auth_type.clone();
 
+    // 分组输入框
+    let _group_input_entity = state_read.group_input.clone();
+    let group_input = if let Some(input) = &state_read.group_input {
+        Input::new(input).into_any_element()
+    } else {
+        div().child("加载中...").into_any_element()
+    };
+
     // 预先准备输入框元素
     let label_input = if let Some(input) = &state_read.label_input {
         Input::new(input).into_any_element()
@@ -443,10 +687,49 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
         div().child("加载中...").into_any_element()
     };
 
+    let state_for_dropdown_toggle = state.clone();
+
     div()
         .flex()
         .flex_col()
         .gap_3()
+        // 服务器分组（第一个选项）
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .relative()
+                .child(render_form_label("服务器分组", icons::FOLDER))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().flex_1().child(group_input))
+                        .child(
+                            // 下拉箭头按钮
+                            div()
+                                .id("group-dropdown-toggle")
+                                .w(px(32.))
+                                .h(px(32.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(rgb(0xd1d5db))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(0xf3f4f6)))
+                                .on_click(move |_, _, cx| {
+                                    state_for_dropdown_toggle.update(cx, |s, _| {
+                                        s.show_group_dropdown = !s.show_group_dropdown;
+                                    });
+                                })
+                                .child(render_icon(icons::CHEVRON_DOWN, rgb(0x64748b).into())),
+                        ),
+                ), // 下拉菜单已移至对话框层级渲染 (render_group_dropdown_overlay)
+        )
         // 服务器标签
         .child(
             div()
@@ -891,8 +1174,9 @@ fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl Int
     let state_for_cancel = state.clone();
     let state_for_save = state.clone();
 
-    // 提前读取表单数据
+    // 提前读取表单数据和编辑模式状态
     let server_data = state.read(cx).to_server_data(cx);
+    let is_edit = state.read(cx).is_edit;
 
     div()
         .h(px(64.))
@@ -932,12 +1216,24 @@ fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl Int
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(0x2563eb)))
                 .on_click(move |_, _, cx| {
-                    // 保存服务器数据
-                    if let Err(e) = storage::add_server(server_data.clone()) {
-                        eprintln!("保存服务器失败: {:?}", e);
+                    // 根据是新增还是编辑模式调用不同的存储函数
+                    let result = if is_edit {
+                        storage::update_server(server_data.clone())
+                    } else {
+                        storage::add_server(server_data.clone())
+                    };
+                    match result {
+                        Ok(_) => {
+                            // 标记需要刷新，然后关闭弹窗
+                            state_for_save.update(cx, |s, _| {
+                                s.needs_refresh = true;
+                                s.close();
+                            });
+                        }
+                        Err(e) => {
+                            eprintln!("保存服务器失败: {:?}", e);
+                        }
                     }
-                    // 关闭弹窗
-                    state_for_save.update(cx, |s, _| s.close());
                 })
                 .child(div().text_sm().text_color(rgb(0xffffff)).child("保存")),
         )

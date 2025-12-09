@@ -6,6 +6,7 @@ use crate::components::common::icon::render_icon;
 use crate::components::common::server_dialog::ServerDialogState;
 use crate::constants::icons;
 use crate::models::{Server, ServerGroup};
+use crate::services::storage;
 
 /// 视图模式
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -27,6 +28,9 @@ pub fn render_hosts_content(
     view_state: Entity<ViewModeState>,
     dialog_state: Entity<ServerDialogState>,
 ) -> impl IntoElement {
+    let dialog_state_for_list = dialog_state.clone();
+    let dialog_state_for_card = dialog_state.clone();
+
     div()
         .flex_1()
         .h_full()
@@ -50,8 +54,12 @@ pub fn render_hosts_content(
                 .px_6()
                 .pb_6()
                 .child(match view_mode {
-                    ViewMode::List => render_list_view(server_groups).into_any_element(),
-                    ViewMode::Card => render_card_view(server_groups).into_any_element(),
+                    ViewMode::List => {
+                        render_list_view(server_groups, dialog_state_for_list).into_any_element()
+                    }
+                    ViewMode::Card => {
+                        render_card_view(server_groups, dialog_state_for_card).into_any_element()
+                    }
                 }),
         )
 }
@@ -176,27 +184,45 @@ fn render_toolbar(
 }
 
 /// 渲染列表视图
-fn render_list_view(server_groups: &[ServerGroup]) -> impl IntoElement {
+fn render_list_view(
+    server_groups: &[ServerGroup],
+    dialog_state: Entity<ServerDialogState>,
+) -> impl IntoElement {
+    let groups_owned: Vec<ServerGroup> = server_groups.to_vec();
     div()
         .flex_1()
         .flex()
         .flex_col()
         .gap_6()
-        .children(server_groups.iter().map(|group| render_server_group(group)))
+        .children(groups_owned.into_iter().map(move |group| {
+            let state = dialog_state.clone();
+            render_server_group(group, state)
+        }))
 }
 
 /// 渲染卡片视图
-fn render_card_view(server_groups: &[ServerGroup]) -> impl IntoElement {
+fn render_card_view(
+    server_groups: &[ServerGroup],
+    dialog_state: Entity<ServerDialogState>,
+) -> impl IntoElement {
+    let groups_owned: Vec<ServerGroup> = server_groups.to_vec();
     div()
         .flex_1()
         .flex()
         .flex_col()
         .gap_6()
-        .children(server_groups.iter().map(|group| render_card_group(group)))
+        .children(groups_owned.into_iter().map(move |group| {
+            let state = dialog_state.clone();
+            render_card_group(group, state)
+        }))
 }
 
 /// 渲染卡片模式的服务器组
-fn render_card_group(group: &ServerGroup) -> impl IntoElement {
+fn render_card_group(
+    group: ServerGroup,
+    dialog_state: Entity<ServerDialogState>,
+) -> impl IntoElement {
+    let servers_owned = group.servers.clone();
     div()
         .flex()
         .flex_col()
@@ -219,18 +245,27 @@ fn render_card_group(group: &ServerGroup) -> impl IntoElement {
         )
         .child(
             // 卡片网格
-            div().flex().flex_wrap().gap_4().children(
-                group
-                    .servers
-                    .iter()
-                    .map(|server| render_server_card(server)),
-            ),
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_4()
+                .children(servers_owned.into_iter().map(move |server| {
+                    let state = dialog_state.clone();
+                    render_server_card(server, state)
+                })),
         )
 }
 
 /// 渲染服务器卡片
-fn render_server_card(server: &Server) -> impl IntoElement {
+fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -> impl IntoElement {
+    let server_id = server.id.clone();
+    let server_id_for_edit = server_id.clone();
+    let server_id_for_delete = server_id.clone();
+    let dialog_for_edit = dialog_state.clone();
+    let dialog_for_delete = dialog_state;
+
     div()
+        .id(SharedString::from(format!("card-{}", server_id)))
         .w(px(220.))
         .bg(rgb(0xffffff))
         .rounded_lg()
@@ -319,17 +354,56 @@ fn render_server_card(server: &Server) -> impl IntoElement {
                         .child(format!("{} · {}", server.account, server.last_connected)),
                 )
                 .child(
-                    div().flex().gap_2().child(
-                        div()
-                            .cursor_pointer()
-                            .child(render_icon(icons::EDIT, rgb(0x9ca3af).into())),
-                    ),
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "card-edit-{}",
+                                    server_id_for_edit.clone()
+                                )))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(0xf3f4f6)).rounded_md())
+                                .p_1()
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    dialog_for_edit.update(cx, |s, _| {
+                                        s.open_edit(server_id_for_edit.clone());
+                                    });
+                                })
+                                .child(render_icon(icons::EDIT, rgb(0x9ca3af).into())),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "card-delete-{}",
+                                    server_id_for_delete.clone()
+                                )))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(0xfee2e2)).rounded_md())
+                                .p_1()
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Err(e) = storage::delete_server(&server_id_for_delete) {
+                                        eprintln!("删除服务器失败: {}", e);
+                                    }
+                                    dialog_for_delete.update(cx, |s, _| {
+                                        s.needs_refresh = true;
+                                    });
+                                })
+                                .child(render_icon(icons::TRASH, rgb(0xef4444).into())),
+                        ),
                 ),
         )
 }
 
 /// 渲染服务器组（表格）
-fn render_server_group(group: &ServerGroup) -> impl IntoElement {
+fn render_server_group(
+    group: ServerGroup,
+    dialog_state: Entity<ServerDialogState>,
+) -> impl IntoElement {
+    let servers_owned = group.servers.clone();
     div()
         .bg(rgb(0xffffff))
         .rounded_lg()
@@ -419,13 +493,23 @@ fn render_server_group(group: &ServerGroup) -> impl IntoElement {
             div()
                 .flex()
                 .flex_col()
-                .children(group.servers.iter().map(|server| render_server_row(server))),
+                .children(servers_owned.into_iter().map(move |server| {
+                    let state = dialog_state.clone();
+                    render_server_row(server, state)
+                })),
         )
 }
 
 /// 渲染服务器行
-fn render_server_row(server: &Server) -> impl IntoElement {
+fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) -> impl IntoElement {
+    let server_id = server.id.clone();
+    let server_id_for_edit = server_id.clone();
+    let server_id_for_delete = server_id.clone();
+    let dialog_for_edit = dialog_state.clone();
+    let dialog_for_delete = dialog_state;
+
     div()
+        .id(SharedString::from(format!("row-{}", server_id)))
         .px_4()
         .py_3()
         .border_b_1()
@@ -511,12 +595,39 @@ fn render_server_row(server: &Server) -> impl IntoElement {
                 .gap_3()
                 .child(
                     div()
+                        .id(SharedString::from(format!(
+                            "row-edit-{}",
+                            server_id_for_edit.clone()
+                        )))
                         .cursor_pointer()
+                        .hover(|s| s.bg(rgb(0xf3f4f6)).rounded_md())
+                        .p_1()
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.stop_propagation();
+                            dialog_for_edit.update(cx, |s, _| {
+                                s.open_edit(server_id_for_edit.clone());
+                            });
+                        })
                         .child(render_icon(icons::EDIT, rgb(0x3b82f6).into())),
                 )
                 .child(
                     div()
+                        .id(SharedString::from(format!(
+                            "row-delete-{}",
+                            server_id_for_delete.clone()
+                        )))
                         .cursor_pointer()
+                        .hover(|s| s.bg(rgb(0xfee2e2)).rounded_md())
+                        .p_1()
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.stop_propagation();
+                            if let Err(e) = storage::delete_server(&server_id_for_delete) {
+                                eprintln!("删除服务器失败: {}", e);
+                            }
+                            dialog_for_delete.update(cx, |s, _| {
+                                s.needs_refresh = true;
+                            });
+                        })
                         .child(render_icon(icons::TRASH, rgb(0xef4444).into())),
                 ),
         )

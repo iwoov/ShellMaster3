@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// 服务器数据结构（用于视图展示）
 #[derive(Clone)]
 pub struct Server {
+    pub id: String,
     pub name: String,
     pub host: String,
     pub port: u16,

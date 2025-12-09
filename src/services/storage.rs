@@ -97,11 +97,3 @@ pub fn get_groups() -> Result<Vec<ServerGroupData>> {
     let config = load_servers()?;
     Ok(config.groups)
 }
-
-/// 添加分组
-pub fn add_group(group: ServerGroupData) -> Result<()> {
-    let mut config = load_servers()?;
-    config.groups.push(group);
-    save_servers(&config)?;
-    Ok(())
-}

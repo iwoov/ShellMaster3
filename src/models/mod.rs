@@ -4,7 +4,4 @@ pub mod connection;
 pub mod server;
 pub mod session;
 
-pub use server::{
-    AuthType, HistoryItem, ProxyConfig, ProxyType, Server, ServerConfig, ServerData, ServerGroup,
-    ServerGroupData,
-};
+pub use server::{HistoryItem, Server, ServerConfig, ServerData, ServerGroup, ServerGroupData};

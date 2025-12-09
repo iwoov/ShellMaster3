@@ -31,10 +31,32 @@ impl HomePage {
         let dialog_state = cx.new(|_| ServerDialogState::default());
 
         // 从存储加载服务器数据
+        let server_groups = Self::load_server_groups();
+
+        Self {
+            server_groups,
+            history: vec![
+                HistoryItem {
+                    name: "Los Angles-DMIT".into(),
+                    time: "24分钟前".into(),
+                },
+                HistoryItem {
+                    name: "AAITR-NAT".into(),
+                    time: "26分钟前".into(),
+                },
+            ],
+            sidebar_state,
+            view_mode_state,
+            dialog_state,
+        }
+    }
+
+    /// 从存储加载服务器分组数据
+    fn load_server_groups() -> Vec<ServerGroup> {
         let config = crate::services::storage::load_servers().unwrap_or_default();
 
         // 将 ServerData 转换为视图用的 Server 结构
-        let server_groups = config
+        let mut server_groups: Vec<ServerGroup> = config
             .groups
             .iter()
             .map(|group| {
@@ -43,6 +65,7 @@ impl HomePage {
                     .iter()
                     .filter(|s| s.group_id.as_deref() == Some(&group.id))
                     .map(|s| Server {
+                        id: s.id.clone(),
                         name: s.label.clone(),
                         host: s.host.clone(),
                         port: s.port,
@@ -61,14 +84,15 @@ impl HomePage {
                     servers: group_servers,
                 }
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        // 未分组的服务器放入 "默认" 分组
+        // 未分组的服务器放入 "未分组" 分组
         let ungrouped_servers: Vec<Server> = config
             .servers
             .iter()
             .filter(|s| s.group_id.is_none())
             .map(|s| Server {
+                id: s.id.clone(),
                 name: s.label.clone(),
                 host: s.host.clone(),
                 port: s.port,
@@ -81,31 +105,20 @@ impl HomePage {
             })
             .collect();
 
-        let mut final_groups = server_groups;
         if !ungrouped_servers.is_empty() {
-            final_groups.push(ServerGroup {
+            server_groups.push(ServerGroup {
                 name: "未分组".to_string(),
                 icon_path: icons::SERVER,
                 servers: ungrouped_servers,
             });
         }
 
-        Self {
-            server_groups: final_groups,
-            history: vec![
-                HistoryItem {
-                    name: "Los Angles-DMIT".into(),
-                    time: "24分钟前".into(),
-                },
-                HistoryItem {
-                    name: "AAITR-NAT".into(),
-                    time: "26分钟前".into(),
-                },
-            ],
-            sidebar_state,
-            view_mode_state,
-            dialog_state,
-        }
+        server_groups
+    }
+
+    /// 重新加载服务器列表
+    pub fn reload_servers(&mut self) {
+        self.server_groups = Self::load_server_groups();
     }
 
     fn render_content(&self, selected_menu: MenuType, cx: &Context<Self>) -> AnyElement {
@@ -129,6 +142,15 @@ impl HomePage {
 
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 检查是否需要刷新服务器列表
+        let needs_refresh = self.dialog_state.read(cx).needs_refresh;
+        if needs_refresh {
+            self.reload_servers();
+            self.dialog_state.update(cx, |state, _| {
+                state.needs_refresh = false;
+            });
+        }
+
         let history = self.history.clone();
         let sidebar_state = self.sidebar_state.clone();
         let selected_menu = self.sidebar_state.read(cx).selected_menu;

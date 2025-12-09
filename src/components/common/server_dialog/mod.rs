@@ -4,7 +4,8 @@ use gpui_component::input::InputState;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
-use crate::models::server::AuthType;
+use crate::models::server::{AuthType, ProxyConfig, ProxyType, ServerData};
+use crate::services::storage;
 
 /// 左侧导航菜单类型
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -31,6 +32,16 @@ pub struct ServerDialogState {
     pub auth_type: AuthType,
     pub private_key_input: Option<Entity<InputState>>,
     pub passphrase_input: Option<Entity<InputState>>,
+    // 跳板机数据
+    pub enable_jump_host: bool,
+    pub jump_host_input: Option<Entity<InputState>>,
+    // 代理数据
+    pub enable_proxy: bool,
+    pub proxy_type: ProxyType,
+    pub proxy_host_input: Option<Entity<InputState>>,
+    pub proxy_port_input: Option<Entity<InputState>>,
+    pub proxy_username_input: Option<Entity<InputState>>,
+    pub proxy_password_input: Option<Entity<InputState>>,
 }
 
 impl Default for ServerDialogState {
@@ -47,6 +58,14 @@ impl Default for ServerDialogState {
             auth_type: AuthType::Password,
             private_key_input: None,
             passphrase_input: None,
+            enable_jump_host: false,
+            jump_host_input: None,
+            enable_proxy: false,
+            proxy_type: ProxyType::Http,
+            proxy_host_input: None,
+            proxy_port_input: None,
+            proxy_username_input: None,
+            proxy_password_input: None,
         }
     }
 }
@@ -87,6 +106,35 @@ impl ServerDialogState {
                     .masked(true)
             }));
         }
+
+        // 跳板机输入
+        if self.jump_host_input.is_none() {
+            self.jump_host_input =
+                Some(cx.new(|cx| {
+                    InputState::new(window, cx).placeholder("输入跳板机地址 (Host:Port)")
+                }));
+        }
+
+        // 代理输入
+        if self.proxy_host_input.is_none() {
+            self.proxy_host_input =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("代理服务器地址")));
+        }
+        if self.proxy_port_input.is_none() {
+            self.proxy_port_input =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("端口")));
+        }
+        if self.proxy_username_input.is_none() {
+            self.proxy_username_input =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("代理用户名 (可选)")));
+        }
+        if self.proxy_password_input.is_none() {
+            self.proxy_password_input = Some(cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("代理密码 (可选)")
+                    .masked(true)
+            }));
+        }
     }
 
     pub fn open_add(&mut self) {
@@ -97,6 +145,86 @@ impl ServerDialogState {
 
     pub fn close(&mut self) {
         self.visible = false;
+    }
+
+    /// 从表单状态提取 ServerData
+    pub fn to_server_data(&self, cx: &App) -> ServerData {
+        let get_text = |input: &Option<Entity<gpui_component::input::InputState>>| -> String {
+            input
+                .as_ref()
+                .map(|i| i.read(cx).text().to_string())
+                .unwrap_or_default()
+        };
+
+        let label = get_text(&self.label_input);
+        let host = get_text(&self.host_input);
+        let port_str = get_text(&self.port_input);
+        let port = port_str.parse::<u16>().unwrap_or(22);
+        let username = get_text(&self.username_input);
+        let password = get_text(&self.password_input);
+        let private_key = get_text(&self.private_key_input);
+        let passphrase = get_text(&self.passphrase_input);
+        let jump_host = get_text(&self.jump_host_input);
+        let proxy_host = get_text(&self.proxy_host_input);
+        let proxy_port_str = get_text(&self.proxy_port_input);
+        let proxy_port = proxy_port_str.parse::<u16>().unwrap_or(0);
+        let proxy_username = get_text(&self.proxy_username_input);
+        let proxy_password = get_text(&self.proxy_password_input);
+
+        ServerData {
+            id: uuid::Uuid::new_v4().to_string(),
+            group_id: None,
+            label,
+            host,
+            port,
+            username,
+            auth_type: self.auth_type.clone(),
+            password_encrypted: if self.auth_type == AuthType::Password && !password.is_empty() {
+                Some(password) // TODO: 实际应加密
+            } else {
+                None
+            },
+            private_key_path: if self.auth_type == AuthType::PublicKey && !private_key.is_empty() {
+                Some(private_key)
+            } else {
+                None
+            },
+            key_passphrase_encrypted: if self.auth_type == AuthType::PublicKey
+                && !passphrase.is_empty()
+            {
+                Some(passphrase) // TODO: 实际应加密
+            } else {
+                None
+            },
+            jump_host_id: if self.enable_jump_host && !jump_host.is_empty() {
+                Some(jump_host)
+            } else {
+                None
+            },
+            proxy: if self.enable_proxy {
+                Some(ProxyConfig {
+                    enabled: true,
+                    proxy_type: self.proxy_type.clone(),
+                    host: proxy_host,
+                    port: proxy_port,
+                    username: if !proxy_username.is_empty() {
+                        Some(proxy_username)
+                    } else {
+                        None
+                    },
+                    password_encrypted: if !proxy_password.is_empty() {
+                        Some(proxy_password)
+                    } else {
+                        None
+                    },
+                })
+            } else {
+                None
+            },
+            enable_monitor: true,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            last_connected_at: None,
+        }
     }
 }
 
@@ -243,10 +371,26 @@ fn render_right_content(
                 .flex_1()
                 .overflow_scroll()
                 .p_4()
-                .child(render_basic_info_form(state, cx)),
+                .flex_1()
+                .overflow_scroll()
+                .p_4()
+                .child(match state.read(cx).current_section {
+                    DialogSection::BasicInfo => {
+                        render_basic_info_form(state.clone(), cx).into_any_element()
+                    }
+                    DialogSection::JumpHost => {
+                        render_jump_host_form(state.clone(), cx).into_any_element()
+                    }
+                    DialogSection::ProxySettings => {
+                        render_proxy_settings_form(state.clone(), cx).into_any_element()
+                    }
+                    DialogSection::OtherSettings => {
+                        render_other_settings_form(state.clone(), cx).into_any_element()
+                    }
+                }),
         )
         // 底部按钮
-        .child(render_footer_buttons(state_for_cancel))
+        .child(render_footer_buttons(state_for_cancel, cx))
 }
 
 /// 渲染基本信息表单
@@ -457,6 +601,275 @@ fn render_auth_type_button(
         )
 }
 
+/// 渲染跳板机设置表单
+fn render_jump_host_form(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
+    use gpui_component::input::Input;
+
+    let state_read = state.read(cx);
+    let enabled = state_read.enable_jump_host;
+
+    let jump_host_input = if let Some(input) = &state_read.jump_host_input {
+        Input::new(input).into_any_element()
+    } else {
+        div().child("加载中...").into_any_element()
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(render_form_label("启用跳板机", icons::LINK))
+                .child({
+                    let state = state.clone();
+                    render_switch(enabled, move |_, _, cx| {
+                        state.update(cx, |s, _| {
+                            s.enable_jump_host = !s.enable_jump_host;
+                        });
+                    })
+                }),
+        )
+        .children(if enabled {
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(render_form_label("跳板机地址", icons::SERVER))
+                    .child(jump_host_input),
+            )
+        } else {
+            None
+        })
+}
+
+/// 渲染代理设置表单
+fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
+    use crate::models::server::ProxyType;
+    use gpui_component::input::Input;
+
+    let state_read = state.read(cx);
+    let enabled = state_read.enable_proxy;
+    let proxy_type = state_read.proxy_type.clone();
+
+    let host_input = if let Some(input) = &state_read.proxy_host_input {
+        Input::new(input).into_any_element()
+    } else {
+        div().child("加载中...").into_any_element()
+    };
+    let port_input = if let Some(input) = &state_read.proxy_port_input {
+        Input::new(input).into_any_element()
+    } else {
+        div().child("加载中...").into_any_element()
+    };
+    let username_input = if let Some(input) = &state_read.proxy_username_input {
+        Input::new(input).into_any_element()
+    } else {
+        div().child("加载中...").into_any_element()
+    };
+    let password_input = if let Some(input) = &state_read.proxy_password_input {
+        Input::new(input).into_any_element()
+    } else {
+        div().child("加载中...").into_any_element()
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(render_form_label("启用代理", icons::GLOBE))
+                .child({
+                    let state = state.clone();
+                    render_switch(enabled, move |_, _, cx| {
+                        state.update(cx, |s, _| {
+                            s.enable_proxy = !s.enable_proxy;
+                        });
+                    })
+                }),
+        )
+        .children(if enabled {
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    // 代理类型
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(render_form_label("代理类型", icons::SETTINGS))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .p_1()
+                                    .bg(rgb(0xf1f5f9))
+                                    .rounded_md()
+                                    .child(render_proxy_type_button(
+                                        state.clone(),
+                                        ProxyType::Http,
+                                        "HTTP",
+                                        proxy_type == ProxyType::Http,
+                                    ))
+                                    .child(render_proxy_type_button(
+                                        state.clone(),
+                                        ProxyType::Socks5,
+                                        "SOCKS5",
+                                        proxy_type == ProxyType::Socks5,
+                                    )),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(render_form_label("主机地址", icons::SERVER))
+                                    .child(host_input),
+                            )
+                            .child(
+                                div()
+                                    .w(px(100.))
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(render_form_label("端口", icons::LINK))
+                                    .child(port_input),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(render_form_label("用户名 (可选)", icons::USER))
+                            .child(username_input),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(render_form_label("密码 (可选)", icons::LOCK))
+                            .child(password_input),
+                    ),
+            )
+        } else {
+            None
+        })
+}
+
+/// 渲染其他设置表单
+fn render_other_settings_form(_state: Entity<ServerDialogState>, _cx: &App) -> impl IntoElement {
+    div().flex().flex_col().gap_3().child(
+        div()
+            .text_sm()
+            .text_color(rgb(0x64748b))
+            .child("暂无其他设置选项"),
+    )
+}
+
+/// 渲染开关组件
+fn render_switch(
+    checked: bool,
+    on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .w(px(36.))
+        .h(px(20.))
+        .rounded_full()
+        .bg(if checked {
+            rgb(0x3b82f6)
+        } else {
+            rgb(0xe2e8f0)
+        })
+        .flex()
+        .items_center()
+        .px(px(2.))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, on_click)
+        .child({
+            let thumb = div()
+                .size(px(16.))
+                .rounded_full()
+                .bg(rgb(0xffffff))
+                .shadow_sm();
+            if checked {
+                thumb.ml_auto()
+            } else {
+                thumb
+            }
+        })
+}
+
+/// 渲染代理类型切换按钮 (复用 render_auth_type_button 逻辑)
+fn render_proxy_type_button(
+    state: Entity<ServerDialogState>,
+    proxy_type: crate::models::server::ProxyType,
+    label: &'static str,
+    selected: bool,
+) -> impl IntoElement {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .py_1()
+        .rounded_sm()
+        .cursor_pointer()
+        .bg(if selected {
+            rgb(0xffffff)
+        } else {
+            rgb(0xf1f5f9)
+        })
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            state.update(cx, |s, _| {
+                s.proxy_type = proxy_type.clone();
+            });
+        })
+        .shadow(if selected {
+            vec![BoxShadow {
+                color: rgba(0x00000010).into(),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(2.),
+                spread_radius: px(0.),
+            }]
+        } else {
+            vec![]
+        })
+        .child(
+            div()
+                .text_sm()
+                .font_weight(if selected {
+                    FontWeight::MEDIUM
+                } else {
+                    FontWeight::NORMAL
+                })
+                .text_color(if selected {
+                    rgb(0x0f172a)
+                } else {
+                    rgb(0x64748b)
+                })
+                .child(label),
+        )
+}
+
 /// 渲染表单标签
 fn render_form_label(label: &'static str, icon: &'static str) -> impl IntoElement {
     div()
@@ -474,7 +887,13 @@ fn render_form_label(label: &'static str, icon: &'static str) -> impl IntoElemen
 }
 
 /// 渲染底部按钮
-fn render_footer_buttons(state: Entity<ServerDialogState>) -> impl IntoElement {
+fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
+    let state_for_cancel = state.clone();
+    let state_for_save = state.clone();
+
+    // 提前读取表单数据
+    let server_data = state.read(cx).to_server_data(cx);
+
     div()
         .h(px(64.))
         .flex_shrink_0()
@@ -498,7 +917,7 @@ fn render_footer_buttons(state: Entity<ServerDialogState>) -> impl IntoElement {
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(0xf3f4f6)))
                 .on_click(move |_, _, cx| {
-                    state.update(cx, |s, _| s.close());
+                    state_for_cancel.update(cx, |s, _| s.close());
                 })
                 .child(div().text_sm().text_color(rgb(0x374151)).child("取消")),
         )
@@ -512,6 +931,14 @@ fn render_footer_buttons(state: Entity<ServerDialogState>) -> impl IntoElement {
                 .rounded_md()
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(0x2563eb)))
+                .on_click(move |_, _, cx| {
+                    // 保存服务器数据
+                    if let Err(e) = storage::add_server(server_data.clone()) {
+                        eprintln!("保存服务器失败: {:?}", e);
+                    }
+                    // 关闭弹窗
+                    state_for_save.update(cx, |s, _| s.close());
+                })
                 .child(div().text_sm().text_color(rgb(0xffffff)).child("保存")),
         )
 }

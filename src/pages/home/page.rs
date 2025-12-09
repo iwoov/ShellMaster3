@@ -30,55 +30,68 @@ impl HomePage {
 
         let dialog_state = cx.new(|_| ServerDialogState::default());
 
+        // 从存储加载服务器数据
+        let config = crate::services::storage::load_servers().unwrap_or_default();
+
+        // 将 ServerData 转换为视图用的 Server 结构
+        let server_groups = config
+            .groups
+            .iter()
+            .map(|group| {
+                let group_servers: Vec<Server> = config
+                    .servers
+                    .iter()
+                    .filter(|s| s.group_id.as_deref() == Some(&group.id))
+                    .map(|s| Server {
+                        name: s.label.clone(),
+                        host: s.host.clone(),
+                        port: s.port,
+                        description: "-".into(),
+                        account: s.username.clone(),
+                        last_connected: s
+                            .last_connected_at
+                            .clone()
+                            .unwrap_or_else(|| "从未".to_string()),
+                    })
+                    .collect();
+
+                ServerGroup {
+                    name: group.name.clone(),
+                    icon_path: icons::SERVER,
+                    servers: group_servers,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // 未分组的服务器放入 "默认" 分组
+        let ungrouped_servers: Vec<Server> = config
+            .servers
+            .iter()
+            .filter(|s| s.group_id.is_none())
+            .map(|s| Server {
+                name: s.label.clone(),
+                host: s.host.clone(),
+                port: s.port,
+                description: "-".into(),
+                account: s.username.clone(),
+                last_connected: s
+                    .last_connected_at
+                    .clone()
+                    .unwrap_or_else(|| "从未".to_string()),
+            })
+            .collect();
+
+        let mut final_groups = server_groups;
+        if !ungrouped_servers.is_empty() {
+            final_groups.push(ServerGroup {
+                name: "未分组".to_string(),
+                icon_path: icons::SERVER,
+                servers: ungrouped_servers,
+            });
+        }
+
         Self {
-            server_groups: vec![
-                ServerGroup {
-                    name: "JPN".into(),
-                    icon_path: icons::SERVER,
-                    servers: vec![
-                        Server {
-                            name: "ByteVirt-IJJ".into(),
-                            host: "31.57.172.165".into(),
-                            port: 22,
-                            description: "-".into(),
-                            account: "root".into(),
-                            last_connected: "12月7日".into(),
-                        },
-                        Server {
-                            name: "拼好鸡-SoftBank".into(),
-                            host: "23.176.40.184".into(),
-                            port: 44429,
-                            description: "-".into(),
-                            account: "root".into(),
-                            last_connected: "17小时前".into(),
-                        },
-                    ],
-                },
-                ServerGroup {
-                    name: "Home".into(),
-                    icon_path: icons::HOME,
-                    servers: vec![Server {
-                        name: "Home-WSL".into(),
-                        host: "10.0.0.7".into(),
-                        port: 8023,
-                        description: "-".into(),
-                        account: "root".into(),
-                        last_connected: "12月7日".into(),
-                    }],
-                },
-                ServerGroup {
-                    name: "CN".into(),
-                    icon_path: icons::SERVER,
-                    servers: vec![Server {
-                        name: "NingBo-ChinaTel".into(),
-                        host: "110.42.98.184".into(),
-                        port: 9822,
-                        description: "-".into(),
-                        account: "root".into(),
-                        last_connected: "12月8日".into(),
-                    }],
-                },
-            ],
+            server_groups: final_groups,
             history: vec![
                 HistoryItem {
                     name: "Los Angles-DMIT".into(),
@@ -87,18 +100,6 @@ impl HomePage {
                 HistoryItem {
                     name: "AAITR-NAT".into(),
                     time: "26分钟前".into(),
-                },
-                HistoryItem {
-                    name: "HongHong-Cera".into(),
-                    time: "12小时前".into(),
-                },
-                HistoryItem {
-                    name: "Singapore-OrangeVPS".into(),
-                    time: "17小时前".into(),
-                },
-                HistoryItem {
-                    name: "拼好鸡-SoftBank".into(),
-                    time: "17小时前".into(),
                 },
             ],
             sidebar_state,

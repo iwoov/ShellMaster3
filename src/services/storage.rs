@@ -7,9 +7,13 @@ use std::path::PathBuf;
 use crate::models::{ServerConfig, ServerData, ServerGroupData};
 
 /// 获取配置目录路径
+/// macOS: ~/Library/Application Support/shellmaster
+/// Linux: ~/.config/shellmaster
+/// Windows: C:\Users\<用户名>\AppData\Roaming\shellmaster
 pub fn get_config_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("无法获取用户主目录")?;
-    let config_dir = home.join(".shellmaster");
+    let config_dir = dirs::config_dir()
+        .context("无法获取系统配置目录")?
+        .join("shellmaster");
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir).context("无法创建配置目录")?;
     }

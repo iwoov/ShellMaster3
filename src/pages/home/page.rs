@@ -5,6 +5,7 @@ use gpui::*;
 use super::server_list::{render_hosts_content, render_placeholder, ViewMode, ViewModeState};
 use super::sidebar::{render_sidebar, MenuType, SidebarState};
 use super::titlebar::render_titlebar;
+use crate::components::common::server_dialog::{render_server_dialog_overlay, ServerDialogState};
 use crate::constants::icons;
 use crate::models::{HistoryItem, Server, ServerGroup};
 
@@ -14,6 +15,7 @@ pub struct HomePage {
     pub history: Vec<HistoryItem>,
     pub sidebar_state: Entity<SidebarState>,
     pub view_mode_state: Entity<ViewModeState>,
+    pub dialog_state: Entity<ServerDialogState>,
 }
 
 impl HomePage {
@@ -25,6 +27,8 @@ impl HomePage {
         let view_mode_state = cx.new(|_| ViewModeState {
             mode: ViewMode::List,
         });
+
+        let dialog_state = cx.new(|_| ServerDialogState::default());
 
         Self {
             server_groups: vec![
@@ -99,16 +103,20 @@ impl HomePage {
             ],
             sidebar_state,
             view_mode_state,
+            dialog_state,
         }
     }
 
     fn render_content(&self, selected_menu: MenuType, cx: &Context<Self>) -> AnyElement {
         let view_mode = self.view_mode_state.read(cx).mode;
         match selected_menu {
-            MenuType::Hosts => {
-                render_hosts_content(&self.server_groups, view_mode, self.view_mode_state.clone())
-                    .into_any_element()
-            }
+            MenuType::Hosts => render_hosts_content(
+                &self.server_groups,
+                view_mode,
+                self.view_mode_state.clone(),
+                self.dialog_state.clone(),
+            )
+            .into_any_element(),
             MenuType::Snippets => render_placeholder("Snippets", "代码片段功能").into_any_element(),
             MenuType::KnownHosts => {
                 render_placeholder("Known Hosts", "已知主机管理").into_any_element()
@@ -119,16 +127,19 @@ impl HomePage {
 }
 
 impl Render for HomePage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let history = self.history.clone();
         let sidebar_state = self.sidebar_state.clone();
         let selected_menu = self.sidebar_state.read(cx).selected_menu;
+        let dialog_visible = self.dialog_state.read(cx).visible;
+        let dialog_state = self.dialog_state.clone();
 
         // 新布局：sidebar 在左侧从顶到底，右侧是 titlebar + content
         div()
             .size_full()
             .bg(rgb(0xffffff))
             .flex()
+            .relative() // 让弹窗可以绝对定位
             // 左侧 sidebar（从顶到底）
             .child(render_sidebar(sidebar_state, selected_menu, &history))
             // 右侧区域（titlebar + content）
@@ -141,5 +152,15 @@ impl Render for HomePage {
                     .child(render_titlebar())
                     .child(self.render_content(selected_menu, cx)),
             )
+            // 条件渲染弹窗
+            .children(if dialog_visible {
+                // 确保输入框已创建
+                self.dialog_state.update(cx, |state, cx| {
+                    state.ensure_inputs_created(window, cx);
+                });
+                Some(render_server_dialog_overlay(dialog_state, cx))
+            } else {
+                None
+            })
     }
 }

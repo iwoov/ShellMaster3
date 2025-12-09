@@ -3,6 +3,7 @@
 use gpui::*;
 
 use crate::components::common::icon::render_icon;
+use crate::components::common::server_dialog::ServerDialogState;
 use crate::constants::icons;
 use crate::models::{Server, ServerGroup};
 
@@ -24,6 +25,7 @@ pub fn render_hosts_content(
     server_groups: &[ServerGroup],
     view_mode: ViewMode,
     view_state: Entity<ViewModeState>,
+    dialog_state: Entity<ServerDialogState>,
 ) -> impl IntoElement {
     div()
         .flex_1()
@@ -33,12 +35,11 @@ pub fn render_hosts_content(
         .flex()
         .flex_col()
         .child(
-            // 顶部工具栏（固定）
             div()
                 .flex_shrink_0() // 不压缩
                 .p_6()
                 .pb_4()
-                .child(render_toolbar(view_mode, view_state)),
+                .child(render_toolbar(view_mode, view_state, dialog_state)),
         )
         .child(
             // 服务器列表/卡片（可滚动）
@@ -56,7 +57,11 @@ pub fn render_hosts_content(
 }
 
 /// 渲染工具栏
-fn render_toolbar(view_mode: ViewMode, view_state: Entity<ViewModeState>) -> impl IntoElement {
+fn render_toolbar(
+    view_mode: ViewMode,
+    view_state: Entity<ViewModeState>,
+    dialog_state: Entity<ServerDialogState>,
+) -> impl IntoElement {
     let state_for_card = view_state.clone();
     let state_for_list = view_state;
 
@@ -76,6 +81,9 @@ fn render_toolbar(view_mode: ViewMode, view_state: Entity<ViewModeState>) -> imp
                 .flex()
                 .items_center()
                 .gap_2()
+                .on_click(move |_, _, cx| {
+                    dialog_state.update(cx, |s, _| s.open_add());
+                })
                 .child(render_icon(icons::PLUS, rgb(0xffffff).into()))
                 .child(
                     div()

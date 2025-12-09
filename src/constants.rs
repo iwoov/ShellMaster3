@@ -14,4 +14,7 @@ pub mod icons {
     pub const TRASH: &str = "icons/trash.svg";
     pub const COPY: &str = "icons/copy.svg";
     pub const TERMINAL: &str = "icons/terminal.svg";
+    pub const LINK: &str = "icons/link.svg";
+    pub const GLOBE: &str = "icons/globe.svg";
+    pub const LOCK: &str = "icons/lock.svg";
 }

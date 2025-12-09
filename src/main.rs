@@ -2,6 +2,7 @@
 // 应用入口
 
 use gpui::*;
+use gpui_component::Root;
 use std::path::PathBuf;
 
 mod assets;
@@ -25,6 +26,9 @@ fn main() {
             base: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
         })
         .run(|cx: &mut App| {
+            // 初始化 gpui-component 组件库（必须在使用任何组件之前调用）
+            gpui_component::init(cx);
+
             let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
             cx.open_window(
                 WindowOptions {
@@ -36,7 +40,11 @@ fn main() {
                     }),
                     ..Default::default()
                 },
-                |_, cx| cx.new(|cx| HomePage::new(cx)),
+                |window, cx| {
+                    let view = cx.new(|cx| HomePage::new(cx));
+                    // 使用 Root 包装视图，这是 gpui-component 的要求
+                    cx.new(|cx| Root::new(view, window, cx))
+                },
             )
             .unwrap();
             cx.activate(true);

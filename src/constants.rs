@@ -1,0 +1,17 @@
+// 图标路径常量
+
+pub mod icons {
+    pub const SERVER: &str = "icons/server.svg";
+    pub const CODE: &str = "icons/code.svg";
+    pub const USER: &str = "icons/user.svg";
+    pub const HISTORY: &str = "icons/history.svg";
+    pub const HOME: &str = "icons/home.svg";
+    pub const SETTINGS: &str = "icons/settings.svg";
+    pub const PLUS: &str = "icons/plus.svg";
+    pub const GRID: &str = "icons/grid.svg";
+    pub const LIST: &str = "icons/list.svg";
+    pub const EDIT: &str = "icons/edit.svg";
+    pub const TRASH: &str = "icons/trash.svg";
+    pub const COPY: &str = "icons/copy.svg";
+    pub const TERMINAL: &str = "icons/terminal.svg";
+}

@@ -1,0 +1,29 @@
+# Generated files
+/target/
+
+# Build artifacts
+debug/
+*.pdb
+
+# Cargo.lock is usually committed for binaries but not libraries
+# Uncomment if this is a library
+# Cargo.lock
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+/target/*

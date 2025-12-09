@@ -18,23 +18,10 @@ pub fn render_titlebar() -> impl IntoElement {
         .px_4()
         .justify_between()
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_4()
-                .child(
-                    // macOS 窗口按钮占位
-                    div().w(px(70.)),
-                )
-                .child(
-                    div()
-                        .cursor_pointer()
-                        .child(render_icon(icons::HOME, rgb(0x6b7280).into())),
-                ),
-        )
-        .child(
-            div()
-                .cursor_pointer()
-                .child(render_icon(icons::SETTINGS, rgb(0x6b7280).into())),
+            div().flex().items_center().gap_4().child(
+                div()
+                    .cursor_pointer()
+                    .child(render_icon(icons::HOME, rgb(0x6b7280).into())),
+            ),
         )
 }

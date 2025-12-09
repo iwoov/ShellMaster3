@@ -111,6 +111,22 @@ pub fn render_sidebar(
                         )
                 })),
         )
+        .child(
+            // 底部设置按钮
+            div().p_2().child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .hover(|s| s.bg(rgb(0xe5e7eb)))
+                    .cursor_pointer()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(render_icon(icons::SETTINGS, rgb(0x6b7280).into()))
+                    .child(div().text_sm().text_color(rgb(0x374151)).child("Settings")),
+            ),
+        )
 }
 
 /// 渲染菜单项

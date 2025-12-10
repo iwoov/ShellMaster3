@@ -3,7 +3,7 @@ use gpui::*;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
-use crate::models::settings::{AppSettings, ThemeMode};
+use crate::models::settings::{AppSettings, Language, ThemeMode};
 use crate::services::storage;
 
 /// 设置导航区域类型
@@ -101,7 +101,7 @@ impl SettingsDialogState {
 /// 渲染设置弹窗覆盖层
 pub fn render_settings_dialog_overlay(
     state: Entity<SettingsDialogState>,
-    _cx: &App,
+    cx: &App,
 ) -> impl IntoElement {
     let state_for_close = state.clone();
     let state_for_content = state.clone();
@@ -125,11 +125,11 @@ pub fn render_settings_dialog_overlay(
                 }),
         )
         // 弹窗内容
-        .child(render_dialog_content(state_for_content))
+        .child(render_dialog_content(state_for_content, cx))
 }
 
 /// 渲染弹窗内容
-fn render_dialog_content(state: Entity<SettingsDialogState>) -> impl IntoElement {
+fn render_dialog_content(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
     let state_for_nav = state.clone();
     let state_for_cancel = state.clone();
     let state_for_save = state.clone();
@@ -151,6 +151,7 @@ fn render_dialog_content(state: Entity<SettingsDialogState>) -> impl IntoElement
             state,
             state_for_cancel,
             state_for_save,
+            cx,
         ))
 }
 
@@ -172,6 +173,7 @@ fn render_left_nav(state: Entity<SettingsDialogState>) -> impl IntoElement {
         .w(px(180.))
         .h_full()
         .bg(rgb(0xf8fafc))
+        .rounded_l_lg()
         .border_r_1()
         .border_color(rgb(0xe2e8f0))
         .flex()
@@ -220,6 +222,7 @@ fn render_right_content(
     state: Entity<SettingsDialogState>,
     state_for_cancel: Entity<SettingsDialogState>,
     state_for_save: Entity<SettingsDialogState>,
+    cx: &App,
 ) -> impl IntoElement {
     let state_for_panel = state.clone();
 
@@ -253,54 +256,21 @@ fn render_right_content(
                 .flex_1()
                 .overflow_scroll()
                 .p_6()
-                .child(render_section_content(state_for_panel)),
+                .child(render_section_content(state_for_panel, cx)),
         )
         // 底部按钮
         .child(render_footer_buttons(state_for_cancel, state_for_save))
 }
 
 /// 渲染当前分区内容
-fn render_section_content(state: Entity<SettingsDialogState>) -> impl IntoElement {
-    // 所有面板通过 deferred 延迟渲染，并根据当前 section 决定显示哪个
-    // 这里简化实现：直接返回当前 section 的面板
-    div()
-        .child(
-            div()
-                .text_sm()
-                .text_color(rgb(0x64748b))
-                .child("选择左侧菜单查看设置项"),
-        )
-        .children(Some(
-            deferred(div().size_full().child(SettingsPanelRenderer { state })).with_priority(1),
-        ))
-}
+fn render_section_content(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
+    let section = state.read(cx).current_section;
 
-/// 设置面板渲染器（用于 deferred 渲染）
-struct SettingsPanelRenderer {
-    state: Entity<SettingsDialogState>,
-}
-
-impl IntoElement for SettingsPanelRenderer {
-    type Element = Div;
-
-    fn into_element(self) -> Self::Element {
-        div().child("面板内容将在后续实现")
-    }
-}
-
-impl RenderOnce for SettingsPanelRenderer {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state_read = self.state.read(cx);
-        let section = state_read.current_section;
-
-        match section {
-            SettingsSection::Theme => render_theme_panel(self.state.clone(), cx).into_any_element(),
-            SettingsSection::Terminal => {
-                render_terminal_panel(self.state.clone(), cx).into_any_element()
-            }
-            SettingsSection::About => render_about_panel().into_any_element(),
-            _ => render_placeholder_panel(section).into_any_element(),
-        }
+    match section {
+        SettingsSection::Theme => render_theme_panel(state, cx).into_any_element(),
+        SettingsSection::Terminal => render_terminal_panel(state, cx).into_any_element(),
+        SettingsSection::About => render_about_panel().into_any_element(),
+        _ => render_placeholder_panel(section).into_any_element(),
     }
 }
 
@@ -361,11 +331,35 @@ fn render_footer_buttons(
 fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
     let state_read = state.read(cx);
     let current_mode = state_read.settings.theme.mode.clone();
+    let current_language = state_read.settings.theme.language.clone();
 
     div()
         .flex()
         .flex_col()
         .gap_6()
+        // 语言设置
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("语言 / Language"))
+                .child(
+                    div()
+                        .flex()
+                        .gap_3()
+                        .child(render_language_button(
+                            state.clone(),
+                            Language::Chinese,
+                            current_language == Language::Chinese,
+                        ))
+                        .child(render_language_button(
+                            state.clone(),
+                            Language::English,
+                            current_language == Language::English,
+                        )),
+                ),
+        )
         // 外观模式
         .child(
             div()
@@ -419,6 +413,47 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                         )),
                 ),
         )
+}
+
+/// 渲染语言按钮
+fn render_language_button(
+    state: Entity<SettingsDialogState>,
+    lang: Language,
+    selected: bool,
+) -> impl IntoElement {
+    let bg_color = if selected {
+        rgb(0x3b82f6)
+    } else {
+        rgb(0xf1f5f9)
+    };
+    let text_color = if selected {
+        rgb(0xffffff)
+    } else {
+        rgb(0x475569)
+    };
+    let label = lang.label();
+
+    div()
+        .id(SharedString::from(format!("lang-{:?}", lang)))
+        .px_4()
+        .py_2()
+        .rounded_md()
+        .bg(bg_color)
+        .cursor_pointer()
+        .hover(|s| {
+            if selected {
+                s.bg(rgb(0x2563eb))
+            } else {
+                s.bg(rgb(0xe2e8f0))
+            }
+        })
+        .on_click(move |_, _, cx| {
+            state.update(cx, |s, _| {
+                s.settings.theme.language = lang.clone();
+                s.mark_changed();
+            });
+        })
+        .child(div().text_sm().text_color(text_color).child(label))
 }
 
 /// 渲染主题模式按钮

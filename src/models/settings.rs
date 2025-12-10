@@ -40,9 +40,26 @@ pub enum ThemeMode {
     System,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub enum Language {
+    #[default]
+    Chinese,
+    English,
+}
+
+impl Language {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Language::Chinese => "简体中文",
+            Language::English => "English",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ThemeSettings {
     pub mode: ThemeMode,
+    pub language: Language,
     pub accent_color: String,
     pub ui_font_family: String,
     pub ui_font_size: u32,
@@ -52,6 +69,7 @@ impl Default for ThemeSettings {
     fn default() -> Self {
         Self {
             mode: ThemeMode::Dark,
+            language: Language::Chinese,
             accent_color: "#3b82f6".to_string(), // Blue
             ui_font_family: "system-ui".to_string(),
             ui_font_size: 14,

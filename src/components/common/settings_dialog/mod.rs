@@ -1,6 +1,8 @@
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::button::Button;
 use gpui_component::input::{Input, InputState, NumberInput};
+use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::switch::Switch;
 
 use crate::components::common::icon::render_icon;
@@ -747,7 +749,7 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                         .children(
                             ui_font_family_input
                                 .as_ref()
-                                .map(|input| render_input_row("界面字体", input)),
+                                .map(|input| render_font_input_row("界面字体", input, UI_FONTS)),
                         )
                         .children(
                             ui_font_size_input
@@ -868,9 +870,9 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                         .flex_col()
                         .gap_3()
                         .children(
-                            font_family_input
-                                .as_ref()
-                                .map(|input| render_input_row("终端字体", input)),
+                            font_family_input.as_ref().map(|input| {
+                                render_font_input_row("终端字体", input, TERMINAL_FONTS)
+                            }),
                         )
                         .children(
                             font_size_input
@@ -898,7 +900,18 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                 .flex_col()
                 .gap_3()
                 .child(render_section_title("配色方案"))
-                .child(render_setting_row("终端主题", &terminal.color_scheme)),
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(render_theme_select_row(
+                            "终端主题",
+                            &terminal.color_scheme,
+                            TERMINAL_THEMES,
+                            state.clone(),
+                        )),
+                ),
         )
         // 显示
         .child(
@@ -1113,7 +1126,14 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
 
 /// 渲染监控设置面板
 fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
-    let monitor = &state.read(cx).settings.monitor;
+    let state_read = state.read(cx);
+    let monitor = &state_read.settings.monitor;
+
+    // 获取输入状态
+    let history_retention_input = state_read.history_retention_input.clone();
+    let cpu_threshold_input = state_read.cpu_threshold_input.clone();
+    let memory_threshold_input = state_read.memory_threshold_input.clone();
+    let disk_threshold_input = state_read.disk_threshold_input.clone();
 
     div()
         .flex()
@@ -1130,18 +1150,18 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                     div()
                         .flex()
                         .flex_col()
-                        .gap_2()
-                        .child(render_setting_row(
-                            "历史保留",
-                            &format!("{} 分钟", monitor.history_retention_minutes),
-                        ))
-                        .child(render_setting_row(
+                        .gap_3()
+                        .children(
+                            history_retention_input
+                                .as_ref()
+                                .map(|input| render_number_row("历史保留(分钟)", input)),
+                        )
+                        .child(render_switch_row(
+                            "monitor-auto-deploy",
                             "自动部署Agent",
-                            if monitor.auto_deploy_agent {
-                                "是"
-                            } else {
-                                "否"
-                            },
+                            monitor.auto_deploy_agent,
+                            state.clone(),
+                            |s, v| s.settings.monitor.auto_deploy_agent = v,
                         )),
                 ),
         )
@@ -1157,33 +1177,33 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "monitor-show-cpu",
                             "CPU",
-                            if monitor.show_cpu { "显示" } else { "隐藏" },
+                            monitor.show_cpu,
+                            state.clone(),
+                            |s, v| s.settings.monitor.show_cpu = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "monitor-show-memory",
                             "内存",
-                            if monitor.show_memory {
-                                "显示"
-                            } else {
-                                "隐藏"
-                            },
+                            monitor.show_memory,
+                            state.clone(),
+                            |s, v| s.settings.monitor.show_memory = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "monitor-show-disk",
                             "磁盘",
-                            if monitor.show_disk {
-                                "显示"
-                            } else {
-                                "隐藏"
-                            },
+                            monitor.show_disk,
+                            state.clone(),
+                            |s, v| s.settings.monitor.show_disk = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "monitor-show-network",
                             "网络",
-                            if monitor.show_network {
-                                "显示"
-                            } else {
-                                "隐藏"
-                            },
+                            monitor.show_network,
+                            state.clone(),
+                            |s, v| s.settings.monitor.show_network = v,
                         )),
                 ),
         )
@@ -1198,19 +1218,22 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                     div()
                         .flex()
                         .flex_col()
-                        .gap_2()
-                        .child(render_setting_row(
-                            "CPU",
-                            &format!("{}%", monitor.cpu_alert_threshold),
-                        ))
-                        .child(render_setting_row(
-                            "内存",
-                            &format!("{}%", monitor.memory_alert_threshold),
-                        ))
-                        .child(render_setting_row(
-                            "磁盘",
-                            &format!("{}%", monitor.disk_alert_threshold),
-                        )),
+                        .gap_3()
+                        .children(
+                            cpu_threshold_input
+                                .as_ref()
+                                .map(|input| render_number_row("CPU (%)", input)),
+                        )
+                        .children(
+                            memory_threshold_input
+                                .as_ref()
+                                .map(|input| render_number_row("内存 (%)", input)),
+                        )
+                        .children(
+                            disk_threshold_input
+                                .as_ref()
+                                .map(|input| render_number_row("磁盘 (%)", input)),
+                        ),
                 ),
         )
 }
@@ -1586,15 +1609,172 @@ fn render_input_row(label: &'static str, input: &Entity<InputState>) -> impl Int
                 .text_color(rgb(0x475569))
                 .child(label),
         )
+        .child(div().w(px(200.)).child(Input::new(input).appearance(true)))
+}
+
+/// 渲染字体输入框（带下拉选择按钮）
+fn render_font_input_row(
+    label: &'static str,
+    input: &Entity<InputState>,
+    fonts: &[&'static str],
+) -> impl IntoElement {
+    let input_clone = input.clone();
+    let fonts = fonts.to_vec();
+
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_2()
         .child(
             div()
-                .flex_1()
-                .max_w(px(200.))
-                .child(Input::new(input).appearance(true)),
+                .w(px(120.))
+                .text_sm()
+                .text_color(rgb(0x475569))
+                .child(label),
+        )
+        .child(
+            div()
+                .w(px(200.))
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(div().flex_1().child(Input::new(input).appearance(true)))
+                .child(
+                    Button::new("font-dropdown")
+                        .outline()
+                        .compact()
+                        .dropdown_caret(true)
+                        .dropdown_menu(move |menu, _, _| {
+                            let mut menu = menu;
+                            for font in &fonts {
+                                let font_name: SharedString = (*font).into();
+                                let input_for_click = input_clone.clone();
+                                let font_val = font.to_string();
+                                menu = menu.item(PopupMenuItem::new(font_name).on_click(
+                                    move |_, window, cx| {
+                                        input_for_click.update(cx, |state, cx| {
+                                            state.set_value(font_val.clone(), window, cx);
+                                        });
+                                    },
+                                ));
+                            }
+                            menu
+                        }),
+                ),
+        )
+}
+
+/// 常用界面字体
+const UI_FONTS: &[&str] = &[
+    "PingFang SC",
+    "SF Pro",
+    "Helvetica Neue",
+    "Microsoft YaHei",
+    "Source Han Sans SC",
+    "Noto Sans SC",
+    "Arial",
+    "system-ui",
+];
+
+/// 常用终端等宽字体
+const TERMINAL_FONTS: &[&str] = &[
+    "JetBrains Mono",
+    "Fira Code",
+    "SF Mono",
+    "Menlo",
+    "Consolas",
+    "Monaco",
+    "Source Code Pro",
+    "Hack",
+    "IBM Plex Mono",
+];
+
+/// 常用终端主题
+const TERMINAL_THEMES: &[&str] = &[
+    "One Dark",
+    "Dracula",
+    "Solarized Dark",
+    "Solarized Light",
+    "Nord",
+    "Monokai",
+    "Gruvbox Dark",
+    "Tokyo Night",
+    "GitHub Dark",
+];
+
+/// 渲染主题选择行（带下拉菜单）
+fn render_theme_select_row(
+    label: &'static str,
+    current_value: &str,
+    themes: &'static [&'static str],
+    state: Entity<SettingsDialogState>,
+) -> impl IntoElement {
+    let current = current_value.to_string();
+
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_2()
+        .child(
+            div()
+                .w(px(120.))
+                .text_sm()
+                .text_color(rgb(0x475569))
+                .child(label),
+        )
+        .child(
+            div()
+                .w(px(200.))
+                .flex()
+                .items_center()
+                .gap_1()
+                // 显示当前值的文本框样式
+                .child(
+                    div()
+                        .flex_1()
+                        .h(px(32.))
+                        .px_3()
+                        .bg(rgb(0xffffff))
+                        .border_1()
+                        .border_color(rgb(0xe2e8f0))
+                        .rounded_md()
+                        .flex()
+                        .items_center()
+                        .text_sm()
+                        .text_color(rgb(0x1e293b))
+                        .child(current.clone()),
+                )
+                // 下拉按钮
+                .child(
+                    Button::new("theme-dropdown")
+                        .outline()
+                        .compact()
+                        .dropdown_caret(true)
+                        .dropdown_menu(move |menu, _, _| {
+                            let mut menu = menu;
+                            for theme in themes {
+                                let theme_name: SharedString = (*theme).into();
+                                let theme_val = theme.to_string();
+                                let state_clone = state.clone();
+                                menu = menu.item(PopupMenuItem::new(theme_name).on_click(
+                                    move |_, _, cx| {
+                                        state_clone.update(cx, |s, _| {
+                                            s.settings.terminal.color_scheme = theme_val.clone();
+                                            s.mark_changed();
+                                        });
+                                    },
+                                ));
+                            }
+                            menu
+                        }),
+                ),
         )
 }
 
 /// 渲染带数字输入框的设置行（带 +/- 按钮）
+
 fn render_number_row(label: &'static str, input: &Entity<InputState>) -> impl IntoElement {
     div()
         .flex()
@@ -1610,7 +1790,7 @@ fn render_number_row(label: &'static str, input: &Entity<InputState>) -> impl In
         )
         .child(
             div()
-                .w(px(140.))
+                .w(px(200.))
                 .child(NumberInput::new(input).appearance(true)),
         )
 }

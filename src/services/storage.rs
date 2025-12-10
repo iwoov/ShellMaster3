@@ -29,13 +29,9 @@ pub fn get_servers_file() -> Result<PathBuf> {
 pub fn load_servers() -> Result<ServerConfig> {
     let path = get_servers_file()?;
     if !path.exists() {
-        // 返回默认配置
+        // 返回空配置，不创建默认分组
         return Ok(ServerConfig {
-            groups: vec![ServerGroupData {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: "默认分组".to_string(),
-                icon_path: "icons/server.svg".to_string(),
-            }],
+            groups: vec![],
             servers: vec![],
         });
     }
@@ -88,6 +84,17 @@ pub fn update_server(server: ServerData) -> Result<()> {
 pub fn delete_server(server_id: &str) -> Result<()> {
     let mut config = load_servers()?;
     config.servers.retain(|s| s.id != server_id);
+
+    // 自动删除空分组（没有服务器的分组）
+    let groups_with_servers: std::collections::HashSet<String> = config
+        .servers
+        .iter()
+        .filter_map(|s| s.group_id.clone())
+        .collect();
+    config
+        .groups
+        .retain(|g| groups_with_servers.contains(&g.id));
+
     save_servers(&config)?;
     Ok(())
 }

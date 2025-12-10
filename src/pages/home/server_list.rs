@@ -30,6 +30,10 @@ pub fn render_hosts_content(
 ) -> impl IntoElement {
     let dialog_state_for_list = dialog_state.clone();
     let dialog_state_for_card = dialog_state.clone();
+    let dialog_state_for_empty = dialog_state.clone();
+
+    // 检查是否有任何服务器
+    let has_servers = server_groups.iter().any(|g| !g.servers.is_empty());
 
     div()
         .flex_1()
@@ -38,15 +42,20 @@ pub fn render_hosts_content(
         .bg(rgb(0xffffff))
         .flex()
         .flex_col()
-        .child(
+        .child(if has_servers {
+            // 有服务器时显示工具栏
             div()
                 .flex_shrink_0() // 不压缩
                 .p_6()
                 .pb_4()
-                .child(render_toolbar(view_mode, view_state, dialog_state)),
-        )
-        .child(
-            // 服务器列表/卡片（可滚动）
+                .child(render_toolbar(view_mode, view_state, dialog_state))
+                .into_any_element()
+        } else {
+            // 没有服务器时不显示工具栏
+            div().into_any_element()
+        })
+        .child(if has_servers {
+            // 有服务器时显示服务器列表/卡片
             div()
                 .id("server-list-scroll")
                 .flex_1()
@@ -60,8 +69,12 @@ pub fn render_hosts_content(
                     ViewMode::Card => {
                         render_card_view(server_groups, dialog_state_for_card).into_any_element()
                     }
-                }),
-        )
+                })
+                .into_any_element()
+        } else {
+            // 没有服务器时显示空状态
+            render_empty_state(dialog_state_for_empty).into_any_element()
+        })
 }
 
 /// 渲染工具栏
@@ -629,6 +642,75 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
                             });
                         })
                         .child(render_icon(icons::TRASH, rgb(0xef4444).into())),
+                ),
+        )
+}
+
+/// 渲染空状态（没有服务器时显示）
+fn render_empty_state(dialog_state: Entity<ServerDialogState>) -> impl IntoElement {
+    div()
+        .flex_1()
+        .h_full()
+        .flex()
+        .flex_col()
+        .justify_center()
+        .items_center()
+        .gap_6()
+        .child(
+            // 服务器图标
+            div()
+                .w_20()
+                .h_20()
+                .rounded_2xl()
+                .bg(rgb(0xf3f4f6))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(render_icon(icons::SERVER, rgb(0x9ca3af).into())),
+        )
+        .child(
+            // 提示文字
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xl()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(rgb(0x6b7280))
+                        .child("暂无服务器"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(0x9ca3af))
+                        .child("点击下方按钮添加您的第一台服务器"),
+                ),
+        )
+        .child(
+            // 添加服务器按钮
+            div()
+                .id("empty-add-server-btn")
+                .px_6()
+                .py_3()
+                .bg(rgb(0x3b82f6))
+                .rounded_lg()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(0x2563eb)))
+                .flex()
+                .items_center()
+                .gap_2()
+                .on_click(move |_, _, cx| {
+                    dialog_state.update(cx, |s, _| s.open_add());
+                })
+                .child(render_icon(icons::PLUS, rgb(0xffffff).into()))
+                .child(
+                    div()
+                        .text_base()
+                        .text_color(rgb(0xffffff))
+                        .child("添加服务器"),
                 ),
         )
 }

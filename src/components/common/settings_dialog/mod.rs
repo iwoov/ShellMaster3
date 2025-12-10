@@ -9,6 +9,7 @@ use gpui_component::ActiveTheme;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
+use crate::i18n;
 use crate::models::settings::{AppSettings, Language, ThemeMode};
 use crate::services::storage;
 
@@ -28,17 +29,17 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
-    pub fn label(&self) -> &'static str {
+    pub fn label_key(&self) -> &'static str {
         match self {
-            SettingsSection::Theme => "主题设置",
-            SettingsSection::Terminal => "终端设置",
-            SettingsSection::KeyBindings => "按键绑定",
-            SettingsSection::Sftp => "SFTP 设置",
-            SettingsSection::Monitor => "监控设置",
-            SettingsSection::Connection => "连接设置",
-            SettingsSection::Sync => "数据同步",
-            SettingsSection::System => "系统配置",
-            SettingsSection::About => "关于",
+            SettingsSection::Theme => "settings.nav.theme",
+            SettingsSection::Terminal => "settings.nav.terminal",
+            SettingsSection::KeyBindings => "settings.nav.keybindings",
+            SettingsSection::Sftp => "settings.nav.sftp",
+            SettingsSection::Monitor => "settings.nav.monitor",
+            SettingsSection::Connection => "settings.nav.connection",
+            SettingsSection::Sync => "settings.nav.sync",
+            SettingsSection::System => "settings.nav.system",
+            SettingsSection::About => "settings.nav.about",
         }
     }
 
@@ -533,6 +534,7 @@ fn render_nav_item(
     let hover_bg = cx.theme().muted;
     let icon_color = cx.theme().muted_foreground;
     let text_color = cx.theme().foreground;
+    let lang = &state.read(cx).settings.theme.language;
 
     div()
         .id(SharedString::from(format!("settings-nav-{:?}", section)))
@@ -554,7 +556,7 @@ fn render_nav_item(
             div()
                 .text_sm()
                 .text_color(text_color)
-                .child(section.label()),
+                .child(i18n::t(lang, section.label_key())),
         )
 }
 
@@ -589,7 +591,12 @@ fn render_right_content(
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(title_color)
-                        .child("设置"),
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(title_color)
+                        .child(i18n::t(
+                            &state.read(cx).settings.theme.language,
+                            "settings.title",
+                        )),
                 ),
         )
         // 内容区域
@@ -635,6 +642,7 @@ fn render_footer_buttons(
     let primary_bg = cx.theme().primary;
     let primary_hover = cx.theme().primary_hover;
     let primary_fg = cx.theme().primary_foreground;
+    let lang = &state_for_cancel.read(cx).settings.theme.language;
 
     div()
         .h(px(64.))
@@ -661,7 +669,12 @@ fn render_footer_buttons(
                 .on_click(move |_, _, cx| {
                     state_for_cancel.update(cx, |s, _| s.close());
                 })
-                .child(div().text_sm().text_color(text_color).child("取消")),
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(text_color)
+                        .child(i18n::t(lang, "common.cancel")),
+                ),
         )
         // 保存按钮
         .child(
@@ -680,7 +693,12 @@ fn render_footer_buttons(
                         s.close();
                     });
                 })
-                .child(div().text_sm().text_color(primary_fg).child("保存")),
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(primary_fg)
+                        .child(i18n::t(lang, "common.save")),
+                ),
         )
 }
 
@@ -706,7 +724,13 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("语言 / Language", cx))
+                .child(render_section_title(
+                    i18n::t(
+                        &state.read(cx).settings.theme.language,
+                        "settings.theme.language",
+                    ),
+                    cx,
+                ))
                 .child(
                     div()
                         .flex()
@@ -731,7 +755,13 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("外观模式", cx))
+                .child(render_section_title(
+                    i18n::t(
+                        &state.read(cx).settings.theme.language,
+                        "settings.theme.mode",
+                    ),
+                    cx,
+                ))
                 .child(
                     div()
                         .flex()
@@ -739,21 +769,30 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                         .child(render_theme_mode_button(
                             state.clone(),
                             ThemeMode::Light,
-                            "浅色模式",
+                            i18n::t(
+                                &state.read(cx).settings.theme.language,
+                                "settings.theme.mode.light",
+                            ),
                             current_mode == ThemeMode::Light,
                             cx,
                         ))
                         .child(render_theme_mode_button(
                             state.clone(),
                             ThemeMode::Dark,
-                            "深色模式",
+                            i18n::t(
+                                &state.read(cx).settings.theme.language,
+                                "settings.theme.mode.dark",
+                            ),
                             current_mode == ThemeMode::Dark,
                             cx,
                         ))
                         .child(render_theme_mode_button(
                             state.clone(),
                             ThemeMode::System,
-                            "跟随系统",
+                            i18n::t(
+                                &state.read(cx).settings.theme.language,
+                                "settings.theme.mode.system",
+                            ),
                             current_mode == ThemeMode::System,
                             cx,
                         )),
@@ -765,22 +804,39 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("字体设置", cx))
+                .child(render_section_title(
+                    i18n::t(
+                        &state.read(cx).settings.theme.language,
+                        "settings.theme.font",
+                    ),
+                    cx,
+                ))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .gap_3()
-                        .children(
-                            ui_font_family_input.as_ref().map(|input| {
-                                render_font_input_row(cx, "界面字体", input, UI_FONTS)
-                            }),
-                        )
-                        .children(
-                            ui_font_size_input
-                                .as_ref()
-                                .map(|input| render_number_row("界面字号", input, cx)),
-                        ),
+                        .children(ui_font_family_input.as_ref().map(|input| {
+                            render_font_input_row(
+                                cx,
+                                i18n::t(
+                                    &state.read(cx).settings.theme.language,
+                                    "settings.theme.font_family",
+                                ),
+                                input,
+                                UI_FONTS,
+                            )
+                        }))
+                        .children(ui_font_size_input.as_ref().map(|input| {
+                            render_number_row(
+                                i18n::t(
+                                    &state.read(cx).settings.theme.language,
+                                    "settings.theme.font_size",
+                                ),
+                                input,
+                                cx,
+                            )
+                        })),
                 ),
         )
 }

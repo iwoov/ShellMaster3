@@ -12,6 +12,7 @@ mod models;
 mod pages;
 
 // 暂未使用，保留结构
+mod i18n;
 mod router;
 mod services;
 mod state;

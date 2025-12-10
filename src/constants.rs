@@ -17,7 +17,6 @@ pub mod icons {
     pub const LINK: &str = "icons/link.svg";
     pub const GLOBE: &str = "icons/globe.svg";
     pub const LOCK: &str = "icons/lock.svg";
-    #[allow(dead_code)]
     pub const FOLDER_OPEN: &str = "icons/folder-open.svg";
     pub const FOLDER: &str = "icons/folder.svg";
     pub const CHEVRON_DOWN: &str = "icons/chevron-down.svg";

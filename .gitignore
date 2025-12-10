@@ -26,4 +26,5 @@ Thumbs.db
 # Environment
 .env
 .env.local
-/target/*
+target/*
+docs/*

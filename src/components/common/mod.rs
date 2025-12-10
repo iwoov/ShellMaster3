@@ -5,3 +5,4 @@ pub mod dialog;
 pub mod icon;
 pub mod input;
 pub mod server_dialog;
+pub mod settings_dialog;

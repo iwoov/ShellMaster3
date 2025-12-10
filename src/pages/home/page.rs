@@ -6,6 +6,9 @@ use super::server_list::{render_hosts_content, render_placeholder, ViewMode, Vie
 use super::sidebar::{render_sidebar, MenuType, SidebarState};
 use super::titlebar::render_titlebar;
 use crate::components::common::server_dialog::{render_server_dialog_overlay, ServerDialogState};
+use crate::components::common::settings_dialog::{
+    render_settings_dialog_overlay, SettingsDialogState,
+};
 use crate::constants::icons;
 use crate::models::{HistoryItem, Server, ServerGroup};
 
@@ -16,6 +19,7 @@ pub struct HomePage {
     pub sidebar_state: Entity<SidebarState>,
     pub view_mode_state: Entity<ViewModeState>,
     pub dialog_state: Entity<ServerDialogState>,
+    pub settings_dialog_state: Entity<SettingsDialogState>,
 }
 
 impl HomePage {
@@ -29,6 +33,7 @@ impl HomePage {
         });
 
         let dialog_state = cx.new(|_| ServerDialogState::default());
+        let settings_dialog_state = cx.new(|_| SettingsDialogState::default());
 
         // 从存储加载服务器数据
         let server_groups = Self::load_server_groups();
@@ -48,6 +53,7 @@ impl HomePage {
             sidebar_state,
             view_mode_state,
             dialog_state,
+            settings_dialog_state,
         }
     }
 
@@ -155,7 +161,9 @@ impl Render for HomePage {
         let sidebar_state = self.sidebar_state.clone();
         let selected_menu = self.sidebar_state.read(cx).selected_menu;
         let dialog_visible = self.dialog_state.read(cx).visible;
+        let settings_dialog_visible = self.settings_dialog_state.read(cx).visible;
         let dialog_state = self.dialog_state.clone();
+        let settings_dialog_state = self.settings_dialog_state.clone();
 
         // 新布局：sidebar 在左侧从顶到底，右侧是 titlebar + content
         div()
@@ -164,7 +172,12 @@ impl Render for HomePage {
             .flex()
             .relative() // 让弹窗可以绝对定位
             // 左侧 sidebar（从顶到底）
-            .child(render_sidebar(sidebar_state, selected_menu, &history))
+            .child(render_sidebar(
+                sidebar_state,
+                selected_menu,
+                &history,
+                self.settings_dialog_state.clone(),
+            ))
             // 右侧区域（titlebar + content）
             .child(
                 div()
@@ -175,13 +188,19 @@ impl Render for HomePage {
                     .child(render_titlebar())
                     .child(self.render_content(selected_menu, cx)),
             )
-            // 条件渲染弹窗
+            // 服务器弹窗
             .children(if dialog_visible {
                 // 确保输入框已创建
                 self.dialog_state.update(cx, |state, cx| {
                     state.ensure_inputs_created(window, cx);
                 });
                 Some(render_server_dialog_overlay(dialog_state, cx))
+            } else {
+                None
+            })
+            // 设置弹窗
+            .children(if settings_dialog_visible {
+                Some(render_settings_dialog_overlay(settings_dialog_state, cx))
             } else {
                 None
             })

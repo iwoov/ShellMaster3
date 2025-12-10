@@ -3,6 +3,7 @@
 use gpui::*;
 
 use crate::components::common::icon::render_icon;
+use crate::components::common::settings_dialog::SettingsDialogState;
 use crate::constants::icons;
 use crate::models::HistoryItem;
 
@@ -54,6 +55,7 @@ pub fn render_sidebar(
     state: Entity<SidebarState>,
     selected_menu: MenuType,
     history: &[HistoryItem],
+    settings_dialog_state: Entity<SettingsDialogState>,
 ) -> impl IntoElement {
     let menus = [
         MenuType::Hosts,
@@ -115,6 +117,7 @@ pub fn render_sidebar(
             // 底部设置按钮
             div().p_2().child(
                 div()
+                    .id("settings-btn")
                     .px_3()
                     .py_2()
                     .rounded_md()
@@ -123,6 +126,9 @@ pub fn render_sidebar(
                     .flex()
                     .items_center()
                     .gap_2()
+                    .on_click(move |_, _, cx| {
+                        settings_dialog_state.update(cx, |s, _| s.open());
+                    })
                     .child(render_icon(icons::SETTINGS, rgb(0x6b7280).into()))
                     .child(div().text_sm().text_color(rgb(0x374151)).child("Settings")),
             ),

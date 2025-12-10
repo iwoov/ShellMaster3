@@ -104,3 +104,31 @@ pub fn get_groups() -> Result<Vec<ServerGroupData>> {
     let config = load_servers()?;
     Ok(config.groups)
 }
+
+// ======================== Settings 配置持久化 ========================
+
+use crate::models::AppSettings;
+
+/// 获取设置配置文件路径
+pub fn get_settings_file() -> Result<PathBuf> {
+    Ok(get_config_dir()?.join("settings.json"))
+}
+
+/// 加载应用设置
+pub fn load_settings() -> Result<AppSettings> {
+    let path = get_settings_file()?;
+    if !path.exists() {
+        return Ok(AppSettings::default());
+    }
+    let content = fs::read_to_string(&path).context("无法读取设置配置文件")?;
+    let settings: AppSettings = serde_json::from_str(&content).context("无法解析设置配置文件")?;
+    Ok(settings)
+}
+
+/// 保存应用设置
+pub fn save_settings(settings: &AppSettings) -> Result<()> {
+    let path = get_settings_file()?;
+    let content = serde_json::to_string_pretty(settings).context("无法序列化设置配置")?;
+    fs::write(&path, content).context("无法写入设置配置文件")?;
+    Ok(())
+}

@@ -1,13 +1,24 @@
+// 子模块声明
+pub mod helpers;
+pub mod panels;
+
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::input::InputState;
-use gpui_component::menu::DropdownMenu; // 导入 DropdownMenu trait
+
 use gpui_component::ActiveTheme;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
+use crate::i18n;
 use crate::models::server::{AuthType, ProxyConfig, ProxyType, ServerData};
+use crate::models::settings::Language;
 use crate::services::storage;
+
+use panels::{
+    render_basic_info_form, render_jump_host_form, render_other_settings_form,
+    render_proxy_settings_form,
+};
 
 /// 左侧导航菜单类型
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -97,10 +108,16 @@ impl Default for ServerDialogState {
 impl ServerDialogState {
     /// 确保输入框已创建（在有 window 上下文时调用）
     pub fn ensure_inputs_created(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // 加载当前语言用于占位符文本
+        let lang = storage::load_settings()
+            .map(|s| s.theme.language)
+            .unwrap_or(Language::Chinese);
+
         // 分组输入
         if self.group_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.group_placeholder");
             self.group_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("选择或输入分组名称")));
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
             // 加载可用分组
             if let Ok(groups) = storage::get_groups() {
                 self.available_groups = groups.into_iter().map(|g| g.name).collect();
@@ -116,31 +133,35 @@ impl ServerDialogState {
             }
         }
         if self.label_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.label_placeholder");
             self.label_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("请输入服务器名称")));
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
         if self.host_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.host_placeholder");
             self.host_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("IP 或域名")));
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
         if self.port_input.is_none() {
-            self.port_input = Some(cx.new(|cx| {
-                let state = InputState::new(window, cx).placeholder("22");
-                state
-            }));
+            self.port_input = Some(cx.new(|cx| InputState::new(window, cx).placeholder("22")));
         }
         if self.username_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.username");
             self.username_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("用户名")));
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
         if self.password_input.is_none() {
-            self.password_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("密码").masked(true)));
+            let placeholder = i18n::t(&lang, "server_dialog.password");
+            self.password_input = Some(cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(placeholder)
+                    .masked(true)
+            }));
         }
         if self.private_key_input.is_none() {
-            self.private_key_input = Some(
-                cx.new(|cx| InputState::new(window, cx).placeholder("点击浏览选择私钥文件...")),
-            );
+            let placeholder = i18n::t(&lang, "server_dialog.private_key_placeholder");
+            self.private_key_input =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
         // 应用待设置的私钥路径
         if let Some(path) = self.pending_private_key_path.take() {
@@ -151,38 +172,42 @@ impl ServerDialogState {
             }
         }
         if self.passphrase_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.passphrase");
             self.passphrase_input = Some(cx.new(|cx| {
                 InputState::new(window, cx)
-                    .placeholder("私钥密码（可选）")
+                    .placeholder(placeholder)
                     .masked(true)
             }));
         }
 
         // 跳板机输入
         if self.jump_host_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.jump_host_placeholder");
             self.jump_host_input =
-                Some(cx.new(|cx| {
-                    InputState::new(window, cx).placeholder("输入跳板机地址 (Host:Port)")
-                }));
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
 
         // 代理输入
         if self.proxy_host_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.proxy_host");
             self.proxy_host_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("代理服务器地址")));
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
         if self.proxy_port_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.proxy_port");
             self.proxy_port_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("端口")));
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
         if self.proxy_username_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.proxy_username");
             self.proxy_username_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("代理用户名 (可选)")));
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
         if self.proxy_password_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.proxy_password");
             self.proxy_password_input = Some(cx.new(|cx| {
                 InputState::new(window, cx)
-                    .placeholder("代理密码 (可选)")
+                    .placeholder(placeholder)
                     .masked(true)
             }));
         }
@@ -288,6 +313,8 @@ impl ServerDialogState {
     }
 
     pub fn open_add(&mut self) {
+        // 重置所有输入框状态，让它们用当前语言重新创建
+        self.reset_inputs();
         self.visible = true;
         self.is_edit = false;
         self.edit_server_id = None;
@@ -296,11 +323,38 @@ impl ServerDialogState {
 
     /// 打开编辑服务器弹窗
     pub fn open_edit(&mut self, server_id: String) {
+        // 重置所有输入框状态，让它们用当前语言重新创建
+        self.reset_inputs();
         self.visible = true;
         self.is_edit = true;
         self.edit_server_id = Some(server_id);
         self.pending_load_edit_data = true;
         self.current_section = DialogSection::BasicInfo;
+    }
+
+    /// 重置所有输入框状态
+    fn reset_inputs(&mut self) {
+        self.group_input = None;
+        self.label_input = None;
+        self.host_input = None;
+        self.port_input = None;
+        self.username_input = None;
+        self.password_input = None;
+        self.private_key_input = None;
+        self.passphrase_input = None;
+        self.jump_host_input = None;
+        self.proxy_host_input = None;
+        self.proxy_port_input = None;
+        self.proxy_username_input = None;
+        self.proxy_password_input = None;
+        // 重置表单状态
+        self.auth_type = AuthType::Password;
+        self.enable_jump_host = false;
+        self.enable_proxy = false;
+        self.proxy_type = ProxyType::Http;
+        self.show_group_dropdown = false;
+        self.pending_group_value = None;
+        self.pending_private_key_path = None;
     }
 
     pub fn close(&mut self) {
@@ -539,11 +593,32 @@ fn render_dialog_content(state: Entity<ServerDialogState>, cx: &App) -> impl Int
 
 /// 渲染左侧导航菜单
 fn render_left_menu(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
+    // 加载当前语言
+    let lang = storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or(Language::Chinese);
+
     let sections = [
-        (DialogSection::BasicInfo, "基本信息", icons::SERVER),
-        (DialogSection::JumpHost, "跳板机", icons::LINK),
-        (DialogSection::ProxySettings, "代理设置", icons::GLOBE),
-        (DialogSection::OtherSettings, "其他设置", icons::SETTINGS),
+        (
+            DialogSection::BasicInfo,
+            i18n::t(&lang, "server_dialog.nav.basic_info"),
+            icons::SERVER,
+        ),
+        (
+            DialogSection::JumpHost,
+            i18n::t(&lang, "server_dialog.nav.jump_host"),
+            icons::LINK,
+        ),
+        (
+            DialogSection::ProxySettings,
+            i18n::t(&lang, "server_dialog.nav.proxy"),
+            icons::GLOBE,
+        ),
+        (
+            DialogSection::OtherSettings,
+            i18n::t(&lang, "server_dialog.nav.other"),
+            icons::SETTINGS,
+        ),
     ];
 
     let sidebar_bg = crate::theme::sidebar_color(cx);
@@ -608,6 +683,17 @@ fn render_right_content(
     state_for_cancel: Entity<ServerDialogState>,
     cx: &App,
 ) -> impl IntoElement {
+    // 加载当前语言和编辑模式
+    let lang = storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or(Language::Chinese);
+    let is_edit = state.read(cx).is_edit;
+    let title = if is_edit {
+        i18n::t(&lang, "server_dialog.edit_title")
+    } else {
+        i18n::t(&lang, "server_dialog.add_title")
+    };
+
     div()
         .flex_1()
         .h_full()
@@ -628,7 +714,7 @@ fn render_right_content(
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(cx.theme().foreground)
-                        .child("添加服务器"),
+                        .child(title),
                 ),
         )
         // 表单区域
@@ -660,632 +746,17 @@ fn render_right_content(
         .child(render_footer_buttons(state_for_cancel, cx))
 }
 
-/// 渲染基本信息表单
-fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
-    use gpui_component::input::Input;
-
-    let state_read = state.read(cx);
-    let auth_type = state_read.auth_type.clone();
-
-    // 预先准备输入框元素
-    let label_input = if let Some(input) = &state_read.label_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-
-    let host_input = if let Some(input) = &state_read.host_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-
-    let port_input = if let Some(input) = &state_read.port_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-
-    let username_input = if let Some(input) = &state_read.username_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-
-    let password_input = if let Some(input) = &state_read.password_input {
-        Input::new(input).mask_toggle().into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-
-    let private_key_input = if let Some(input) = &state_read.private_key_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-    let state_for_file_picker = state.clone();
-
-    let passphrase_input = if let Some(input) = &state_read.passphrase_input {
-        Input::new(input).mask_toggle().into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-
-    let state_for_group_dropdown = state.clone();
-    let current_group = state_read
-        .group_input
-        .as_ref()
-        .map(|input| input.read(cx).value().to_string())
-        .unwrap_or_default();
-    let available_groups = state_read.available_groups.clone();
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_3()
-        // 服务器分组（第一个选项）
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(render_form_label("服务器分组", icons::FOLDER, cx))
-                .child(
-                    // 使用全宽按钮作为下拉触发器，anchor 设为 TopLeft 以便菜单在正下方显示
-                    gpui_component::button::Button::new("group-dropdown")
-                        .w_full()
-                        .h(px(32.))
-                        .outline()
-                        .justify_start() // 内容左对齐
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .w(px(460.)) // 调整宽度更接近按钮实际宽度（520 - 32 内边距 - 按钮内边距）
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .text_sm()
-                                        .text_color(cx.theme().foreground)
-                                        .child(if current_group.is_empty() {
-                                            "选择或输入分组".to_string()
-                                        } else {
-                                            current_group.clone()
-                                        }),
-                                )
-                                .child(render_icon(
-                                    icons::CHEVRON_DOWN,
-                                    cx.theme().muted_foreground.into(),
-                                )),
-                        )
-                        .dropdown_menu_with_anchor(gpui::Corner::TopLeft, move |menu, _, _| {
-                            // 设置菜单宽度与按钮一致（右侧内容宽度 520 - 内边距 32）
-                            let mut menu = menu.min_w(px(488.));
-                            for group_name in &available_groups {
-                                let group_name_display: SharedString = group_name.clone().into();
-                                let group_val = group_name.clone();
-                                let state_clone = state_for_group_dropdown.clone();
-                                menu = menu.item(
-                                    gpui_component::menu::PopupMenuItem::new(group_name_display)
-                                        .on_click(move |_, _, cx| {
-                                            state_clone.update(cx, |s, _| {
-                                                s.pending_group_value = Some(group_val.clone());
-                                            });
-                                        }),
-                                );
-                            }
-                            menu
-                        }),
-                ),
-        )
-        // 服务器标签
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(render_form_label("服务器标签", icons::SERVER, cx))
-                .child(label_input),
-        )
-        // 主机地址
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(render_form_label("主机地址", icons::GLOBE, cx))
-                .child(host_input),
-        )
-        // 端口
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(render_form_label("端口", icons::LINK, cx))
-                .child(port_input),
-        )
-        // 用户名
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(render_form_label("用户名", icons::USER, cx))
-                .child(username_input),
-        )
-        // 认证方式切换
-        .child({
-            // 获取主题颜色用于切换按钮
-            let toggle_bg = cx.theme().muted;
-            let selected_bg = cx.theme().popover;
-            let unselected_bg = cx.theme().muted;
-            let selected_text = cx.theme().foreground;
-            let unselected_text = cx.theme().muted_foreground;
-            
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(render_form_label("认证方式", icons::LOCK, cx))
-                .child(
-                    div()
-                        .flex()
-                        .gap_1()
-                        .p_1()
-                        .bg(toggle_bg)
-                        .rounded_md()
-                        .child(render_auth_type_button(
-                            state.clone(),
-                            AuthType::Password,
-                            "密码",
-                            auth_type == AuthType::Password,
-                            selected_bg,
-                            unselected_bg,
-                            selected_text,
-                            unselected_text,
-                        ))
-                        .child(render_auth_type_button(
-                            state.clone(),
-                            AuthType::PublicKey,
-                            "公钥",
-                            auth_type == AuthType::PublicKey,
-                            selected_bg,
-                            unselected_bg,
-                            selected_text,
-                            unselected_text,
-                        )),
-                )
-        })
-        // 动态渲染认证字段
-        .children(match auth_type {
-            AuthType::Password => Some(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(render_form_label("密码", icons::LOCK, cx))
-                    .child(password_input)
-                    .into_any_element(),
-            ),
-            AuthType::PublicKey => Some(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(render_form_label("私钥路径", icons::CODE, cx))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(div().flex_1().child(private_key_input))
-                                    .child(
-                                        // 浏览按钮
-                                        div()
-                                            .id("browse-private-key-btn")
-                                            .px_3()
-                                            .py_1p5()
-                                            .bg(cx.theme().secondary)
-                                            .border_1()
-                                            .border_color(cx.theme().border)
-                                            .rounded_md()
-                                            .cursor_pointer()
-                                            .hover(move |s| s.bg(cx.theme().secondary_hover))
-                                            .on_click({
-                                                let state = state_for_file_picker.clone();
-                                                move |_, _, cx| {
-                                                    let state = state.clone();
-                                                    // 使用 gpui 原生文件选择 API
-                                                    let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-                                                        files: true,
-                                                        directories: false,
-                                                        multiple: false,
-                                                        prompt: Some("选择私钥文件".into()),
-                                                    });
-                                                    cx.spawn(async move |cx| {
-                                                        if let Ok(Ok(Some(paths))) = receiver.await {
-                                                            if let Some(path) = paths.first() {
-                                                                let path_str = path.to_string_lossy().to_string();
-                                                                // 设置待应用的私钥路径，下次渲染时会应用
-                                                                let _ = cx.update(|app| {
-                                                                    state.update(app, |s, _| {
-                                                                        s.pending_private_key_path = Some(path_str);
-                                                                        s.needs_refresh = true;
-                                                                    });
-                                                                });
-                                                            }
-                                                        }
-                                                    }).detach();
-                                                }
-                                            })
-                                            .child(render_icon(icons::FOLDER_OPEN, cx.theme().foreground.into())),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(render_form_label("私钥密码 (可选)", icons::LOCK, cx))
-                            .child(passphrase_input),
-                    )
-                    .into_any_element(),
-            ),
-        })
-}
-
-/// 渲染认证方式切换按钮
-fn render_auth_type_button(
-    state: Entity<ServerDialogState>,
-    auth_type: AuthType,
-    label: &'static str,
-    selected: bool,
-    selected_bg: gpui::Hsla,
-    unselected_bg: gpui::Hsla,
-    selected_text: gpui::Hsla,
-    unselected_text: gpui::Hsla,
-) -> impl IntoElement {
-    div()
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .py_1()
-        .rounded_sm()
-        .cursor_pointer()
-        .bg(if selected { selected_bg } else { unselected_bg })
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            state.update(cx, |s, _| {
-                s.auth_type = auth_type.clone();
-            });
-        })
-        .shadow(if selected {
-            vec![BoxShadow {
-                color: rgba(0x00000010).into(),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(2.),
-                spread_radius: px(0.),
-            }]
-        } else {
-            vec![]
-        })
-        .child(
-            div()
-                .text_sm()
-                .font_weight(if selected {
-                    FontWeight::MEDIUM
-                } else {
-                    FontWeight::NORMAL
-                })
-                .text_color(if selected {
-                    selected_text
-                } else {
-                    unselected_text
-                })
-                .child(label),
-        )
-}
-
-/// 渲染跳板机设置表单
-fn render_jump_host_form(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
-    use gpui_component::input::Input;
-
-    let state_read = state.read(cx);
-    let enabled = state_read.enable_jump_host;
-
-    let jump_host_input = if let Some(input) = &state_read.jump_host_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(render_form_label("启用跳板机", icons::LINK, cx))
-                .child({
-                    let state = state.clone();
-                    render_switch(enabled, move |_, _, cx| {
-                        state.update(cx, |s, _| {
-                            s.enable_jump_host = !s.enable_jump_host;
-                        });
-                    })
-                }),
-        )
-        .children(if enabled {
-            Some(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(render_form_label("跳板机地址", icons::SERVER, cx))
-                    .child(jump_host_input),
-            )
-        } else {
-            None
-        })
-}
-
-/// 渲染代理设置表单
-fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
-    use crate::models::server::ProxyType;
-    use gpui_component::input::Input;
-
-    let state_read = state.read(cx);
-    let enabled = state_read.enable_proxy;
-    let proxy_type = state_read.proxy_type.clone();
-
-    let host_input = if let Some(input) = &state_read.proxy_host_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-    let port_input = if let Some(input) = &state_read.proxy_port_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-    let username_input = if let Some(input) = &state_read.proxy_username_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-    let password_input = if let Some(input) = &state_read.proxy_password_input {
-        Input::new(input).mask_toggle().into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(render_form_label("启用代理", icons::GLOBE, cx))
-                .child({
-                    let state = state.clone();
-                    render_switch(enabled, move |_, _, cx| {
-                        state.update(cx, |s, _| {
-                            s.enable_proxy = !s.enable_proxy;
-                        });
-                    })
-                }),
-        )
-        .children(if enabled {
-            Some(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    // 代理类型
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child({
-                                let toggle_bg = cx.theme().muted;
-                                let selected_bg = cx.theme().popover;
-                                let unselected_bg = cx.theme().muted;
-                                let selected_text = cx.theme().foreground;
-                                let unselected_text = cx.theme().muted_foreground;
-
-                                div()
-                                    .flex()
-                                    .gap_1()
-                                    .p_1()
-                                    .bg(toggle_bg)
-                                    .rounded_md()
-                                    .child(render_proxy_type_button(
-                                        state.clone(),
-                                        ProxyType::Http,
-                                        "HTTP",
-                                        proxy_type == ProxyType::Http,
-                                        selected_bg,
-                                        unselected_bg,
-                                        selected_text,
-                                        unselected_text,
-                                    ))
-                                    .child(render_proxy_type_button(
-                                        state.clone(),
-                                        ProxyType::Socks5,
-                                        "SOCKS5",
-                                        proxy_type == ProxyType::Socks5,
-                                        selected_bg,
-                                        unselected_bg,
-                                        selected_text,
-                                        unselected_text,
-                                    ))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(render_form_label("主机地址", icons::SERVER, cx))
-                                    .child(host_input),
-                            )
-                            .child(
-                                div()
-                                    .w(px(100.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(render_form_label("端口", icons::LINK, cx))
-                                    .child(port_input),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(render_form_label("用户名 (可选)", icons::USER, cx))
-                            .child(username_input),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(render_form_label("密码 (可选)", icons::LOCK, cx))
-                            .child(password_input),
-                    ),
-            )
-        } else {
-            None
-        })
-}
-
-/// 渲染其他设置表单
-fn render_other_settings_form(_state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
-    div().flex().flex_col().gap_3().child(
-        div()
-            .text_sm()
-            .text_color(cx.theme().muted_foreground)
-            .child("暂无其他设置选项"),
-    )
-}
-
-/// 渲染开关组件 (使用 gpui-component Switch 保持一致性)
-fn render_switch(
-    checked: bool,
-    on_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
-) -> gpui_component::switch::Switch {
-    use gpui_component::switch::Switch;
-    
-    Switch::new("server-dialog-switch")
-        .checked(checked)
-        .on_click(move |new_val, window, cx| {
-            on_click(new_val, window, cx);
-        })
-}
-
-
-
-/// 渲染代理类型切换按钮 (复用 render_auth_type_button 逻辑)
-fn render_proxy_type_button(
-    state: Entity<ServerDialogState>,
-    proxy_type: crate::models::server::ProxyType,
-    label: &'static str,
-    selected: bool,
-    selected_bg: gpui::Hsla,
-    unselected_bg: gpui::Hsla,
-    selected_text: gpui::Hsla,
-    unselected_text: gpui::Hsla,
-) -> impl IntoElement {
-    div()
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .py_1()
-        .rounded_sm()
-        .cursor_pointer()
-        .bg(if selected {
-            selected_bg
-        } else {
-            unselected_bg
-        })
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            state.update(cx, |s, _| {
-                s.proxy_type = proxy_type.clone();
-            });
-        })
-        .shadow(if selected {
-            vec![BoxShadow {
-                color: rgba(0x00000010).into(),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(2.),
-                spread_radius: px(0.),
-            }]
-        } else {
-            vec![]
-        })
-        .child(
-            div()
-                .text_sm()
-                .font_weight(if selected {
-                    FontWeight::MEDIUM
-                } else {
-                    FontWeight::NORMAL
-                })
-                .text_color(if selected {
-                    selected_text
-                } else {
-                    unselected_text
-                })
-                .child(label),
-        )
-}
-
-/// 渲染表单标签
-fn render_form_label(label: &'static str, icon: &'static str, cx: &App) -> impl IntoElement {
-    let icon_color = cx.theme().muted_foreground;
-    let text_color = cx.theme().foreground;
-    
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .child(render_icon(icon, icon_color.into()))
-        .child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(text_color)
-                .child(label),
-        )
-}
-
-
 /// 渲染底部按钮
 fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
     let state_for_cancel = state.clone();
     let state_for_save = state.clone();
+
+    // 加载当前语言
+    let lang = storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or(Language::Chinese);
+    let cancel_text = i18n::t(&lang, "common.cancel");
+    let save_text = i18n::t(&lang, "common.save");
 
     let border_color = cx.theme().border;
     let secondary_bg = cx.theme().secondary;
@@ -1324,7 +795,7 @@ fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl Int
                 .on_click(move |_, _, cx| {
                     state_for_cancel.update(cx, |s, _| s.close());
                 })
-                .child(div().text_sm().text_color(text_color).child("取消")),
+                .child(div().text_sm().text_color(text_color).child(cancel_text)),
         )
         // 保存按钮
         .child(
@@ -1352,10 +823,10 @@ fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl Int
                             });
                         }
                         Err(e) => {
-                            eprintln!("保存服务器失败: {:?}", e);
+                            eprintln!("Failed to save server: {:?}", e);
                         }
                     }
                 })
-                .child(div().text_sm().text_color(primary_fg).child("保存")),
+                .child(div().text_sm().text_color(primary_fg).child(save_text)),
         )
 }

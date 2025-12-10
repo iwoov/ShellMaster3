@@ -161,11 +161,14 @@ fn zh_cn(key: &'static str) -> &'static str {
         "server_dialog.passphrase" => "私钥密码（可选）",
         "server_dialog.jump_host_address" => "跳板机地址",
         "server_dialog.jump_host_placeholder" => "输入跳板机地址 (Host:Port)",
+        "server_dialog.enable_jump_host" => "启用跳板机",
+        "server_dialog.enable_proxy" => "启用代理",
         "server_dialog.proxy_host" => "代理服务器地址",
         "server_dialog.proxy_port" => "端口",
         "server_dialog.proxy_username" => "代理用户名 (可选)",
         "server_dialog.proxy_password" => "代理密码 (可选)",
         "server_dialog.browse" => "浏览",
+        "server_dialog.no_other_settings" => "暂无其他设置选项",
 
         // 服务器列表
         "server_list.add_server" => "添加服务器",
@@ -337,11 +340,14 @@ fn en_us(key: &'static str) -> &'static str {
         "server_dialog.passphrase" => "Passphrase (optional)",
         "server_dialog.jump_host_address" => "Jump Host Address",
         "server_dialog.jump_host_placeholder" => "Enter jump host (Host:Port)",
+        "server_dialog.enable_jump_host" => "Enable Jump Host",
+        "server_dialog.enable_proxy" => "Enable Proxy",
         "server_dialog.proxy_host" => "Proxy Host",
         "server_dialog.proxy_port" => "Port",
         "server_dialog.proxy_username" => "Proxy Username (optional)",
         "server_dialog.proxy_password" => "Proxy Password (optional)",
         "server_dialog.browse" => "Browse",
+        "server_dialog.no_other_settings" => "No other settings available",
 
         // Server List
         "server_list.add_server" => "Add Server",

@@ -161,6 +161,11 @@ impl SettingsDialogState {
         self.current_section = SettingsSection::Theme;
         self.has_changes = false;
         // 清除输入状态以便重新加载
+        self.reset_inputs();
+    }
+
+    /// 重置所有输入框状态
+    fn reset_inputs(&mut self) {
         self.ui_font_family_input = None;
         self.ui_font_size_input = None;
         self.terminal_font_family_input = None;
@@ -176,6 +181,7 @@ impl SettingsDialogState {
         self.cpu_threshold_input = None;
         self.memory_threshold_input = None;
         self.disk_threshold_input = None;
+        self.concurrent_transfers_input = None;
         self.webdav_url_input = None;
         self.webdav_username_input = None;
         self.webdav_password_input = None;

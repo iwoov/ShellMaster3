@@ -200,6 +200,9 @@ impl Render for HomePage {
             })
             // 设置弹窗
             .children(if settings_dialog_visible {
+                self.settings_dialog_state.update(cx, |state, cx| {
+                    state.ensure_inputs_created(window, cx);
+                });
                 Some(render_settings_dialog_overlay(settings_dialog_state, cx))
             } else {
                 None

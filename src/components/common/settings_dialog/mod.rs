@@ -1,5 +1,7 @@
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::input::{Input, InputState, NumberInput};
+use gpui_component::switch::Switch;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
@@ -58,6 +60,36 @@ pub struct SettingsDialogState {
     pub settings: AppSettings,
     /// 标记设置是否有变更
     pub has_changes: bool,
+
+    // ============ 主题设置输入 ============
+    pub ui_font_family_input: Option<Entity<InputState>>,
+    pub ui_font_size_input: Option<Entity<InputState>>,
+
+    // ============ 终端设置输入 ============
+    pub terminal_font_family_input: Option<Entity<InputState>>,
+    pub terminal_font_size_input: Option<Entity<InputState>>,
+    pub terminal_line_height_input: Option<Entity<InputState>>,
+    pub scrollback_lines_input: Option<Entity<InputState>>,
+
+    // ============ 连接设置输入 ============
+    pub default_port_input: Option<Entity<InputState>>,
+    pub connection_timeout_input: Option<Entity<InputState>>,
+    pub keepalive_interval_input: Option<Entity<InputState>>,
+    pub reconnect_attempts_input: Option<Entity<InputState>>,
+    pub reconnect_interval_input: Option<Entity<InputState>>,
+
+    // ============ 监控设置输入 ============
+    pub history_retention_input: Option<Entity<InputState>>,
+    pub cpu_threshold_input: Option<Entity<InputState>>,
+    pub memory_threshold_input: Option<Entity<InputState>>,
+    pub disk_threshold_input: Option<Entity<InputState>>,
+
+    // ============ 同步设置输入 ============
+    pub webdav_url_input: Option<Entity<InputState>>,
+    pub webdav_path_input: Option<Entity<InputState>>,
+
+    // ============ 系统设置输入 ============
+    pub log_retention_input: Option<Entity<InputState>>,
 }
 
 impl Default for SettingsDialogState {
@@ -68,6 +100,30 @@ impl Default for SettingsDialogState {
             current_section: SettingsSection::Theme,
             settings,
             has_changes: false,
+            // 主题
+            ui_font_family_input: None,
+            ui_font_size_input: None,
+            // 终端
+            terminal_font_family_input: None,
+            terminal_font_size_input: None,
+            terminal_line_height_input: None,
+            scrollback_lines_input: None,
+            // 连接
+            default_port_input: None,
+            connection_timeout_input: None,
+            keepalive_interval_input: None,
+            reconnect_attempts_input: None,
+            reconnect_interval_input: None,
+            // 监控
+            history_retention_input: None,
+            cpu_threshold_input: None,
+            memory_threshold_input: None,
+            disk_threshold_input: None,
+            // 同步
+            webdav_url_input: None,
+            webdav_path_input: None,
+            // 系统
+            log_retention_input: None,
         }
     }
 }
@@ -79,6 +135,25 @@ impl SettingsDialogState {
         self.visible = true;
         self.current_section = SettingsSection::Theme;
         self.has_changes = false;
+        // 清除输入状态以便重新加载
+        self.ui_font_family_input = None;
+        self.ui_font_size_input = None;
+        self.terminal_font_family_input = None;
+        self.terminal_font_size_input = None;
+        self.terminal_line_height_input = None;
+        self.scrollback_lines_input = None;
+        self.default_port_input = None;
+        self.connection_timeout_input = None;
+        self.keepalive_interval_input = None;
+        self.reconnect_attempts_input = None;
+        self.reconnect_interval_input = None;
+        self.history_retention_input = None;
+        self.cpu_threshold_input = None;
+        self.memory_threshold_input = None;
+        self.disk_threshold_input = None;
+        self.webdav_url_input = None;
+        self.webdav_path_input = None;
+        self.log_retention_input = None;
     }
 
     pub fn close(&mut self) {
@@ -95,6 +170,262 @@ impl SettingsDialogState {
     /// 标记设置已变更
     pub fn mark_changed(&mut self) {
         self.has_changes = true;
+    }
+
+    /// 确保输入框已创建（在有 window 上下文时调用）
+    pub fn ensure_inputs_created(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // 主题设置
+        if self.ui_font_family_input.is_none() {
+            let value = self.settings.theme.ui_font_family.clone();
+            self.ui_font_family_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.ui_font_size_input.is_none() {
+            let value = self.settings.theme.ui_font_size.to_string();
+            self.ui_font_size_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+
+        // 终端设置
+        if self.terminal_font_family_input.is_none() {
+            let value = self.settings.terminal.font_family.clone();
+            self.terminal_font_family_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.terminal_font_size_input.is_none() {
+            let value = self.settings.terminal.font_size.to_string();
+            self.terminal_font_size_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.terminal_line_height_input.is_none() {
+            let value = format!("{:.1}", self.settings.terminal.line_height);
+            self.terminal_line_height_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.scrollback_lines_input.is_none() {
+            let value = self.settings.terminal.scrollback_lines.to_string();
+            self.scrollback_lines_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+
+        // 连接设置
+        if self.default_port_input.is_none() {
+            let value = self.settings.connection.default_port.to_string();
+            self.default_port_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.connection_timeout_input.is_none() {
+            let value = self.settings.connection.connection_timeout_secs.to_string();
+            self.connection_timeout_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.keepalive_interval_input.is_none() {
+            let value = self.settings.connection.keepalive_interval_secs.to_string();
+            self.keepalive_interval_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.reconnect_attempts_input.is_none() {
+            let value = self.settings.connection.reconnect_attempts.to_string();
+            self.reconnect_attempts_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.reconnect_interval_input.is_none() {
+            let value = self.settings.connection.reconnect_interval_secs.to_string();
+            self.reconnect_interval_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+
+        // 监控设置
+        if self.history_retention_input.is_none() {
+            let value = self.settings.monitor.history_retention_minutes.to_string();
+            self.history_retention_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.cpu_threshold_input.is_none() {
+            let value = self.settings.monitor.cpu_alert_threshold.to_string();
+            self.cpu_threshold_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.memory_threshold_input.is_none() {
+            let value = self.settings.monitor.memory_alert_threshold.to_string();
+            self.memory_threshold_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.disk_threshold_input.is_none() {
+            let value = self.settings.monitor.disk_alert_threshold.to_string();
+            self.disk_threshold_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+
+        // 同步设置
+        if self.webdav_url_input.is_none() {
+            let value = self.settings.sync.webdav_url.clone();
+            self.webdav_url_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx).placeholder("https://...");
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.webdav_path_input.is_none() {
+            let value = self.settings.sync.webdav_path.clone();
+            self.webdav_path_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx).placeholder("/shellmaster");
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+
+        // 系统设置
+        if self.log_retention_input.is_none() {
+            let value = self.settings.system.log_retention_days.to_string();
+            self.log_retention_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+    }
+
+    /// 从 InputState 同步值到 settings
+    pub fn sync_from_inputs(&mut self, cx: &App) {
+        // 主题
+        if let Some(input) = &self.ui_font_family_input {
+            self.settings.theme.ui_font_family = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.ui_font_size_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.theme.ui_font_size = v;
+            }
+        }
+
+        // 终端
+        if let Some(input) = &self.terminal_font_family_input {
+            self.settings.terminal.font_family = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.terminal_font_size_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.terminal.font_size = v;
+            }
+        }
+        if let Some(input) = &self.terminal_line_height_input {
+            if let Ok(v) = input.read(cx).value().parse::<f32>() {
+                self.settings.terminal.line_height = v;
+            }
+        }
+        if let Some(input) = &self.scrollback_lines_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.terminal.scrollback_lines = v;
+            }
+        }
+
+        // 连接
+        if let Some(input) = &self.default_port_input {
+            if let Ok(v) = input.read(cx).value().parse::<u16>() {
+                self.settings.connection.default_port = v;
+            }
+        }
+        if let Some(input) = &self.connection_timeout_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.connection.connection_timeout_secs = v;
+            }
+        }
+        if let Some(input) = &self.keepalive_interval_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.connection.keepalive_interval_secs = v;
+            }
+        }
+        if let Some(input) = &self.reconnect_attempts_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.connection.reconnect_attempts = v;
+            }
+        }
+        if let Some(input) = &self.reconnect_interval_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.connection.reconnect_interval_secs = v;
+            }
+        }
+
+        // 监控
+        if let Some(input) = &self.history_retention_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.monitor.history_retention_minutes = v;
+            }
+        }
+        if let Some(input) = &self.cpu_threshold_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.monitor.cpu_alert_threshold = v;
+            }
+        }
+        if let Some(input) = &self.memory_threshold_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.monitor.memory_alert_threshold = v;
+            }
+        }
+        if let Some(input) = &self.disk_threshold_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.monitor.disk_alert_threshold = v;
+            }
+        }
+
+        // 同步
+        if let Some(input) = &self.webdav_url_input {
+            self.settings.sync.webdav_url = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.webdav_path_input {
+            self.settings.sync.webdav_path = input.read(cx).value().to_string();
+        }
+
+        // 系统
+        if let Some(input) = &self.log_retention_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.system.log_retention_days = v;
+            }
+        }
     }
 }
 
@@ -321,7 +652,8 @@ fn render_footer_buttons(
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(0x2563eb)))
                 .on_click(move |_, _, cx| {
-                    state_for_save.update(cx, |s, _| {
+                    state_for_save.update(cx, |s, cx| {
+                        s.sync_from_inputs(cx);
                         s.save();
                         s.close();
                     });
@@ -337,6 +669,10 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
     let state_read = state.read(cx);
     let current_mode = state_read.settings.theme.mode.clone();
     let current_language = state_read.settings.theme.language.clone();
+
+    // 获取输入状态
+    let ui_font_family_input = state_read.ui_font_family_input.clone();
+    let ui_font_size_input = state_read.ui_font_size_input.clone();
 
     div()
         .flex()
@@ -407,15 +743,17 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                     div()
                         .flex()
                         .flex_col()
-                        .gap_2()
-                        .child(render_setting_row(
-                            "界面字体",
-                            &state_read.settings.theme.ui_font_family,
-                        ))
-                        .child(render_setting_row(
-                            "界面字号",
-                            &format!("{} px", state_read.settings.theme.ui_font_size),
-                        )),
+                        .gap_3()
+                        .children(
+                            ui_font_family_input
+                                .as_ref()
+                                .map(|input| render_input_row("界面字体", input)),
+                        )
+                        .children(
+                            ui_font_size_input
+                                .as_ref()
+                                .map(|input| render_number_row("界面字号", input)),
+                        ),
                 ),
         )
 }
@@ -507,6 +845,12 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
     let state_read = state.read(cx);
     let terminal = &state_read.settings.terminal;
 
+    // 获取输入状态
+    let font_family_input = state_read.terminal_font_family_input.clone();
+    let font_size_input = state_read.terminal_font_size_input.clone();
+    let line_height_input = state_read.terminal_line_height_input.clone();
+    let scrollback_input = state_read.scrollback_lines_input.clone();
+
     div()
         .flex()
         .flex_col()
@@ -522,19 +866,28 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                     div()
                         .flex()
                         .flex_col()
-                        .gap_2()
-                        .child(render_setting_row("终端字体", &terminal.font_family))
-                        .child(render_setting_row(
-                            "字号",
-                            &format!("{} px", terminal.font_size),
-                        ))
-                        .child(render_setting_row(
-                            "行高",
-                            &format!("{:.1}", terminal.line_height),
-                        ))
-                        .child(render_setting_row(
+                        .gap_3()
+                        .children(
+                            font_family_input
+                                .as_ref()
+                                .map(|input| render_input_row("终端字体", input)),
+                        )
+                        .children(
+                            font_size_input
+                                .as_ref()
+                                .map(|input| render_number_row("字号", input)),
+                        )
+                        .children(
+                            line_height_input
+                                .as_ref()
+                                .map(|input| render_number_row("行高", input)),
+                        )
+                        .child(render_switch_row(
+                            "terminal-ligatures",
                             "启用连字",
-                            if terminal.ligatures { "是" } else { "否" },
+                            terminal.ligatures,
+                            state.clone(),
+                            |s, v| s.settings.terminal.ligatures = v,
                         )),
                 ),
         )
@@ -558,15 +911,19 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                     div()
                         .flex()
                         .flex_col()
-                        .gap_2()
-                        .child(render_setting_row(
+                        .gap_3()
+                        .child(render_switch_row(
+                            "terminal-cursor-blink",
                             "光标闪烁",
-                            if terminal.cursor_blink { "是" } else { "否" },
+                            terminal.cursor_blink,
+                            state.clone(),
+                            |s, v| s.settings.terminal.cursor_blink = v,
                         ))
-                        .child(render_setting_row(
-                            "滚动缓冲区",
-                            &format!("{} 行", terminal.scrollback_lines),
-                        )),
+                        .children(
+                            scrollback_input
+                                .as_ref()
+                                .map(|input| render_number_row("滚动缓冲区", input)),
+                        ),
                 ),
         )
 }
@@ -676,13 +1033,19 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sftp-show-hidden",
                             "显示隐藏文件",
-                            if sftp.show_hidden_files { "是" } else { "否" },
+                            sftp.show_hidden_files,
+                            state.clone(),
+                            |s, v| s.settings.sftp.show_hidden_files = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sftp-folders-first",
                             "文件夹优先",
-                            if sftp.folders_first { "是" } else { "否" },
+                            sftp.folders_first,
+                            state.clone(),
+                            |s, v| s.settings.sftp.folders_first = v,
                         )),
                 ),
         )
@@ -702,17 +1065,19 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             "并发传输数",
                             &format!("{}", sftp.concurrent_transfers),
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sftp-preserve-timestamps",
                             "保留时间戳",
-                            if sftp.preserve_timestamps {
-                                "是"
-                            } else {
-                                "否"
-                            },
+                            sftp.preserve_timestamps,
+                            state.clone(),
+                            |s, v| s.settings.sftp.preserve_timestamps = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sftp-resume-transfers",
                             "断点续传",
-                            if sftp.resume_transfers { "是" } else { "否" },
+                            sftp.resume_transfers,
+                            state.clone(),
+                            |s, v| s.settings.sftp.resume_transfers = v,
                         )),
                 ),
         )
@@ -728,21 +1093,19 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sftp-builtin-editor",
                             "使用内置编辑器",
-                            if sftp.use_builtin_editor {
-                                "是"
-                            } else {
-                                "否"
-                            },
+                            sftp.use_builtin_editor,
+                            state.clone(),
+                            |s, v| s.settings.sftp.use_builtin_editor = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sftp-syntax-highlight",
                             "语法高亮",
-                            if sftp.syntax_highlighting {
-                                "是"
-                            } else {
-                                "否"
-                            },
+                            sftp.syntax_highlighting,
+                            state.clone(),
+                            |s, v| s.settings.sftp.syntax_highlighting = v,
                         )),
                 ),
         )
@@ -854,7 +1217,15 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
 
 /// 渲染连接设置面板
 fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
-    let conn = &state.read(cx).settings.connection;
+    let state_read = state.read(cx);
+    let conn = &state_read.settings.connection;
+
+    // 获取输入状态
+    let default_port_input = state_read.default_port_input.clone();
+    let connection_timeout_input = state_read.connection_timeout_input.clone();
+    let keepalive_interval_input = state_read.keepalive_interval_input.clone();
+    let reconnect_attempts_input = state_read.reconnect_attempts_input.clone();
+    let reconnect_interval_input = state_read.reconnect_interval_input.clone();
 
     div()
         .flex()
@@ -871,22 +1242,28 @@ fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                     div()
                         .flex()
                         .flex_col()
-                        .gap_2()
-                        .child(render_setting_row(
-                            "默认端口",
-                            &format!("{}", conn.default_port),
-                        ))
-                        .child(render_setting_row(
-                            "连接超时",
-                            &format!("{} 秒", conn.connection_timeout_secs),
-                        ))
-                        .child(render_setting_row(
-                            "心跳间隔",
-                            &format!("{} 秒", conn.keepalive_interval_secs),
-                        ))
-                        .child(render_setting_row(
+                        .gap_3()
+                        .children(
+                            default_port_input
+                                .as_ref()
+                                .map(|input| render_number_row("默认端口", input)),
+                        )
+                        .children(
+                            connection_timeout_input
+                                .as_ref()
+                                .map(|input| render_number_row("连接超时(秒)", input)),
+                        )
+                        .children(
+                            keepalive_interval_input
+                                .as_ref()
+                                .map(|input| render_number_row("心跳间隔(秒)", input)),
+                        )
+                        .child(render_switch_row(
+                            "conn-compression",
                             "启用压缩",
-                            if conn.compression { "是" } else { "否" },
+                            conn.compression,
+                            state.clone(),
+                            |s, v| s.settings.connection.compression = v,
                         )),
                 ),
         )
@@ -901,30 +1278,36 @@ fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                     div()
                         .flex()
                         .flex_col()
-                        .gap_2()
-                        .child(render_setting_row(
+                        .gap_3()
+                        .child(render_switch_row(
+                            "conn-auto-reconnect",
                             "自动重连",
-                            if conn.auto_reconnect {
-                                "启用"
-                            } else {
-                                "禁用"
-                            },
+                            conn.auto_reconnect,
+                            state.clone(),
+                            |s, v| s.settings.connection.auto_reconnect = v,
                         ))
-                        .child(render_setting_row(
-                            "重连次数",
-                            &format!("{} 次", conn.reconnect_attempts),
-                        ))
-                        .child(render_setting_row(
-                            "重连间隔",
-                            &format!("{} 秒", conn.reconnect_interval_secs),
-                        )),
+                        .children(
+                            reconnect_attempts_input
+                                .as_ref()
+                                .map(|input| render_number_row("重连次数", input)),
+                        )
+                        .children(
+                            reconnect_interval_input
+                                .as_ref()
+                                .map(|input| render_number_row("重连间隔(秒)", input)),
+                        ),
                 ),
         )
 }
 
 /// 渲染数据同步面板
 fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
-    let sync = &state.read(cx).settings.sync;
+    let state_read = state.read(cx);
+    let sync = &state_read.settings.sync;
+
+    // 获取输入状态
+    let webdav_url_input = state_read.webdav_url_input.clone();
+    let webdav_path_input = state_read.webdav_path_input.clone();
 
     div()
         .flex()
@@ -942,13 +1325,19 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sync-enabled",
                             "启用同步",
-                            if sync.enabled { "是" } else { "否" },
+                            sync.enabled,
+                            state.clone(),
+                            |s, v| s.settings.sync.enabled = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sync-auto",
                             "自动同步",
-                            if sync.auto_sync { "是" } else { "否" },
+                            sync.auto_sync,
+                            state.clone(),
+                            |s, v| s.settings.sync.auto_sync = v,
                         )),
                 ),
         )
@@ -964,37 +1353,33 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sync-servers",
                             "服务器配置",
-                            if sync.sync_servers {
-                                "同步"
-                            } else {
-                                "不同步"
-                            },
+                            sync.sync_servers,
+                            state.clone(),
+                            |s, v| s.settings.sync.sync_servers = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sync-groups",
                             "分组信息",
-                            if sync.sync_groups {
-                                "同步"
-                            } else {
-                                "不同步"
-                            },
+                            sync.sync_groups,
+                            state.clone(),
+                            |s, v| s.settings.sync.sync_groups = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sync-settings",
                             "应用设置",
-                            if sync.sync_settings {
-                                "同步"
-                            } else {
-                                "不同步"
-                            },
+                            sync.sync_settings,
+                            state.clone(),
+                            |s, v| s.settings.sync.sync_settings = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sync-keybindings",
                             "快捷键",
-                            if sync.sync_keybindings {
-                                "同步"
-                            } else {
-                                "不同步"
-                            },
+                            sync.sync_keybindings,
+                            state.clone(),
+                            |s, v| s.settings.sync.sync_keybindings = v,
                         )),
                 ),
         )
@@ -1009,23 +1394,28 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                     div()
                         .flex()
                         .flex_col()
-                        .gap_2()
-                        .child(render_setting_row(
-                            "服务器地址",
-                            if sync.webdav_url.is_empty() {
-                                "未配置"
-                            } else {
-                                &sync.webdav_url
-                            },
-                        ))
-                        .child(render_setting_row("同步路径", &sync.webdav_path)),
+                        .gap_3()
+                        .children(
+                            webdav_url_input
+                                .as_ref()
+                                .map(|input| render_input_row("服务器地址", input)),
+                        )
+                        .children(
+                            webdav_path_input
+                                .as_ref()
+                                .map(|input| render_input_row("同步路径", input)),
+                        ),
                 ),
         )
 }
 
 /// 渲染系统配置面板
 fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
-    let system = &state.read(cx).settings.system;
+    let state_read = state.read(cx);
+    let system = &state_read.settings.system;
+
+    // 获取输入状态
+    let log_retention_input = state_read.log_retention_input.clone();
 
     div()
         .flex()
@@ -1043,17 +1433,26 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sys-launch-login",
                             "开机启动",
-                            if system.launch_at_login { "是" } else { "否" },
+                            system.launch_at_login,
+                            state.clone(),
+                            |s, v| s.settings.system.launch_at_login = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sys-start-minimized",
                             "启动时最小化",
-                            if system.start_minimized { "是" } else { "否" },
+                            system.start_minimized,
+                            state.clone(),
+                            |s, v| s.settings.system.start_minimized = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sys-check-updates",
                             "检查更新",
-                            if system.check_updates { "是" } else { "否" },
+                            system.check_updates,
+                            state.clone(),
+                            |s, v| s.settings.system.check_updates = v,
                         )),
                 ),
         )
@@ -1069,17 +1468,26 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sys-close-tray",
                             "关闭到托盘",
-                            if system.close_to_tray { "是" } else { "否" },
+                            system.close_to_tray,
+                            state.clone(),
+                            |s, v| s.settings.system.close_to_tray = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sys-show-tray",
                             "显示托盘图标",
-                            if system.show_tray_icon { "是" } else { "否" },
+                            system.show_tray_icon,
+                            state.clone(),
+                            |s, v| s.settings.system.show_tray_icon = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sys-single-instance",
                             "单实例运行",
-                            if system.single_instance { "是" } else { "否" },
+                            system.single_instance,
+                            state.clone(),
+                            |s, v| s.settings.system.single_instance = v,
                         )),
                 ),
         )
@@ -1095,21 +1503,19 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sys-notify-disconnect",
                             "断开连接通知",
-                            if system.notify_on_disconnect {
-                                "是"
-                            } else {
-                                "否"
-                            },
+                            system.notify_on_disconnect,
+                            state.clone(),
+                            |s, v| s.settings.system.notify_on_disconnect = v,
                         ))
-                        .child(render_setting_row(
+                        .child(render_switch_row(
+                            "sys-notify-transfer",
                             "传输完成通知",
-                            if system.notify_on_transfer {
-                                "是"
-                            } else {
-                                "否"
-                            },
+                            system.notify_on_transfer,
+                            state.clone(),
+                            |s, v| s.settings.system.notify_on_transfer = v,
                         )),
                 ),
         )
@@ -1124,15 +1530,19 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                     div()
                         .flex()
                         .flex_col()
-                        .gap_2()
-                        .child(render_setting_row(
+                        .gap_3()
+                        .child(render_switch_row(
+                            "sys-logging",
                             "启用日志",
-                            if system.logging_enabled { "是" } else { "否" },
+                            system.logging_enabled,
+                            state.clone(),
+                            |s, v| s.settings.system.logging_enabled = v,
                         ))
-                        .child(render_setting_row(
-                            "日志保留",
-                            &format!("{} 天", system.log_retention_days),
-                        )),
+                        .children(
+                            log_retention_input
+                                .as_ref()
+                                .map(|input| render_number_row("日志保留(天)", input)),
+                        ),
                 ),
         )
 }
@@ -1159,6 +1569,75 @@ fn render_setting_row(label: &'static str, value: &str) -> impl IntoElement {
                 .text_sm()
                 .text_color(rgb(0x64748b))
                 .child(value.to_string()),
+        )
+}
+
+/// 渲染带输入框的设置行（用于文本输入）
+fn render_input_row(label: &'static str, input: &Entity<InputState>) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_2()
+        .child(
+            div()
+                .w(px(120.))
+                .text_sm()
+                .text_color(rgb(0x475569))
+                .child(label),
+        )
+        .child(
+            div()
+                .flex_1()
+                .max_w(px(200.))
+                .child(Input::new(input).appearance(true)),
+        )
+}
+
+/// 渲染带数字输入框的设置行（带 +/- 按钮）
+fn render_number_row(label: &'static str, input: &Entity<InputState>) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_2()
+        .child(
+            div()
+                .w(px(120.))
+                .text_sm()
+                .text_color(rgb(0x475569))
+                .child(label),
+        )
+        .child(
+            div()
+                .w(px(140.))
+                .child(NumberInput::new(input).appearance(true)),
+        )
+}
+
+/// 渲染带开关的设置行
+fn render_switch_row(
+    id: impl Into<ElementId>,
+    label: &'static str,
+    checked: bool,
+    state: Entity<SettingsDialogState>,
+    update_fn: fn(&mut SettingsDialogState, bool),
+) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_2()
+        .child(div().text_sm().text_color(rgb(0x475569)).child(label))
+        .child(
+            Switch::new(id)
+                .checked(checked)
+                .on_click(move |new_val, _, cx| {
+                    state.update(cx, |s, _| {
+                        update_fn(s, *new_val);
+                        s.mark_changed();
+                    });
+                }),
         )
 }
 

@@ -194,28 +194,7 @@ impl SettingsDialogState {
         }
         if self.ui_font_size_input.is_none() {
             let value = self.settings.theme.ui_font_size.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            // 订阅 NumberInputEvent 事件处理 +/- 按钮点击
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(144)
-                            } else {
-                                (value - 1).max(8)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.ui_font_size_input = Some(input);
+            self.ui_font_size_input = Some(create_int_number_input(value, 8, 144, 1, window, cx));
         }
 
         // 终端设置
@@ -229,321 +208,71 @@ impl SettingsDialogState {
         }
         if self.terminal_font_size_input.is_none() {
             let value = self.settings.terminal.font_size.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(144)
-                            } else {
-                                (value - 1).max(8)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.terminal_font_size_input = Some(input);
+            self.terminal_font_size_input =
+                Some(create_int_number_input(value, 8, 144, 1, window, cx));
         }
         if self.terminal_line_height_input.is_none() {
             let value = format!("{:.1}", self.settings.terminal.line_height);
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<f32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 0.1).min(3.0)
-                            } else {
-                                (value - 0.1).max(0.8)
-                            };
-                            input.set_value(format!("{:.1}", new_value), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.terminal_line_height_input = Some(input);
+            self.terminal_line_height_input =
+                Some(create_float_number_input(value, 0.8, 3.0, 0.1, window, cx));
         }
         if self.scrollback_lines_input.is_none() {
             let value = self.settings.terminal.scrollback_lines.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 100).min(100000)
-                            } else {
-                                (value - 100).max(100)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.scrollback_lines_input = Some(input);
+            self.scrollback_lines_input =
+                Some(create_int_number_input(value, 100, 100000, 100, window, cx));
         }
 
         // 连接设置
         if self.default_port_input.is_none() {
             let value = self.settings.connection.default_port.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(65535)
-                            } else {
-                                (value - 1).max(1)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.default_port_input = Some(input);
+            self.default_port_input = Some(create_int_number_input(value, 1, 65535, 1, window, cx));
         }
         if self.connection_timeout_input.is_none() {
             let value = self.settings.connection.connection_timeout_secs.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(300)
-                            } else {
-                                (value - 1).max(1)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.connection_timeout_input = Some(input);
+            self.connection_timeout_input =
+                Some(create_int_number_input(value, 1, 300, 1, window, cx));
         }
         if self.keepalive_interval_input.is_none() {
             let value = self.settings.connection.keepalive_interval_secs.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(3600)
-                            } else {
-                                (value - 1).max(0)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.keepalive_interval_input = Some(input);
+            self.keepalive_interval_input =
+                Some(create_int_number_input(value, 0, 3600, 1, window, cx));
         }
         if self.reconnect_attempts_input.is_none() {
             let value = self.settings.connection.reconnect_attempts.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(100)
-                            } else {
-                                (value - 1).max(1)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.reconnect_attempts_input = Some(input);
+            self.reconnect_attempts_input =
+                Some(create_int_number_input(value, 1, 100, 1, window, cx));
         }
         if self.reconnect_interval_input.is_none() {
             let value = self.settings.connection.reconnect_interval_secs.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(300)
-                            } else {
-                                (value - 1).max(1)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.reconnect_interval_input = Some(input);
+            self.reconnect_interval_input =
+                Some(create_int_number_input(value, 1, 300, 1, window, cx));
         }
 
         // 监控设置
         if self.history_retention_input.is_none() {
             let value = self.settings.monitor.history_retention_minutes.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(1440)
-                            } else {
-                                (value - 1).max(1)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.history_retention_input = Some(input);
+            self.history_retention_input =
+                Some(create_int_number_input(value, 1, 1440, 1, window, cx));
         }
         if self.cpu_threshold_input.is_none() {
             let value = self.settings.monitor.cpu_alert_threshold.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(100)
-                            } else {
-                                (value - 1).max(0)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.cpu_threshold_input = Some(input);
+            self.cpu_threshold_input = Some(create_int_number_input(value, 0, 100, 1, window, cx));
         }
         if self.memory_threshold_input.is_none() {
             let value = self.settings.monitor.memory_alert_threshold.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(100)
-                            } else {
-                                (value - 1).max(0)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.memory_threshold_input = Some(input);
+            self.memory_threshold_input =
+                Some(create_int_number_input(value, 0, 100, 1, window, cx));
         }
         if self.disk_threshold_input.is_none() {
             let value = self.settings.monitor.disk_alert_threshold.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(100)
-                            } else {
-                                (value - 1).max(0)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.disk_threshold_input = Some(input);
+            self.disk_threshold_input = Some(create_int_number_input(value, 0, 100, 1, window, cx));
         }
 
         // SFTP 设置
         if self.concurrent_transfers_input.is_none() {
             let value = self.settings.sftp.concurrent_transfers.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(10)
-                            } else {
-                                (value - 1).max(1)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.concurrent_transfers_input = Some(input);
+            self.concurrent_transfers_input =
+                Some(create_int_number_input(value, 1, 10, 1, window, cx));
         }
 
         // 同步设置
@@ -567,27 +296,7 @@ impl SettingsDialogState {
         // 系统设置
         if self.log_retention_input.is_none() {
             let value = self.settings.system.log_retention_days.to_string();
-            let input = cx.new(|cx| {
-                let mut state = InputState::new(window, cx);
-                state.set_value(value, window, cx);
-                state
-            });
-            cx.subscribe_in(&input, window, {
-                move |_this, input, event: &NumberInputEvent, window, cx| match event {
-                    NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
-                        if let Ok(value) = input.value().parse::<i32>() {
-                            let new_value = if *action == StepAction::Increment {
-                                (value + 1).min(365)
-                            } else {
-                                (value - 1).max(1)
-                            };
-                            input.set_value(new_value.to_string(), window, cx);
-                        }
-                    }),
-                }
-            })
-            .detach();
-            self.log_retention_input = Some(input);
+            self.log_retention_input = Some(create_int_number_input(value, 1, 365, 1, window, cx));
         }
     }
 
@@ -2209,4 +1918,68 @@ fn render_about_row(label: &'static str, value: &'static str, cx: &App) -> impl 
                 .text_color(cx.theme().foreground)
                 .child(value),
         )
+}
+
+/// 创建带有 +/- 按钮事件处理的整数输入框
+fn create_int_number_input(
+    initial_value: String,
+    min: i32,
+    max: i32,
+    step: i32,
+    window: &mut Window,
+    cx: &mut Context<SettingsDialogState>,
+) -> Entity<InputState> {
+    let input = cx.new(|cx| {
+        let mut state = InputState::new(window, cx);
+        state.set_value(initial_value, window, cx);
+        state
+    });
+    cx.subscribe_in(&input, window, {
+        move |_this, input, event: &NumberInputEvent, window, cx| match event {
+            NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
+                if let Ok(value) = input.value().parse::<i32>() {
+                    let new_value = if *action == StepAction::Increment {
+                        (value + step).min(max)
+                    } else {
+                        (value - step).max(min)
+                    };
+                    input.set_value(new_value.to_string(), window, cx);
+                }
+            }),
+        }
+    })
+    .detach();
+    input
+}
+
+/// 创建带有 +/- 按钮事件处理的浮点数输入框
+fn create_float_number_input(
+    initial_value: String,
+    min: f32,
+    max: f32,
+    step: f32,
+    window: &mut Window,
+    cx: &mut Context<SettingsDialogState>,
+) -> Entity<InputState> {
+    let input = cx.new(|cx| {
+        let mut state = InputState::new(window, cx);
+        state.set_value(initial_value, window, cx);
+        state
+    });
+    cx.subscribe_in(&input, window, {
+        move |_this, input, event: &NumberInputEvent, window, cx| match event {
+            NumberInputEvent::Step(action) => input.update(cx, |input, cx| {
+                if let Ok(value) = input.value().parse::<f32>() {
+                    let new_value = if *action == StepAction::Increment {
+                        (value + step).min(max)
+                    } else {
+                        (value - step).max(min)
+                    };
+                    input.set_value(format!("{:.1}", new_value), window, cx);
+                }
+            }),
+        }
+    })
+    .detach();
+    input
 }

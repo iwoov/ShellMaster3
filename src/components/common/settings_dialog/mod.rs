@@ -269,8 +269,13 @@ fn render_section_content(state: Entity<SettingsDialogState>, cx: &App) -> impl 
     match section {
         SettingsSection::Theme => render_theme_panel(state, cx).into_any_element(),
         SettingsSection::Terminal => render_terminal_panel(state, cx).into_any_element(),
+        SettingsSection::KeyBindings => render_keybindings_panel().into_any_element(),
+        SettingsSection::Sftp => render_sftp_panel(state, cx).into_any_element(),
+        SettingsSection::Monitor => render_monitor_panel(state, cx).into_any_element(),
+        SettingsSection::Connection => render_connection_panel(state, cx).into_any_element(),
+        SettingsSection::Sync => render_sync_panel(state, cx).into_any_element(),
+        SettingsSection::System => render_system_panel(state, cx).into_any_element(),
         SettingsSection::About => render_about_panel().into_any_element(),
-        _ => render_placeholder_panel(section).into_any_element(),
     }
 }
 
@@ -626,19 +631,509 @@ fn render_about_panel() -> impl IntoElement {
         )
 }
 
-/// 渲染占位面板
-fn render_placeholder_panel(section: SettingsSection) -> impl IntoElement {
+/// 渲染按键绑定面板
+fn render_keybindings_panel() -> impl IntoElement {
+    div().flex().flex_col().gap_6().child(
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .h(px(200.))
+            .child(
+                div()
+                    .text_base()
+                    .text_color(rgb(0x64748b))
+                    .child("按键绑定编辑器将在后续版本实现"),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(0x9ca3af))
+                    .mt_2()
+                    .child("可自定义终端和SFTP快捷键"),
+            ),
+    )
+}
+
+/// 渲染SFTP设置面板
+fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
+    let sftp = &state.read(cx).settings.sftp;
+
     div()
         .flex()
         .flex_col()
-        .items_center()
-        .justify_center()
-        .h(px(300.))
+        .gap_6()
+        // 文件显示
         .child(
             div()
-                .text_lg()
-                .text_color(rgb(0x9ca3af))
-                .child(format!("{} 设置将在后续版本实现", section.label())),
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("文件显示"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "显示隐藏文件",
+                            if sftp.show_hidden_files { "是" } else { "否" },
+                        ))
+                        .child(render_setting_row(
+                            "文件夹优先",
+                            if sftp.folders_first { "是" } else { "否" },
+                        )),
+                ),
+        )
+        // 传输设置
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("传输设置"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "并发传输数",
+                            &format!("{}", sftp.concurrent_transfers),
+                        ))
+                        .child(render_setting_row(
+                            "保留时间戳",
+                            if sftp.preserve_timestamps {
+                                "是"
+                            } else {
+                                "否"
+                            },
+                        ))
+                        .child(render_setting_row(
+                            "断点续传",
+                            if sftp.resume_transfers { "是" } else { "否" },
+                        )),
+                ),
+        )
+        // 编辑器
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("编辑器"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "使用内置编辑器",
+                            if sftp.use_builtin_editor {
+                                "是"
+                            } else {
+                                "否"
+                            },
+                        ))
+                        .child(render_setting_row(
+                            "语法高亮",
+                            if sftp.syntax_highlighting {
+                                "是"
+                            } else {
+                                "否"
+                            },
+                        )),
+                ),
+        )
+}
+
+/// 渲染监控设置面板
+fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
+    let monitor = &state.read(cx).settings.monitor;
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_6()
+        // 数据采集
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("数据采集"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "历史保留",
+                            &format!("{} 分钟", monitor.history_retention_minutes),
+                        ))
+                        .child(render_setting_row(
+                            "自动部署Agent",
+                            if monitor.auto_deploy_agent {
+                                "是"
+                            } else {
+                                "否"
+                            },
+                        )),
+                ),
+        )
+        // 显示项目
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("显示项目"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "CPU",
+                            if monitor.show_cpu { "显示" } else { "隐藏" },
+                        ))
+                        .child(render_setting_row(
+                            "内存",
+                            if monitor.show_memory {
+                                "显示"
+                            } else {
+                                "隐藏"
+                            },
+                        ))
+                        .child(render_setting_row(
+                            "磁盘",
+                            if monitor.show_disk {
+                                "显示"
+                            } else {
+                                "隐藏"
+                            },
+                        ))
+                        .child(render_setting_row(
+                            "网络",
+                            if monitor.show_network {
+                                "显示"
+                            } else {
+                                "隐藏"
+                            },
+                        )),
+                ),
+        )
+        // 告警
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("告警阈值"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "CPU",
+                            &format!("{}%", monitor.cpu_alert_threshold),
+                        ))
+                        .child(render_setting_row(
+                            "内存",
+                            &format!("{}%", monitor.memory_alert_threshold),
+                        ))
+                        .child(render_setting_row(
+                            "磁盘",
+                            &format!("{}%", monitor.disk_alert_threshold),
+                        )),
+                ),
+        )
+}
+
+/// 渲染连接设置面板
+fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
+    let conn = &state.read(cx).settings.connection;
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_6()
+        // SSH 设置
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("SSH 设置"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "默认端口",
+                            &format!("{}", conn.default_port),
+                        ))
+                        .child(render_setting_row(
+                            "连接超时",
+                            &format!("{} 秒", conn.connection_timeout_secs),
+                        ))
+                        .child(render_setting_row(
+                            "心跳间隔",
+                            &format!("{} 秒", conn.keepalive_interval_secs),
+                        ))
+                        .child(render_setting_row(
+                            "启用压缩",
+                            if conn.compression { "是" } else { "否" },
+                        )),
+                ),
+        )
+        // 自动重连
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("自动重连"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "自动重连",
+                            if conn.auto_reconnect {
+                                "启用"
+                            } else {
+                                "禁用"
+                            },
+                        ))
+                        .child(render_setting_row(
+                            "重连次数",
+                            &format!("{} 次", conn.reconnect_attempts),
+                        ))
+                        .child(render_setting_row(
+                            "重连间隔",
+                            &format!("{} 秒", conn.reconnect_interval_secs),
+                        )),
+                ),
+        )
+}
+
+/// 渲染数据同步面板
+fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
+    let sync = &state.read(cx).settings.sync;
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_6()
+        // 同步状态
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("同步状态"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "启用同步",
+                            if sync.enabled { "是" } else { "否" },
+                        ))
+                        .child(render_setting_row(
+                            "自动同步",
+                            if sync.auto_sync { "是" } else { "否" },
+                        )),
+                ),
+        )
+        // 同步内容
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("同步内容"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "服务器配置",
+                            if sync.sync_servers {
+                                "同步"
+                            } else {
+                                "不同步"
+                            },
+                        ))
+                        .child(render_setting_row(
+                            "分组信息",
+                            if sync.sync_groups {
+                                "同步"
+                            } else {
+                                "不同步"
+                            },
+                        ))
+                        .child(render_setting_row(
+                            "应用设置",
+                            if sync.sync_settings {
+                                "同步"
+                            } else {
+                                "不同步"
+                            },
+                        ))
+                        .child(render_setting_row(
+                            "快捷键",
+                            if sync.sync_keybindings {
+                                "同步"
+                            } else {
+                                "不同步"
+                            },
+                        )),
+                ),
+        )
+        // WebDAV
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("WebDAV 配置"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "服务器地址",
+                            if sync.webdav_url.is_empty() {
+                                "未配置"
+                            } else {
+                                &sync.webdav_url
+                            },
+                        ))
+                        .child(render_setting_row("同步路径", &sync.webdav_path)),
+                ),
+        )
+}
+
+/// 渲染系统配置面板
+fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
+    let system = &state.read(cx).settings.system;
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_6()
+        // 启动
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("启动"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "开机启动",
+                            if system.launch_at_login { "是" } else { "否" },
+                        ))
+                        .child(render_setting_row(
+                            "启动时最小化",
+                            if system.start_minimized { "是" } else { "否" },
+                        ))
+                        .child(render_setting_row(
+                            "检查更新",
+                            if system.check_updates { "是" } else { "否" },
+                        )),
+                ),
+        )
+        // 窗口
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("窗口"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "关闭到托盘",
+                            if system.close_to_tray { "是" } else { "否" },
+                        ))
+                        .child(render_setting_row(
+                            "显示托盘图标",
+                            if system.show_tray_icon { "是" } else { "否" },
+                        ))
+                        .child(render_setting_row(
+                            "单实例运行",
+                            if system.single_instance { "是" } else { "否" },
+                        )),
+                ),
+        )
+        // 通知
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("通知"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "断开连接通知",
+                            if system.notify_on_disconnect {
+                                "是"
+                            } else {
+                                "否"
+                            },
+                        ))
+                        .child(render_setting_row(
+                            "传输完成通知",
+                            if system.notify_on_transfer {
+                                "是"
+                            } else {
+                                "否"
+                            },
+                        )),
+                ),
+        )
+        // 日志
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title("日志"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(render_setting_row(
+                            "启用日志",
+                            if system.logging_enabled { "是" } else { "否" },
+                        ))
+                        .child(render_setting_row(
+                            "日志保留",
+                            &format!("{} 天", system.log_retention_days),
+                        )),
+                ),
         )
 }
 

@@ -6,6 +6,8 @@ use gpui_component::ActiveTheme;
 use crate::components::common::icon::render_icon;
 use crate::components::common::settings_dialog::SettingsDialogState;
 use crate::constants::icons;
+use crate::i18n;
+use crate::models::settings::Language;
 use crate::models::HistoryItem;
 
 /// 菜单类型
@@ -27,12 +29,12 @@ impl MenuType {
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub fn label_key(&self) -> &'static str {
         match self {
-            MenuType::Hosts => "Hosts",
-            MenuType::Snippets => "Snippets",
-            MenuType::KnownHosts => "Known Hosts",
-            MenuType::History => "History",
+            MenuType::Hosts => "sidebar.hosts",
+            MenuType::Snippets => "sidebar.snippets",
+            MenuType::KnownHosts => "sidebar.known_hosts",
+            MenuType::History => "sidebar.history",
         }
     }
 
@@ -66,6 +68,8 @@ pub fn render_sidebar(
         MenuType::History,
     ];
 
+    let lang = &settings_dialog_state.read(cx).settings.theme.language;
+
     let sidebar_bg = crate::theme::sidebar_color(cx);
     let border_color = cx.theme().border;
     let hover_bg = cx.theme().muted;
@@ -90,7 +94,7 @@ pub fn render_sidebar(
             div().p_2().flex().flex_col().gap_1().children(
                 menus
                     .into_iter()
-                    .map(|menu| render_menu_item(menu, selected_menu, state.clone(), cx)),
+                    .map(|menu| render_menu_item(menu, selected_menu, state.clone(), lang, cx)),
             ),
         )
         .child(
@@ -139,7 +143,12 @@ pub fn render_sidebar(
                         settings_dialog_state.update(cx, |s, _| s.open());
                     })
                     .child(render_icon(icons::SETTINGS, icon_color.into()))
-                    .child(div().text_sm().text_color(text_color).child("Settings")),
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(text_color)
+                            .child(i18n::t(lang, "sidebar.settings")),
+                    ),
             ),
         )
 }
@@ -149,6 +158,7 @@ fn render_menu_item(
     menu: MenuType,
     selected_menu: MenuType,
     state: Entity<SidebarState>,
+    lang: &Language,
     cx: &App,
 ) -> impl IntoElement {
     let selected = selected_menu == menu;
@@ -183,5 +193,10 @@ fn render_menu_item(
             });
         })
         .child(render_icon(menu.icon(), icon_color.into()))
-        .child(div().text_sm().text_color(text_color).child(menu.label()))
+        .child(
+            div()
+                .text_sm()
+                .text_color(text_color)
+                .child(i18n::t(lang, menu.label_key())),
+        )
 }

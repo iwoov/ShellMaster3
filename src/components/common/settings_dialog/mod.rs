@@ -44,7 +44,7 @@ impl SettingsSection {
             SettingsSection::Sftp => icons::FOLDER,
             SettingsSection::Monitor => icons::SERVER,
             SettingsSection::Connection => icons::LINK,
-            SettingsSection::Sync => icons::GLOBE,
+            SettingsSection::Sync => icons::CLOUD,
             SettingsSection::System => icons::SETTINGS,
             SettingsSection::About => icons::USER,
         }

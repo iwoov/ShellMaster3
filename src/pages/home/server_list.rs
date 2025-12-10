@@ -1,6 +1,7 @@
 // 服务器列表组件
 
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 use crate::components::common::icon::render_icon;
 use crate::components::common::server_dialog::ServerDialogState;
@@ -27,6 +28,7 @@ pub fn render_hosts_content(
     view_mode: ViewMode,
     view_state: Entity<ViewModeState>,
     dialog_state: Entity<ServerDialogState>,
+    cx: &App,
 ) -> impl IntoElement {
     let dialog_state_for_list = dialog_state.clone();
     let dialog_state_for_card = dialog_state.clone();
@@ -35,11 +37,13 @@ pub fn render_hosts_content(
     // 检查是否有任何服务器
     let has_servers = server_groups.iter().any(|g| !g.servers.is_empty());
 
+    let bg_color = crate::theme::background_color(cx);
+
     div()
         .flex_1()
         .h_full()
         .overflow_hidden() // 防止内容溢出
-        .bg(rgb(0xffffff))
+        .bg(bg_color)
         .flex()
         .flex_col()
         .child(if has_servers {
@@ -48,7 +52,7 @@ pub fn render_hosts_content(
                 .flex_shrink_0() // 不压缩
                 .p_6()
                 .pb_4()
-                .child(render_toolbar(view_mode, view_state, dialog_state))
+                .child(render_toolbar(view_mode, view_state, dialog_state, cx))
                 .into_any_element()
         } else {
             // 没有服务器时不显示工具栏
@@ -63,17 +67,15 @@ pub fn render_hosts_content(
                 .px_6()
                 .pb_6()
                 .child(match view_mode {
-                    ViewMode::List => {
-                        render_list_view(server_groups, dialog_state_for_list).into_any_element()
-                    }
-                    ViewMode::Card => {
-                        render_card_view(server_groups, dialog_state_for_card).into_any_element()
-                    }
+                    ViewMode::List => render_list_view(server_groups, dialog_state_for_list, cx)
+                        .into_any_element(),
+                    ViewMode::Card => render_card_view(server_groups, dialog_state_for_card, cx)
+                        .into_any_element(),
                 })
                 .into_any_element()
         } else {
             // 没有服务器时显示空状态
-            render_empty_state(dialog_state_for_empty).into_any_element()
+            render_empty_state(dialog_state_for_empty, cx).into_any_element()
         })
 }
 
@@ -82,6 +84,7 @@ fn render_toolbar(
     view_mode: ViewMode,
     view_state: Entity<ViewModeState>,
     dialog_state: Entity<ServerDialogState>,
+    cx: &App,
 ) -> impl IntoElement {
     let state_for_card = view_state.clone();
     let state_for_list = view_state;
@@ -95,10 +98,10 @@ fn render_toolbar(
                 .id("add-server-btn")
                 .px_4()
                 .py_2()
-                .bg(rgb(0x3b82f6))
+                .bg(cx.theme().primary)
                 .rounded_md()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(0x2563eb)))
+                .hover(move |s| s.bg(cx.theme().primary_hover))
                 .flex()
                 .items_center()
                 .gap_2()
@@ -109,7 +112,7 @@ fn render_toolbar(
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(0xffffff))
+                        .text_color(cx.theme().primary_foreground)
                         .child("添加服务器"),
                 ),
         )
@@ -125,9 +128,9 @@ fn render_toolbar(
                         .h_9()
                         .rounded_md()
                         .bg(if view_mode == ViewMode::Card {
-                            rgb(0x3b82f6)
+                            cx.theme().primary
                         } else {
-                            rgb(0xf3f4f6)
+                            cx.theme().secondary
                         })
                         .flex()
                         .items_center()
@@ -135,9 +138,9 @@ fn render_toolbar(
                         .cursor_pointer()
                         .hover(|s| {
                             s.bg(if view_mode == ViewMode::Card {
-                                rgb(0x2563eb)
+                                cx.theme().primary_hover
                             } else {
-                                rgb(0xe5e7eb)
+                                cx.theme().secondary_hover
                             })
                         })
                         .on_click(move |_, _, cx| {
@@ -149,9 +152,9 @@ fn render_toolbar(
                         .child(render_icon(
                             icons::GRID,
                             if view_mode == ViewMode::Card {
-                                rgb(0xffffff).into()
+                                cx.theme().primary_foreground.into()
                             } else {
-                                rgb(0x6b7280).into()
+                                cx.theme().muted_foreground.into()
                             },
                         )),
                 )
@@ -163,9 +166,9 @@ fn render_toolbar(
                         .h_9()
                         .rounded_md()
                         .bg(if view_mode == ViewMode::List {
-                            rgb(0x3b82f6)
+                            cx.theme().primary
                         } else {
-                            rgb(0xf3f4f6)
+                            cx.theme().secondary
                         })
                         .flex()
                         .items_center()
@@ -173,9 +176,9 @@ fn render_toolbar(
                         .cursor_pointer()
                         .hover(|s| {
                             s.bg(if view_mode == ViewMode::List {
-                                rgb(0x2563eb)
+                                cx.theme().primary_hover
                             } else {
-                                rgb(0xe5e7eb)
+                                cx.theme().secondary_hover
                             })
                         })
                         .on_click(move |_, _, cx| {
@@ -187,9 +190,9 @@ fn render_toolbar(
                         .child(render_icon(
                             icons::LIST,
                             if view_mode == ViewMode::List {
-                                rgb(0xffffff).into()
+                                cx.theme().primary_foreground.into()
                             } else {
-                                rgb(0x6b7280).into()
+                                cx.theme().muted_foreground.into()
                             },
                         )),
                 ),
@@ -200,8 +203,21 @@ fn render_toolbar(
 fn render_list_view(
     server_groups: &[ServerGroup],
     dialog_state: Entity<ServerDialogState>,
+    cx: &App,
 ) -> impl IntoElement {
     let groups_owned: Vec<ServerGroup> = server_groups.to_vec();
+
+    let colors = CardColors {
+        bg: cx.theme().popover,
+        border: cx.theme().border,
+        primary: cx.theme().primary,
+        foreground: cx.theme().foreground,
+        muted_foreground: cx.theme().muted_foreground,
+        secondary_hover: cx.theme().secondary_hover,
+        destructive: rgb(0xef4444).into(),
+        header_bg: crate::theme::sidebar_color(cx),
+    };
+
     div()
         .flex_1()
         .flex()
@@ -209,16 +225,41 @@ fn render_list_view(
         .gap_6()
         .children(groups_owned.into_iter().map(move |group| {
             let state = dialog_state.clone();
-            render_server_group(group, state)
+            render_server_group(group, state, colors)
         }))
 }
 
 /// 渲染卡片视图
+#[derive(Clone, Copy)]
+struct CardColors {
+    bg: Hsla,
+    border: Hsla,
+    primary: Hsla,
+    foreground: Hsla,
+    muted_foreground: Hsla,
+    secondary_hover: Hsla,
+    destructive: Hsla,
+    header_bg: Hsla,
+}
+
 fn render_card_view(
     server_groups: &[ServerGroup],
     dialog_state: Entity<ServerDialogState>,
+    cx: &App,
 ) -> impl IntoElement {
     let groups_owned: Vec<ServerGroup> = server_groups.to_vec();
+
+    let colors = CardColors {
+        bg: cx.theme().popover,
+        border: cx.theme().border,
+        primary: cx.theme().primary,
+        foreground: cx.theme().foreground,
+        muted_foreground: cx.theme().muted_foreground,
+        secondary_hover: cx.theme().secondary_hover,
+        destructive: rgb(0xef4444).into(),
+        header_bg: crate::theme::sidebar_color(cx),
+    };
+
     div()
         .flex_1()
         .flex()
@@ -226,7 +267,7 @@ fn render_card_view(
         .gap_6()
         .children(groups_owned.into_iter().map(move |group| {
             let state = dialog_state.clone();
-            render_card_group(group, state)
+            render_card_group(group, state, colors)
         }))
 }
 
@@ -234,6 +275,7 @@ fn render_card_view(
 fn render_card_group(
     group: ServerGroup,
     dialog_state: Entity<ServerDialogState>,
+    colors: CardColors,
 ) -> impl IntoElement {
     let servers_owned = group.servers.clone();
     div()
@@ -246,13 +288,13 @@ fn render_card_group(
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(div().w_1().h_5().bg(rgb(0x3b82f6)).rounded_sm())
-                .child(render_icon(group.icon_path, rgb(0x6b7280).into()))
+                .child(div().w_1().h_5().bg(colors.primary).rounded_sm())
+                .child(render_icon(group.icon_path, colors.muted_foreground.into()))
                 .child(
                     div()
                         .text_base()
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(rgb(0x1f2937))
+                        .text_color(colors.foreground)
                         .child(group.name.clone()),
                 ),
         )
@@ -264,13 +306,17 @@ fn render_card_group(
                 .gap_4()
                 .children(servers_owned.into_iter().map(move |server| {
                     let state = dialog_state.clone();
-                    render_server_card(server, state)
+                    render_server_card(server, state, colors)
                 })),
         )
 }
 
 /// 渲染服务器卡片
-fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -> impl IntoElement {
+fn render_server_card(
+    server: Server,
+    dialog_state: Entity<ServerDialogState>,
+    colors: CardColors,
+) -> impl IntoElement {
     let server_id = server.id.clone();
     let server_id_for_edit = server_id.clone();
     let server_id_for_delete = server_id.clone();
@@ -280,13 +326,13 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
     div()
         .id(SharedString::from(format!("card-{}", server_id)))
         .w(px(220.))
-        .bg(rgb(0xffffff))
+        .bg(colors.bg)
         .rounded_lg()
         .border_1()
-        .border_color(rgb(0xe5e7eb))
+        .border_color(colors.border)
         .p_4()
         .cursor_pointer()
-        .hover(|s| s.border_color(rgb(0x3b82f6)).shadow_md())
+        .hover(move |s| s.border_color(colors.primary).shadow_md())
         .flex()
         .flex_col()
         .gap_3()
@@ -301,18 +347,18 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
                         .w_10()
                         .h_10()
                         .rounded_lg()
-                        .bg(rgb(0xeff6ff))
+                        .bg(colors.primary.opacity(0.1))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(render_icon(icons::TERMINAL, rgb(0x3b82f6).into())),
+                        .child(render_icon(icons::TERMINAL, colors.primary.into())),
                 )
                 .child(
                     div().flex_1().overflow_hidden().child(
                         div()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(rgb(0x1f2937))
+                            .text_color(colors.foreground)
                             .overflow_hidden()
                             .child(server.name.clone()),
                     ),
@@ -329,11 +375,16 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("HOST"))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(colors.muted_foreground)
+                                .child("HOST"),
+                        )
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(rgb(0x6b7280))
+                                .text_color(colors.muted_foreground)
                                 .child(server.host.clone()),
                         ),
                 )
@@ -342,11 +393,16 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("PORT"))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(colors.muted_foreground)
+                                .child("PORT"),
+                        )
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(rgb(0x6b7280))
+                                .text_color(colors.muted_foreground)
                                 .child(server.port.to_string()),
                         ),
                 ),
@@ -356,14 +412,14 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
             div()
                 .pt_2()
                 .border_t_1()
-                .border_color(rgb(0xf3f4f6))
+                .border_color(colors.border)
                 .flex()
                 .justify_between()
                 .items_center()
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x9ca3af))
+                        .text_color(colors.muted_foreground)
                         .child(format!("{} · {}", server.account, server.last_connected)),
                 )
                 .child(
@@ -377,7 +433,7 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
                                     server_id_for_edit.clone()
                                 )))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(rgb(0xf3f4f6)).rounded_md())
+                                .hover(move |s| s.bg(colors.secondary_hover).rounded_md())
                                 .p_1()
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     cx.stop_propagation();
@@ -385,7 +441,7 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
                                         s.open_edit(server_id_for_edit.clone());
                                     });
                                 })
-                                .child(render_icon(icons::EDIT, rgb(0x9ca3af).into())),
+                                .child(render_icon(icons::EDIT, colors.muted_foreground.into())),
                         )
                         .child(
                             div()
@@ -394,7 +450,7 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
                                     server_id_for_delete.clone()
                                 )))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(rgb(0xfee2e2)).rounded_md())
+                                .hover(move |s| s.bg(colors.destructive.opacity(0.1)).rounded_md())
                                 .p_1()
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     cx.stop_propagation();
@@ -405,7 +461,7 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
                                         s.needs_refresh = true;
                                     });
                                 })
-                                .child(render_icon(icons::TRASH, rgb(0xef4444).into())),
+                                .child(render_icon(icons::TRASH, colors.destructive.into())),
                         ),
                 ),
         )
@@ -415,13 +471,14 @@ fn render_server_card(server: Server, dialog_state: Entity<ServerDialogState>) -
 fn render_server_group(
     group: ServerGroup,
     dialog_state: Entity<ServerDialogState>,
+    colors: CardColors,
 ) -> impl IntoElement {
     let servers_owned = group.servers.clone();
     div()
-        .bg(rgb(0xffffff))
+        .bg(colors.bg)
         .rounded_lg()
         .border_1()
-        .border_color(rgb(0xe5e7eb))
+        .border_color(colors.border)
         .overflow_hidden()
         .child(
             // 组标题
@@ -431,13 +488,13 @@ fn render_server_group(
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(div().w_1().h_5().bg(rgb(0x3b82f6)).rounded_sm())
-                .child(render_icon(group.icon_path, rgb(0x6b7280).into()))
+                .child(div().w_1().h_5().bg(colors.primary).rounded_sm())
+                .child(render_icon(group.icon_path, colors.muted_foreground.into()))
                 .child(
                     div()
                         .text_base()
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(rgb(0x1f2937))
+                        .text_color(colors.foreground)
                         .child(group.name.clone()),
                 ),
         )
@@ -446,58 +503,58 @@ fn render_server_group(
             div()
                 .px_4()
                 .py_2()
-                .bg(rgb(0xf9fafb))
+                .bg(colors.header_bg)
                 .border_t_1()
                 .border_b_1()
-                .border_color(rgb(0xe5e7eb))
+                .border_color(colors.border)
                 .flex()
                 .child(
                     div()
                         .w(px(180.))
                         .text_xs()
-                        .text_color(rgb(0x6b7280))
+                        .text_color(colors.muted_foreground)
                         .child("服务器"),
                 )
                 .child(
                     div()
                         .w(px(140.))
                         .text_xs()
-                        .text_color(rgb(0x6b7280))
+                        .text_color(colors.muted_foreground)
                         .child("主机"),
                 )
                 .child(
                     div()
                         .w(px(80.))
                         .text_xs()
-                        .text_color(rgb(0x6b7280))
+                        .text_color(colors.muted_foreground)
                         .child("端口"),
                 )
                 .child(
                     div()
                         .w(px(80.))
                         .text_xs()
-                        .text_color(rgb(0x6b7280))
+                        .text_color(colors.muted_foreground)
                         .child("描述"),
                 )
                 .child(
                     div()
                         .w(px(80.))
                         .text_xs()
-                        .text_color(rgb(0x6b7280))
+                        .text_color(colors.muted_foreground)
                         .child("账号"),
                 )
                 .child(
                     div()
                         .w(px(100.))
                         .text_xs()
-                        .text_color(rgb(0x6b7280))
+                        .text_color(colors.muted_foreground)
                         .child("最近连接"),
                 )
                 .child(
                     div()
                         .flex_1()
                         .text_xs()
-                        .text_color(rgb(0x6b7280))
+                        .text_color(colors.muted_foreground)
                         .child("操作"),
                 ),
         )
@@ -508,13 +565,17 @@ fn render_server_group(
                 .flex_col()
                 .children(servers_owned.into_iter().map(move |server| {
                     let state = dialog_state.clone();
-                    render_server_row(server, state)
+                    render_server_row(server, state, colors)
                 })),
         )
 }
 
 /// 渲染服务器行
-fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) -> impl IntoElement {
+fn render_server_row(
+    server: Server,
+    dialog_state: Entity<ServerDialogState>,
+    colors: CardColors,
+) -> impl IntoElement {
     let server_id = server.id.clone();
     let server_id_for_edit = server_id.clone();
     let server_id_for_delete = server_id.clone();
@@ -526,10 +587,18 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
         .px_4()
         .py_3()
         .border_b_1()
-        .border_color(rgb(0xf3f4f6))
+        .border_color(colors.border)
         .flex()
         .items_center()
-        .hover(|s| s.bg(rgb(0xf9fafb)))
+        .hover(move |s| s.bg(colors.header_bg)) // Use header_bg/list_hover equivalent. But header_bg is #1A2535. list_hover was passed before.
+        // Wait, previous code passed `hover_bg`. `CardColors` does not have `list_hover`?
+        // Ah, `hover_bg` in `render_list_view` was `cx.theme().list_hover`.
+        // `CardColors` struct definition does NOT have `list_hover`.
+        // I need `list_hover`.
+        // I'll add `list_hover` to CardColors too.
+        // Or reuse `secondary`?
+        // `list_hover` is #334155 (same as secondary). So I can use `secondary`.
+        // Let's use `colors.secondary`.
         .child(
             div()
                 .w(px(180.))
@@ -541,16 +610,16 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
                         .w_8()
                         .h_8()
                         .rounded_md()
-                        .bg(rgb(0xeff6ff))
+                        .bg(colors.primary.opacity(0.1))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(render_icon(icons::TERMINAL, rgb(0x3b82f6).into())),
+                        .child(render_icon(icons::TERMINAL, colors.primary.into())),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(0x1f2937))
+                        .text_color(colors.foreground)
                         .child(server.name.clone()),
                 ),
         )
@@ -558,7 +627,7 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
             div()
                 .w(px(140.))
                 .text_sm()
-                .text_color(rgb(0x6b7280))
+                .text_color(colors.muted_foreground)
                 .child(server.host.clone()),
         )
         .child(
@@ -570,12 +639,12 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
                 .child(
                     div()
                         .cursor_pointer()
-                        .child(render_icon(icons::COPY, rgb(0x9ca3af).into())),
+                        .child(render_icon(icons::COPY, colors.muted_foreground.into())),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(0x6b7280))
+                        .text_color(colors.muted_foreground)
                         .child(server.port.to_string()),
                 ),
         )
@@ -583,21 +652,21 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
             div()
                 .w(px(80.))
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(colors.muted_foreground)
                 .child(server.description.clone()),
         )
         .child(
             div()
                 .w(px(80.))
                 .text_sm()
-                .text_color(rgb(0x6b7280))
+                .text_color(colors.muted_foreground)
                 .child(server.account.clone()),
         )
         .child(
             div()
                 .w(px(100.))
                 .text_sm()
-                .text_color(rgb(0x6b7280))
+                .text_color(colors.muted_foreground)
                 .child(server.last_connected.clone()),
         )
         .child(
@@ -613,7 +682,7 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
                             server_id_for_edit.clone()
                         )))
                         .cursor_pointer()
-                        .hover(|s| s.bg(rgb(0xf3f4f6)).rounded_md())
+                        .hover(move |s| s.bg(colors.secondary_hover).rounded_md())
                         .p_1()
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             cx.stop_propagation();
@@ -621,7 +690,7 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
                                 s.open_edit(server_id_for_edit.clone());
                             });
                         })
-                        .child(render_icon(icons::EDIT, rgb(0x3b82f6).into())),
+                        .child(render_icon(icons::EDIT, colors.primary.into())),
                 )
                 .child(
                     div()
@@ -630,7 +699,7 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
                             server_id_for_delete.clone()
                         )))
                         .cursor_pointer()
-                        .hover(|s| s.bg(rgb(0xfee2e2)).rounded_md())
+                        .hover(move |s| s.bg(colors.destructive.opacity(0.1)).rounded_md())
                         .p_1()
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             cx.stop_propagation();
@@ -641,13 +710,13 @@ fn render_server_row(server: Server, dialog_state: Entity<ServerDialogState>) ->
                                 s.needs_refresh = true;
                             });
                         })
-                        .child(render_icon(icons::TRASH, rgb(0xef4444).into())),
+                        .child(render_icon(icons::TRASH, colors.destructive.into())),
                 ),
         )
 }
 
 /// 渲染空状态（没有服务器时显示）
-fn render_empty_state(dialog_state: Entity<ServerDialogState>) -> impl IntoElement {
+fn render_empty_state(dialog_state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
     div()
         .flex_1()
         .h_full()
@@ -662,11 +731,11 @@ fn render_empty_state(dialog_state: Entity<ServerDialogState>) -> impl IntoEleme
                 .w_20()
                 .h_20()
                 .rounded_2xl()
-                .bg(rgb(0xf3f4f6))
+                .bg(cx.theme().primary.opacity(0.1))
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(render_icon(icons::SERVER, rgb(0x9ca3af).into())),
+                .child(render_icon(icons::SERVER, cx.theme().primary.into())),
         )
         .child(
             // 提示文字
@@ -679,13 +748,13 @@ fn render_empty_state(dialog_state: Entity<ServerDialogState>) -> impl IntoEleme
                     div()
                         .text_xl()
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(rgb(0x6b7280))
+                        .text_color(cx.theme().muted_foreground)
                         .child("暂无服务器"),
                 )
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(0x9ca3af))
+                        .text_color(cx.theme().muted_foreground)
                         .child("点击下方按钮添加您的第一台服务器"),
                 ),
         )
@@ -695,10 +764,10 @@ fn render_empty_state(dialog_state: Entity<ServerDialogState>) -> impl IntoEleme
                 .id("empty-add-server-btn")
                 .px_6()
                 .py_3()
-                .bg(rgb(0x3b82f6))
+                .bg(cx.theme().primary)
                 .rounded_lg()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(0x2563eb)))
+                .hover(move |s| s.bg(cx.theme().primary_hover))
                 .flex()
                 .items_center()
                 .gap_2()
@@ -709,18 +778,18 @@ fn render_empty_state(dialog_state: Entity<ServerDialogState>) -> impl IntoEleme
                 .child(
                     div()
                         .text_base()
-                        .text_color(rgb(0xffffff))
+                        .text_color(cx.theme().primary_foreground)
                         .child("添加服务器"),
                 ),
         )
 }
 
 /// 渲染占位内容
-pub fn render_placeholder(title: &str, description: &str) -> impl IntoElement {
+pub fn render_placeholder(title: &str, description: &str, cx: &App) -> impl IntoElement {
     div()
         .flex_1()
         .h_full()
-        .bg(rgb(0xffffff))
+        // .bg(rgb(0xffffff)) // Removed hardcoded white
         .flex()
         .flex_col()
         .justify_center()
@@ -730,20 +799,20 @@ pub fn render_placeholder(title: &str, description: &str) -> impl IntoElement {
             div()
                 .text_2xl()
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0x9ca3af))
+                .text_color(cx.theme().foreground)
                 .child(title.to_string()),
         )
         .child(
             div()
                 .text_base()
-                .text_color(rgb(0xd1d5db))
+                .text_color(cx.theme().muted_foreground)
                 .child(description.to_string()),
         )
         .child(
             div()
                 .mt_4()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(cx.theme().muted_foreground)
                 .child("等待开发..."),
         )
 }

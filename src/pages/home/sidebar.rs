@@ -1,6 +1,7 @@
 // 主页左侧菜单栏
 
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 use crate::components::common::icon::render_icon;
 use crate::components::common::settings_dialog::SettingsDialogState;
@@ -56,6 +57,7 @@ pub fn render_sidebar(
     selected_menu: MenuType,
     history: &[HistoryItem],
     settings_dialog_state: Entity<SettingsDialogState>,
+    cx: &App,
 ) -> impl IntoElement {
     let menus = [
         MenuType::Hosts,
@@ -64,12 +66,19 @@ pub fn render_sidebar(
         MenuType::History,
     ];
 
+    let sidebar_bg = crate::theme::sidebar_color(cx);
+    let border_color = cx.theme().border;
+    let hover_bg = cx.theme().muted;
+    let text_color = cx.theme().foreground;
+    let muted_text = cx.theme().muted_foreground;
+    let icon_color = cx.theme().muted_foreground;
+
     div()
         .w(px(220.))
         .h_full()
-        .bg(rgb(0xf8f9fa))
+        .bg(sidebar_bg)
         .border_r_1()
-        .border_color(rgb(0xe5e7eb))
+        .border_color(border_color)
         .flex()
         .flex_col()
         .child(
@@ -81,7 +90,7 @@ pub fn render_sidebar(
             div().p_2().flex().flex_col().gap_1().children(
                 menus
                     .into_iter()
-                    .map(|menu| render_menu_item(menu, selected_menu, state.clone())),
+                    .map(|menu| render_menu_item(menu, selected_menu, state.clone(), cx)),
             ),
         )
         .child(
@@ -97,18 +106,18 @@ pub fn render_sidebar(
                         .px_3()
                         .py_2()
                         .rounded_md()
-                        .hover(|s| s.bg(rgb(0xe5e7eb)))
+                        .hover(move |s| s.bg(hover_bg))
                         .cursor_pointer()
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(rgb(0x374151))
+                                .text_color(text_color)
                                 .child(item.name.clone()),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0x9ca3af))
+                                .text_color(muted_text)
                                 .child(item.time.clone()),
                         )
                 })),
@@ -121,7 +130,7 @@ pub fn render_sidebar(
                     .px_3()
                     .py_2()
                     .rounded_md()
-                    .hover(|s| s.bg(rgb(0xe5e7eb)))
+                    .hover(move |s| s.bg(hover_bg))
                     .cursor_pointer()
                     .flex()
                     .items_center()
@@ -129,8 +138,8 @@ pub fn render_sidebar(
                     .on_click(move |_, _, cx| {
                         settings_dialog_state.update(cx, |s, _| s.open());
                     })
-                    .child(render_icon(icons::SETTINGS, rgb(0x6b7280).into()))
-                    .child(div().text_sm().text_color(rgb(0x374151)).child("Settings")),
+                    .child(render_icon(icons::SETTINGS, icon_color.into()))
+                    .child(div().text_sm().text_color(text_color).child("Settings")),
             ),
         )
 }
@@ -140,28 +149,21 @@ fn render_menu_item(
     menu: MenuType,
     selected_menu: MenuType,
     state: Entity<SidebarState>,
+    cx: &App,
 ) -> impl IntoElement {
     let selected = selected_menu == menu;
-    let bg_color = if selected {
-        rgb(0xdbeafe)
-    } else {
-        rgb(0xf8f9fa)
-    };
-    let hover_bg = if selected {
-        rgb(0xdbeafe)
-    } else {
-        rgb(0xe5e7eb)
-    };
-    let icon_color = if selected {
-        rgb(0x2563eb)
-    } else {
-        rgb(0x6b7280)
-    };
-    let text_color = if selected {
-        rgb(0x2563eb)
-    } else {
-        rgb(0x374151)
-    };
+
+    // 使用主题的 accent 颜色作为选中状态
+    let accent = cx.theme().accent;
+    let accent_fg = cx.theme().accent_foreground;
+    let sidebar_bg = crate::theme::sidebar_color(cx);
+    let hover_bg = cx.theme().muted;
+    let fg_normal = cx.theme().foreground;
+    let fg_muted = cx.theme().muted_foreground;
+
+    let bg_color = if selected { accent } else { sidebar_bg };
+    let text_color = if selected { accent_fg } else { fg_normal };
+    let icon_color = if selected { accent_fg } else { fg_muted };
 
     div()
         .id(menu.id())
@@ -169,7 +171,7 @@ fn render_menu_item(
         .py_2()
         .rounded_md()
         .bg(bg_color)
-        .hover(|s| s.bg(hover_bg))
+        .hover(move |s| if selected { s } else { s.bg(hover_bg) })
         .cursor_pointer()
         .flex()
         .items_center()

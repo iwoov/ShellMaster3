@@ -1,6 +1,7 @@
 // HomePage 主页组件
 
 use gpui::*;
+// use gpui_component::ActiveTheme;
 
 use super::server_list::{render_hosts_content, render_placeholder, ViewMode, ViewModeState};
 use super::sidebar::{render_sidebar, MenuType, SidebarState};
@@ -135,13 +136,18 @@ impl HomePage {
                 view_mode,
                 self.view_mode_state.clone(),
                 self.dialog_state.clone(),
+                cx,
             )
             .into_any_element(),
-            MenuType::Snippets => render_placeholder("Snippets", "代码片段功能").into_any_element(),
-            MenuType::KnownHosts => {
-                render_placeholder("Known Hosts", "已知主机管理").into_any_element()
+            MenuType::Snippets => {
+                render_placeholder("Snippets", "代码片段功能", cx).into_any_element()
             }
-            MenuType::History => render_placeholder("History", "连接历史记录").into_any_element(),
+            MenuType::KnownHosts => {
+                render_placeholder("Known Hosts", "已知主机管理", cx).into_any_element()
+            }
+            MenuType::History => {
+                render_placeholder("History", "连接历史记录", cx).into_any_element()
+            }
         }
     }
 }
@@ -168,7 +174,7 @@ impl Render for HomePage {
         // 新布局：sidebar 在左侧从顶到底，右侧是 titlebar + content
         div()
             .size_full()
-            .bg(rgb(0xffffff))
+            .bg(crate::theme::background_color(cx))
             .flex()
             .relative() // 让弹窗可以绝对定位
             // 左侧 sidebar（从顶到底）
@@ -177,6 +183,7 @@ impl Render for HomePage {
                 selected_menu,
                 &history,
                 self.settings_dialog_state.clone(),
+                cx,
             ))
             // 右侧区域（titlebar + content）
             .child(
@@ -185,7 +192,7 @@ impl Render for HomePage {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .child(render_titlebar())
+                    .child(render_titlebar(cx))
                     .child(self.render_content(selected_menu, cx)),
             )
             // 服务器弹窗

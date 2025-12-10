@@ -1,6 +1,8 @@
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::input::InputState;
+use gpui_component::menu::DropdownMenu; // 导入 DropdownMenu trait
+use gpui_component::ActiveTheme;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
@@ -470,9 +472,9 @@ fn render_group_dropdown_overlay(
             .top(px(56. + 24. + 24. + 32. + 4.)) // 约 140px
             // 与输入框宽度一致
             .w(px(700. - 180. - 48. - 32. + 8.))
-            .bg(rgb(0xffffff))
+            .bg(cx.theme().popover)
             .border_1()
-            .border_color(rgb(0xe2e8f0))
+            .border_color(cx.theme().border)
             .rounded_md()
             .shadow_lg()
             .max_h(px(200.))
@@ -484,9 +486,9 @@ fn render_group_dropdown_overlay(
                     .id(SharedString::from(format!("group-overlay-{}", group_name)))
                     .px_3()
                     .py_2()
-                    .bg(rgb(0xffffff))
+                    .bg(cx.theme().popover)
                     .cursor_pointer()
-                    .hover(|s| s.bg(rgb(0xf1f5f9)))
+                    .hover(move |s| s.bg(cx.theme().list_hover))
                     .on_click(move |_, _, cx| {
                         state_for_select.update(cx, |s, _| {
                             s.pending_group_value = Some(group_name_for_click.clone());
@@ -496,7 +498,7 @@ fn render_group_dropdown_overlay(
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0x374151))
+                            .text_color(cx.theme().foreground)
                             .child(group_name_for_display),
                     )
             })),
@@ -509,11 +511,17 @@ fn render_dialog_content(state: Entity<ServerDialogState>, cx: &App) -> impl Int
     let state_for_cancel = state.clone();
     let state_for_dropdown = state.clone();
 
+    // 使用全局主题帮助函数
+    let bg_color = crate::theme::popover_color(cx);
+    let border_color = cx.theme().border;
+
     div()
         .id("server-dialog-content")
         .w(px(700.))
         .h(px(500.))
-        .bg(rgb(0xffffff))
+        .bg(bg_color)
+        .border_1()
+        .border_color(border_color)
         .rounded_lg()
         .shadow_lg()
         .flex()
@@ -523,14 +531,14 @@ fn render_dialog_content(state: Entity<ServerDialogState>, cx: &App) -> impl Int
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             cx.stop_propagation();
         })
-        .child(render_left_menu(state_for_section))
+        .child(render_left_menu(state_for_section, cx))
         .child(render_right_content(state, state_for_cancel, cx))
         // 下拉菜单覆盖层 - 在对话框内容最后渲染，确保在最顶层
         .children(render_group_dropdown_overlay(state_for_dropdown, cx))
 }
 
 /// 渲染左侧导航菜单
-fn render_left_menu(state: Entity<ServerDialogState>) -> impl IntoElement {
+fn render_left_menu(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
     let sections = [
         (DialogSection::BasicInfo, "基本信息", icons::SERVER),
         (DialogSection::JumpHost, "跳板机", icons::LINK),
@@ -538,20 +546,28 @@ fn render_left_menu(state: Entity<ServerDialogState>) -> impl IntoElement {
         (DialogSection::OtherSettings, "其他设置", icons::SETTINGS),
     ];
 
+    let sidebar_bg = crate::theme::sidebar_color(cx);
+    let border_color = cx.theme().border;
+    let hover_bg = cx.theme().muted;
+    let icon_color = cx.theme().muted_foreground;
+    let text_color = cx.theme().foreground;
+
     div()
         .w(px(180.))
         .h_full()
-        .bg(rgb(0xf8fafc))
+        .bg(sidebar_bg)
         .rounded_l_lg() // Ensure left side is rounded
         .border_r_1()
-        .border_color(rgb(0xe2e8f0))
+        .border_color(border_color)
         .flex()
         .flex_col()
         .p_4()
         .gap_2()
         .children(sections.into_iter().map(|(section, label, icon)| {
             let state = state.clone();
-            render_menu_item(state, section, label, icon)
+            render_menu_item(
+                state, section, label, icon, hover_bg, icon_color, text_color,
+            )
         }))
 }
 
@@ -561,6 +577,9 @@ fn render_menu_item(
     section: DialogSection,
     label: &'static str,
     icon: &'static str,
+    hover_bg: gpui::Hsla,
+    icon_color: gpui::Hsla,
+    text_color: gpui::Hsla,
 ) -> impl IntoElement {
     let state_for_click = state.clone();
 
@@ -573,14 +592,14 @@ fn render_menu_item(
         .flex()
         .items_center()
         .gap_2()
-        .hover(|s| s.bg(rgb(0xe2e8f0)))
+        .hover(move |s| s.bg(hover_bg))
         .on_click(move |_, _, cx| {
             state_for_click.update(cx, |s, _| {
                 s.current_section = section;
             });
         })
-        .child(render_icon(icon, rgb(0x64748b).into()))
-        .child(div().text_sm().text_color(rgb(0x475569)).child(label))
+        .child(render_icon(icon, icon_color.into()))
+        .child(div().text_sm().text_color(text_color).child(label))
 }
 
 /// 渲染右侧内容区域
@@ -600,7 +619,7 @@ fn render_right_content(
                 .h(px(56.))
                 .flex_shrink_0()
                 .border_b_1()
-                .border_color(rgb(0xe2e8f0))
+                .border_color(cx.theme().border)
                 .flex()
                 .items_center()
                 .px_6()
@@ -608,7 +627,7 @@ fn render_right_content(
                     div()
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(0x1e293b))
+                        .text_color(cx.theme().foreground)
                         .child("添加服务器"),
                 ),
         )
@@ -647,14 +666,6 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
 
     let state_read = state.read(cx);
     let auth_type = state_read.auth_type.clone();
-
-    // 分组输入框
-    let _group_input_entity = state_read.group_input.clone();
-    let group_input = if let Some(input) = &state_read.group_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child("加载中...").into_any_element()
-    };
 
     // 预先准备输入框元素
     let label_input = if let Some(input) = &state_read.label_input {
@@ -700,7 +711,13 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
         div().child("加载中...").into_any_element()
     };
 
-    let state_for_dropdown_toggle = state.clone();
+    let state_for_group_dropdown = state.clone();
+    let current_group = state_read
+        .group_input
+        .as_ref()
+        .map(|input| input.read(cx).value().to_string())
+        .unwrap_or_default();
+    let available_groups = state_read.available_groups.clone();
 
     div()
         .flex()
@@ -712,36 +729,54 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                 .flex()
                 .flex_col()
                 .gap_2()
-                .relative()
-                .child(render_form_label("服务器分组", icons::FOLDER))
+                .child(render_form_label("服务器分组", icons::FOLDER, cx))
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(div().flex_1().child(group_input))
+                    // 使用全宽按钮作为下拉触发器，anchor 设为 TopLeft 以便菜单在正下方显示
+                    gpui_component::button::Button::new("group-dropdown")
+                        .w_full()
+                        .h(px(32.))
+                        .outline()
+                        .justify_start() // 内容左对齐
                         .child(
-                            // 下拉箭头按钮
                             div()
-                                .id("group-dropdown-toggle")
-                                .w(px(32.))
-                                .h(px(32.))
                                 .flex()
                                 .items_center()
-                                .justify_center()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(rgb(0xd1d5db))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(rgb(0xf3f4f6)))
-                                .on_click(move |_, _, cx| {
-                                    state_for_dropdown_toggle.update(cx, |s, _| {
-                                        s.show_group_dropdown = !s.show_group_dropdown;
-                                    });
-                                })
-                                .child(render_icon(icons::CHEVRON_DOWN, rgb(0x64748b).into())),
-                        ),
-                ), // 下拉菜单已移至对话框层级渲染 (render_group_dropdown_overlay)
+                                .w(px(460.)) // 调整宽度更接近按钮实际宽度（520 - 32 内边距 - 按钮内边距）
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_sm()
+                                        .text_color(cx.theme().foreground)
+                                        .child(if current_group.is_empty() {
+                                            "选择或输入分组".to_string()
+                                        } else {
+                                            current_group.clone()
+                                        }),
+                                )
+                                .child(render_icon(
+                                    icons::CHEVRON_DOWN,
+                                    cx.theme().muted_foreground.into(),
+                                )),
+                        )
+                        .dropdown_menu_with_anchor(gpui::Corner::TopLeft, move |menu, _, _| {
+                            // 设置菜单宽度与按钮一致（右侧内容宽度 520 - 内边距 32）
+                            let mut menu = menu.min_w(px(488.));
+                            for group_name in &available_groups {
+                                let group_name_display: SharedString = group_name.clone().into();
+                                let group_val = group_name.clone();
+                                let state_clone = state_for_group_dropdown.clone();
+                                menu = menu.item(
+                                    gpui_component::menu::PopupMenuItem::new(group_name_display)
+                                        .on_click(move |_, _, cx| {
+                                            state_clone.update(cx, |s, _| {
+                                                s.pending_group_value = Some(group_val.clone());
+                                            });
+                                        }),
+                                );
+                            }
+                            menu
+                        }),
+                ),
         )
         // 服务器标签
         .child(
@@ -749,7 +784,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(render_form_label("服务器标签", icons::SERVER))
+                .child(render_form_label("服务器标签", icons::SERVER, cx))
                 .child(label_input),
         )
         // 主机地址
@@ -758,7 +793,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(render_form_label("主机地址", icons::GLOBE))
+                .child(render_form_label("主机地址", icons::GLOBE, cx))
                 .child(host_input),
         )
         // 端口
@@ -767,7 +802,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(render_form_label("端口", icons::LINK))
+                .child(render_form_label("端口", icons::LINK, cx))
                 .child(port_input),
         )
         // 用户名
@@ -776,37 +811,52 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(render_form_label("用户名", icons::USER))
+                .child(render_form_label("用户名", icons::USER, cx))
                 .child(username_input),
         )
         // 认证方式切换
-        .child(
+        .child({
+            // 获取主题颜色用于切换按钮
+            let toggle_bg = cx.theme().muted;
+            let selected_bg = cx.theme().popover;
+            let unselected_bg = cx.theme().muted;
+            let selected_text = cx.theme().foreground;
+            let unselected_text = cx.theme().muted_foreground;
+            
             div()
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(render_form_label("认证方式", icons::LOCK))
+                .child(render_form_label("认证方式", icons::LOCK, cx))
                 .child(
                     div()
                         .flex()
                         .gap_1()
                         .p_1()
-                        .bg(rgb(0xf1f5f9))
+                        .bg(toggle_bg)
                         .rounded_md()
                         .child(render_auth_type_button(
                             state.clone(),
                             AuthType::Password,
                             "密码",
                             auth_type == AuthType::Password,
+                            selected_bg,
+                            unselected_bg,
+                            selected_text,
+                            unselected_text,
                         ))
                         .child(render_auth_type_button(
                             state.clone(),
                             AuthType::PublicKey,
                             "公钥",
                             auth_type == AuthType::PublicKey,
+                            selected_bg,
+                            unselected_bg,
+                            selected_text,
+                            unselected_text,
                         )),
-                ),
-        )
+                )
+        })
         // 动态渲染认证字段
         .children(match auth_type {
             AuthType::Password => Some(
@@ -814,7 +864,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(render_form_label("密码", icons::LOCK))
+                    .child(render_form_label("密码", icons::LOCK, cx))
                     .child(password_input)
                     .into_any_element(),
             ),
@@ -828,7 +878,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(render_form_label("私钥路径", icons::CODE))
+                            .child(render_form_label("私钥路径", icons::CODE, cx))
                             .child(
                                 div()
                                     .flex()
@@ -841,12 +891,12 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                                             .id("browse-private-key-btn")
                                             .px_3()
                                             .py_1p5()
-                                            .bg(rgb(0xf3f4f6))
+                                            .bg(cx.theme().secondary)
                                             .border_1()
-                                            .border_color(rgb(0xd1d5db))
+                                            .border_color(cx.theme().border)
                                             .rounded_md()
                                             .cursor_pointer()
-                                            .hover(|s| s.bg(rgb(0xe5e7eb)))
+                                            .hover(move |s| s.bg(cx.theme().secondary_hover))
                                             .on_click({
                                                 let state = state_for_file_picker.clone();
                                                 move |_, _, cx| {
@@ -874,7 +924,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                                                     }).detach();
                                                 }
                                             })
-                                            .child(render_icon(icons::FOLDER_OPEN, rgb(0x374151).into())),
+                                            .child(render_icon(icons::FOLDER_OPEN, cx.theme().foreground.into())),
                                     ),
                             ),
                     )
@@ -883,7 +933,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(render_form_label("私钥密码 (可选)", icons::LOCK))
+                            .child(render_form_label("私钥密码 (可选)", icons::LOCK, cx))
                             .child(passphrase_input),
                     )
                     .into_any_element(),
@@ -897,6 +947,10 @@ fn render_auth_type_button(
     auth_type: AuthType,
     label: &'static str,
     selected: bool,
+    selected_bg: gpui::Hsla,
+    unselected_bg: gpui::Hsla,
+    selected_text: gpui::Hsla,
+    unselected_text: gpui::Hsla,
 ) -> impl IntoElement {
     div()
         .flex_1()
@@ -906,11 +960,7 @@ fn render_auth_type_button(
         .py_1()
         .rounded_sm()
         .cursor_pointer()
-        .bg(if selected {
-            rgb(0xffffff)
-        } else {
-            rgb(0xf1f5f9)
-        })
+        .bg(if selected { selected_bg } else { unselected_bg })
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             state.update(cx, |s, _| {
                 s.auth_type = auth_type.clone();
@@ -918,14 +968,13 @@ fn render_auth_type_button(
         })
         .shadow(if selected {
             vec![BoxShadow {
-                // Corrected macro usage
                 color: rgba(0x00000010).into(),
                 offset: point(px(0.), px(1.)),
                 blur_radius: px(2.),
                 spread_radius: px(0.),
             }]
         } else {
-            vec![] // Corrected macro usage
+            vec![]
         })
         .child(
             div()
@@ -936,9 +985,9 @@ fn render_auth_type_button(
                     FontWeight::NORMAL
                 })
                 .text_color(if selected {
-                    rgb(0x0f172a)
+                    selected_text
                 } else {
-                    rgb(0x64748b)
+                    unselected_text
                 })
                 .child(label),
         )
@@ -966,7 +1015,7 @@ fn render_jump_host_form(state: Entity<ServerDialogState>, cx: &App) -> impl Int
                 .flex()
                 .items_center()
                 .justify_between()
-                .child(render_form_label("启用跳板机", icons::LINK))
+                .child(render_form_label("启用跳板机", icons::LINK, cx))
                 .child({
                     let state = state.clone();
                     render_switch(enabled, move |_, _, cx| {
@@ -982,7 +1031,7 @@ fn render_jump_host_form(state: Entity<ServerDialogState>, cx: &App) -> impl Int
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(render_form_label("跳板机地址", icons::SERVER))
+                    .child(render_form_label("跳板机地址", icons::SERVER, cx))
                     .child(jump_host_input),
             )
         } else {
@@ -1029,7 +1078,7 @@ fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> imp
                 .flex()
                 .items_center()
                 .justify_between()
-                .child(render_form_label("启用代理", icons::GLOBE))
+                .child(render_form_label("启用代理", icons::GLOBE, cx))
                 .child({
                     let state = state.clone();
                     render_switch(enabled, move |_, _, cx| {
@@ -1051,27 +1100,40 @@ fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> imp
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(render_form_label("代理类型", icons::SETTINGS))
-                            .child(
+                            .child({
+                                let toggle_bg = cx.theme().muted;
+                                let selected_bg = cx.theme().popover;
+                                let unselected_bg = cx.theme().muted;
+                                let selected_text = cx.theme().foreground;
+                                let unselected_text = cx.theme().muted_foreground;
+
                                 div()
                                     .flex()
                                     .gap_1()
                                     .p_1()
-                                    .bg(rgb(0xf1f5f9))
+                                    .bg(toggle_bg)
                                     .rounded_md()
                                     .child(render_proxy_type_button(
                                         state.clone(),
                                         ProxyType::Http,
                                         "HTTP",
                                         proxy_type == ProxyType::Http,
+                                        selected_bg,
+                                        unselected_bg,
+                                        selected_text,
+                                        unselected_text,
                                     ))
                                     .child(render_proxy_type_button(
                                         state.clone(),
                                         ProxyType::Socks5,
                                         "SOCKS5",
                                         proxy_type == ProxyType::Socks5,
-                                    )),
-                            ),
+                                        selected_bg,
+                                        unselected_bg,
+                                        selected_text,
+                                        unselected_text,
+                                    ))
+                            }),
                     )
                     .child(
                         div()
@@ -1083,7 +1145,7 @@ fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> imp
                                     .flex()
                                     .flex_col()
                                     .gap_2()
-                                    .child(render_form_label("主机地址", icons::SERVER))
+                                    .child(render_form_label("主机地址", icons::SERVER, cx))
                                     .child(host_input),
                             )
                             .child(
@@ -1092,7 +1154,7 @@ fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> imp
                                     .flex()
                                     .flex_col()
                                     .gap_2()
-                                    .child(render_form_label("端口", icons::LINK))
+                                    .child(render_form_label("端口", icons::LINK, cx))
                                     .child(port_input),
                             ),
                     )
@@ -1101,7 +1163,7 @@ fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> imp
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(render_form_label("用户名 (可选)", icons::USER))
+                            .child(render_form_label("用户名 (可选)", icons::USER, cx))
                             .child(username_input),
                     )
                     .child(
@@ -1109,7 +1171,7 @@ fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> imp
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(render_form_label("密码 (可选)", icons::LOCK))
+                            .child(render_form_label("密码 (可选)", icons::LOCK, cx))
                             .child(password_input),
                     ),
             )
@@ -1119,47 +1181,30 @@ fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> imp
 }
 
 /// 渲染其他设置表单
-fn render_other_settings_form(_state: Entity<ServerDialogState>, _cx: &App) -> impl IntoElement {
+fn render_other_settings_form(_state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
     div().flex().flex_col().gap_3().child(
         div()
             .text_sm()
-            .text_color(rgb(0x64748b))
+            .text_color(cx.theme().muted_foreground)
             .child("暂无其他设置选项"),
     )
 }
 
-/// 渲染开关组件
+/// 渲染开关组件 (使用 gpui-component Switch 保持一致性)
 fn render_switch(
     checked: bool,
-    on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .w(px(36.))
-        .h(px(20.))
-        .rounded_full()
-        .bg(if checked {
-            rgb(0x3b82f6)
-        } else {
-            rgb(0xe2e8f0)
-        })
-        .flex()
-        .items_center()
-        .px(px(2.))
-        .cursor_pointer()
-        .on_mouse_down(MouseButton::Left, on_click)
-        .child({
-            let thumb = div()
-                .size(px(16.))
-                .rounded_full()
-                .bg(rgb(0xffffff))
-                .shadow_sm();
-            if checked {
-                thumb.ml_auto()
-            } else {
-                thumb
-            }
+    on_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
+) -> gpui_component::switch::Switch {
+    use gpui_component::switch::Switch;
+    
+    Switch::new("server-dialog-switch")
+        .checked(checked)
+        .on_click(move |new_val, window, cx| {
+            on_click(new_val, window, cx);
         })
 }
+
+
 
 /// 渲染代理类型切换按钮 (复用 render_auth_type_button 逻辑)
 fn render_proxy_type_button(
@@ -1167,6 +1212,10 @@ fn render_proxy_type_button(
     proxy_type: crate::models::server::ProxyType,
     label: &'static str,
     selected: bool,
+    selected_bg: gpui::Hsla,
+    unselected_bg: gpui::Hsla,
+    selected_text: gpui::Hsla,
+    unselected_text: gpui::Hsla,
 ) -> impl IntoElement {
     div()
         .flex_1()
@@ -1177,9 +1226,9 @@ fn render_proxy_type_button(
         .rounded_sm()
         .cursor_pointer()
         .bg(if selected {
-            rgb(0xffffff)
+            selected_bg
         } else {
-            rgb(0xf1f5f9)
+            unselected_bg
         })
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             state.update(cx, |s, _| {
@@ -1205,34 +1254,46 @@ fn render_proxy_type_button(
                     FontWeight::NORMAL
                 })
                 .text_color(if selected {
-                    rgb(0x0f172a)
+                    selected_text
                 } else {
-                    rgb(0x64748b)
+                    unselected_text
                 })
                 .child(label),
         )
 }
 
 /// 渲染表单标签
-fn render_form_label(label: &'static str, icon: &'static str) -> impl IntoElement {
+fn render_form_label(label: &'static str, icon: &'static str, cx: &App) -> impl IntoElement {
+    let icon_color = cx.theme().muted_foreground;
+    let text_color = cx.theme().foreground;
+    
     div()
         .flex()
         .items_center()
         .gap_1()
-        .child(render_icon(icon, rgb(0x64748b).into()))
+        .child(render_icon(icon, icon_color.into()))
         .child(
             div()
                 .text_sm()
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(rgb(0x374151))
+                .text_color(text_color)
                 .child(label),
         )
 }
+
 
 /// 渲染底部按钮
 fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
     let state_for_cancel = state.clone();
     let state_for_save = state.clone();
+
+    let border_color = cx.theme().border;
+    let secondary_bg = cx.theme().secondary;
+    let secondary_hover = cx.theme().secondary_hover;
+    let text_color = cx.theme().foreground;
+    let primary_bg = cx.theme().primary;
+    let primary_hover = cx.theme().primary_hover;
+    let primary_fg = cx.theme().primary_foreground;
 
     // 提前读取表单数据和编辑模式状态
     let server_data = state.read(cx).to_server_data(cx);
@@ -1242,7 +1303,7 @@ fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl Int
         .h(px(64.))
         .flex_shrink_0()
         .border_t_1()
-        .border_color(rgb(0xe2e8f0))
+        .border_color(border_color)
         .flex()
         .items_center()
         .justify_end()
@@ -1254,16 +1315,16 @@ fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl Int
                 .id("cancel-btn")
                 .px_4()
                 .py_2()
-                .bg(rgb(0xffffff))
+                .bg(secondary_bg)
                 .border_1()
-                .border_color(rgb(0xd1d5db))
+                .border_color(border_color)
                 .rounded_md()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(0xf3f4f6)))
+                .hover(move |s| s.bg(secondary_hover))
                 .on_click(move |_, _, cx| {
                     state_for_cancel.update(cx, |s, _| s.close());
                 })
-                .child(div().text_sm().text_color(rgb(0x374151)).child("取消")),
+                .child(div().text_sm().text_color(text_color).child("取消")),
         )
         // 保存按钮
         .child(
@@ -1271,10 +1332,10 @@ fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl Int
                 .id("save-btn")
                 .px_4()
                 .py_2()
-                .bg(rgb(0x3b82f6))
+                .bg(primary_bg)
                 .rounded_md()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(0x2563eb)))
+                .hover(move |s| s.bg(primary_hover))
                 .on_click(move |_, _, cx| {
                     // 根据是新增还是编辑模式调用不同的存储函数
                     let result = if is_edit {
@@ -1295,6 +1356,6 @@ fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl Int
                         }
                     }
                 })
-                .child(div().text_sm().text_color(rgb(0xffffff)).child("保存")),
+                .child(div().text_sm().text_color(primary_fg).child("保存")),
         )
 }

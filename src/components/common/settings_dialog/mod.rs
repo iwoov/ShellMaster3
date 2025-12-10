@@ -4,6 +4,8 @@ use gpui_component::button::Button;
 use gpui_component::input::{Input, InputState, NumberInput};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::switch::Switch;
+use gpui_component::theme::{Theme as GpuiTheme, ThemeMode as GpuiThemeMode};
+use gpui_component::ActiveTheme;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
@@ -86,6 +88,9 @@ pub struct SettingsDialogState {
     pub memory_threshold_input: Option<Entity<InputState>>,
     pub disk_threshold_input: Option<Entity<InputState>>,
 
+    // ============ SFTP 设置输入 ============
+    pub concurrent_transfers_input: Option<Entity<InputState>>,
+
     // ============ 同步设置输入 ============
     pub webdav_url_input: Option<Entity<InputState>>,
     pub webdav_path_input: Option<Entity<InputState>>,
@@ -121,6 +126,8 @@ impl Default for SettingsDialogState {
             cpu_threshold_input: None,
             memory_threshold_input: None,
             disk_threshold_input: None,
+            // SFTP
+            concurrent_transfers_input: None,
             // 同步
             webdav_url_input: None,
             webdav_path_input: None,
@@ -304,6 +311,16 @@ impl SettingsDialogState {
             }));
         }
 
+        // SFTP 设置
+        if self.concurrent_transfers_input.is_none() {
+            let value = self.settings.sftp.concurrent_transfers.to_string();
+            self.concurrent_transfers_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+
         // 同步设置
         if self.webdav_url_input.is_none() {
             let value = self.settings.sync.webdav_url.clone();
@@ -467,11 +484,17 @@ fn render_dialog_content(state: Entity<SettingsDialogState>, cx: &App) -> impl I
     let state_for_cancel = state.clone();
     let state_for_save = state.clone();
 
+    // 使用全局主题帮助函数
+    let bg_color = crate::theme::popover_color(cx);
+    let border_color = cx.theme().border;
+
     div()
         .id("settings-dialog-content")
         .w(px(800.))
         .h(px(560.))
-        .bg(rgb(0xffffff))
+        .bg(bg_color)
+        .border_1()
+        .border_color(border_color)
         .rounded_lg()
         .shadow_lg()
         .flex()
@@ -479,7 +502,7 @@ fn render_dialog_content(state: Entity<SettingsDialogState>, cx: &App) -> impl I
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             cx.stop_propagation();
         })
-        .child(render_left_nav(state_for_nav))
+        .child(render_left_nav(state_for_nav, cx))
         .child(render_right_content(
             state,
             state_for_cancel,
@@ -489,7 +512,7 @@ fn render_dialog_content(state: Entity<SettingsDialogState>, cx: &App) -> impl I
 }
 
 /// 渲染左侧导航菜单
-fn render_left_nav(state: Entity<SettingsDialogState>) -> impl IntoElement {
+fn render_left_nav(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
     let sections = [
         SettingsSection::Theme,
         SettingsSection::Terminal,
@@ -502,20 +525,23 @@ fn render_left_nav(state: Entity<SettingsDialogState>) -> impl IntoElement {
         SettingsSection::About,
     ];
 
+    let bg_color = crate::theme::sidebar_color(cx);
+    let border_color = cx.theme().border;
+
     div()
         .w(px(180.))
         .h_full()
-        .bg(rgb(0xf8fafc))
+        .bg(bg_color)
         .rounded_l_lg()
         .border_r_1()
-        .border_color(rgb(0xe2e8f0))
+        .border_color(border_color)
         .flex()
         .flex_col()
         .p_4()
         .gap_1()
         .children(sections.into_iter().map(|section| {
             let state = state.clone();
-            render_nav_item(state, section)
+            render_nav_item(state, section, cx)
         }))
 }
 
@@ -523,8 +549,12 @@ fn render_left_nav(state: Entity<SettingsDialogState>) -> impl IntoElement {
 fn render_nav_item(
     state: Entity<SettingsDialogState>,
     section: SettingsSection,
+    cx: &App,
 ) -> impl IntoElement {
     let state_for_click = state.clone();
+    let hover_bg = cx.theme().muted;
+    let icon_color = cx.theme().muted_foreground;
+    let text_color = cx.theme().foreground;
 
     div()
         .id(SharedString::from(format!("settings-nav-{:?}", section)))
@@ -535,17 +565,17 @@ fn render_nav_item(
         .flex()
         .items_center()
         .gap_2()
-        .hover(|s| s.bg(rgb(0xe2e8f0)))
+        .hover(move |s| s.bg(hover_bg))
         .on_click(move |_, _, cx| {
             state_for_click.update(cx, |s, _| {
                 s.current_section = section;
             });
         })
-        .child(render_icon(section.icon(), rgb(0x64748b).into()))
+        .child(render_icon(section.icon(), icon_color.into()))
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(0x475569))
+                .text_color(text_color)
                 .child(section.label()),
         )
 }
@@ -558,6 +588,8 @@ fn render_right_content(
     cx: &App,
 ) -> impl IntoElement {
     let state_for_panel = state.clone();
+    let border_color = cx.theme().border;
+    let title_color = cx.theme().foreground;
 
     div()
         .flex_1()
@@ -570,7 +602,7 @@ fn render_right_content(
                 .h(px(56.))
                 .flex_shrink_0()
                 .border_b_1()
-                .border_color(rgb(0xe2e8f0))
+                .border_color(border_color)
                 .flex()
                 .items_center()
                 .px_6()
@@ -578,7 +610,7 @@ fn render_right_content(
                     div()
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(0x1e293b))
+                        .text_color(title_color)
                         .child("设置"),
                 ),
         )
@@ -592,7 +624,7 @@ fn render_right_content(
                 .child(render_section_content(state_for_panel, cx)),
         )
         // 底部按钮
-        .child(render_footer_buttons(state_for_cancel, state_for_save))
+        .child(render_footer_buttons(state_for_cancel, state_for_save, cx))
 }
 
 /// 渲染当前分区内容
@@ -602,13 +634,13 @@ fn render_section_content(state: Entity<SettingsDialogState>, cx: &App) -> impl 
     match section {
         SettingsSection::Theme => render_theme_panel(state, cx).into_any_element(),
         SettingsSection::Terminal => render_terminal_panel(state, cx).into_any_element(),
-        SettingsSection::KeyBindings => render_keybindings_panel().into_any_element(),
+        SettingsSection::KeyBindings => render_keybindings_panel(cx).into_any_element(),
         SettingsSection::Sftp => render_sftp_panel(state, cx).into_any_element(),
         SettingsSection::Monitor => render_monitor_panel(state, cx).into_any_element(),
         SettingsSection::Connection => render_connection_panel(state, cx).into_any_element(),
         SettingsSection::Sync => render_sync_panel(state, cx).into_any_element(),
         SettingsSection::System => render_system_panel(state, cx).into_any_element(),
-        SettingsSection::About => render_about_panel().into_any_element(),
+        SettingsSection::About => render_about_panel(cx).into_any_element(),
     }
 }
 
@@ -616,12 +648,21 @@ fn render_section_content(state: Entity<SettingsDialogState>, cx: &App) -> impl 
 fn render_footer_buttons(
     state_for_cancel: Entity<SettingsDialogState>,
     state_for_save: Entity<SettingsDialogState>,
+    cx: &App,
 ) -> impl IntoElement {
+    let border_color = cx.theme().border;
+    let secondary_bg = cx.theme().secondary;
+    let secondary_hover = cx.theme().secondary_hover;
+    let text_color = cx.theme().foreground;
+    let primary_bg = cx.theme().primary;
+    let primary_hover = cx.theme().primary_hover;
+    let primary_fg = cx.theme().primary_foreground;
+
     div()
         .h(px(64.))
         .flex_shrink_0()
         .border_t_1()
-        .border_color(rgb(0xe2e8f0))
+        .border_color(border_color)
         .flex()
         .items_center()
         .justify_end()
@@ -635,13 +676,14 @@ fn render_footer_buttons(
                 .py_2()
                 .rounded_md()
                 .border_1()
-                .border_color(rgb(0xd1d5db))
+                .border_color(border_color)
+                .bg(secondary_bg)
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(0xf3f4f6)))
+                .hover(move |s| s.bg(secondary_hover))
                 .on_click(move |_, _, cx| {
                     state_for_cancel.update(cx, |s, _| s.close());
                 })
-                .child(div().text_sm().text_color(rgb(0x374151)).child("取消")),
+                .child(div().text_sm().text_color(text_color).child("取消")),
         )
         // 保存按钮
         .child(
@@ -650,9 +692,9 @@ fn render_footer_buttons(
                 .px_4()
                 .py_2()
                 .rounded_md()
-                .bg(rgb(0x3b82f6))
+                .bg(primary_bg)
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(0x2563eb)))
+                .hover(move |s| s.bg(primary_hover))
                 .on_click(move |_, _, cx| {
                     state_for_save.update(cx, |s, cx| {
                         s.sync_from_inputs(cx);
@@ -660,7 +702,7 @@ fn render_footer_buttons(
                         s.close();
                     });
                 })
-                .child(div().text_sm().text_color(rgb(0xffffff)).child("保存")),
+                .child(div().text_sm().text_color(primary_fg).child("保存")),
         )
 }
 
@@ -686,7 +728,7 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("语言 / Language"))
+                .child(render_section_title("语言 / Language", cx))
                 .child(
                     div()
                         .flex()
@@ -695,11 +737,13 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                             state.clone(),
                             Language::Chinese,
                             current_language == Language::Chinese,
+                            cx,
                         ))
                         .child(render_language_button(
                             state.clone(),
                             Language::English,
                             current_language == Language::English,
+                            cx,
                         )),
                 ),
         )
@@ -709,7 +753,7 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("外观模式"))
+                .child(render_section_title("外观模式", cx))
                 .child(
                     div()
                         .flex()
@@ -719,18 +763,21 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                             ThemeMode::Light,
                             "浅色模式",
                             current_mode == ThemeMode::Light,
+                            cx,
                         ))
                         .child(render_theme_mode_button(
                             state.clone(),
                             ThemeMode::Dark,
                             "深色模式",
                             current_mode == ThemeMode::Dark,
+                            cx,
                         ))
                         .child(render_theme_mode_button(
                             state.clone(),
                             ThemeMode::System,
                             "跟随系统",
                             current_mode == ThemeMode::System,
+                            cx,
                         )),
                 ),
         )
@@ -740,21 +787,21 @@ fn render_theme_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Into
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("字体设置"))
+                .child(render_section_title("字体设置", cx))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .gap_3()
                         .children(
-                            ui_font_family_input
-                                .as_ref()
-                                .map(|input| render_font_input_row("界面字体", input, UI_FONTS)),
+                            ui_font_family_input.as_ref().map(|input| {
+                                render_font_input_row(cx, "界面字体", input, UI_FONTS)
+                            }),
                         )
                         .children(
                             ui_font_size_input
                                 .as_ref()
-                                .map(|input| render_number_row("界面字号", input)),
+                                .map(|input| render_number_row("界面字号", input, cx)),
                         ),
                 ),
         )
@@ -765,18 +812,22 @@ fn render_language_button(
     state: Entity<SettingsDialogState>,
     lang: Language,
     selected: bool,
+    cx: &App,
 ) -> impl IntoElement {
     let bg_color = if selected {
-        rgb(0x3b82f6)
+        cx.theme().primary
     } else {
-        rgb(0xf1f5f9)
+        cx.theme().secondary
     };
     let text_color = if selected {
-        rgb(0xffffff)
+        cx.theme().primary_foreground
     } else {
-        rgb(0x475569)
+        cx.theme().secondary_foreground
     };
     let label = lang.label();
+
+    let hover_selected_bg = cx.theme().primary_hover;
+    let hover_unselected_bg = cx.theme().secondary_hover;
 
     div()
         .id(SharedString::from(format!("lang-{:?}", lang)))
@@ -785,11 +836,11 @@ fn render_language_button(
         .rounded_md()
         .bg(bg_color)
         .cursor_pointer()
-        .hover(|s| {
+        .hover(move |s| {
             if selected {
-                s.bg(rgb(0x2563eb))
+                s.bg(hover_selected_bg)
             } else {
-                s.bg(rgb(0xe2e8f0))
+                s.bg(hover_unselected_bg)
             }
         })
         .on_click(move |_, _, cx| {
@@ -807,17 +858,21 @@ fn render_theme_mode_button(
     mode: ThemeMode,
     label: &'static str,
     selected: bool,
+    cx: &App,
 ) -> impl IntoElement {
     let bg_color = if selected {
-        rgb(0x3b82f6)
+        cx.theme().primary
     } else {
-        rgb(0xf1f5f9)
+        cx.theme().secondary
     };
     let text_color = if selected {
-        rgb(0xffffff)
+        cx.theme().primary_foreground
     } else {
-        rgb(0x475569)
+        cx.theme().secondary_foreground
     };
+
+    let hover_selected_bg = cx.theme().primary_hover;
+    let hover_unselected_bg = cx.theme().secondary_hover;
 
     div()
         .id(SharedString::from(format!("theme-mode-{:?}", mode)))
@@ -826,18 +881,26 @@ fn render_theme_mode_button(
         .rounded_md()
         .bg(bg_color)
         .cursor_pointer()
-        .hover(|s| {
+        .hover(move |s| {
             if selected {
-                s.bg(rgb(0x2563eb))
+                s.bg(hover_selected_bg)
             } else {
-                s.bg(rgb(0xe2e8f0))
+                s.bg(hover_unselected_bg)
             }
         })
-        .on_click(move |_, _, cx| {
+        .on_click(move |_, window, cx| {
+            // Save to settings
             state.update(cx, |s, _| {
                 s.settings.theme.mode = mode.clone();
                 s.mark_changed();
             });
+
+            // Apply theme immediately
+            match mode {
+                ThemeMode::Light => GpuiTheme::change(GpuiThemeMode::Light, Some(window), cx),
+                ThemeMode::Dark => GpuiTheme::change(GpuiThemeMode::Dark, Some(window), cx),
+                ThemeMode::System => GpuiTheme::sync_system_appearance(Some(window), cx),
+            }
         })
         .child(div().text_sm().text_color(text_color).child(label))
 }
@@ -863,26 +926,24 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("字体"))
+                .child(render_section_title("字体", cx))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .gap_3()
-                        .children(
-                            font_family_input.as_ref().map(|input| {
-                                render_font_input_row("终端字体", input, TERMINAL_FONTS)
-                            }),
-                        )
+                        .children(font_family_input.as_ref().map(|input| {
+                            render_font_input_row(cx, "终端字体", input, TERMINAL_FONTS)
+                        }))
                         .children(
                             font_size_input
                                 .as_ref()
-                                .map(|input| render_number_row("字号", input)),
+                                .map(|input| render_number_row("字号", input, cx)),
                         )
                         .children(
                             line_height_input
                                 .as_ref()
-                                .map(|input| render_number_row("行高", input)),
+                                .map(|input| render_number_row("行高", input, cx)),
                         )
                         .child(render_switch_row(
                             "terminal-ligatures",
@@ -890,6 +951,7 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                             terminal.ligatures,
                             state.clone(),
                             |s, v| s.settings.terminal.ligatures = v,
+                            cx,
                         )),
                 ),
         )
@@ -899,7 +961,7 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("配色方案"))
+                .child(render_section_title("配色方案", cx))
                 .child(
                     div()
                         .flex()
@@ -910,6 +972,7 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                             &terminal.color_scheme,
                             TERMINAL_THEMES,
                             state.clone(),
+                            cx,
                         )),
                 ),
         )
@@ -919,7 +982,7 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("显示"))
+                .child(render_section_title("显示", cx))
                 .child(
                     div()
                         .flex()
@@ -931,18 +994,19 @@ fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                             terminal.cursor_blink,
                             state.clone(),
                             |s, v| s.settings.terminal.cursor_blink = v,
+                            cx,
                         ))
                         .children(
                             scrollback_input
                                 .as_ref()
-                                .map(|input| render_number_row("滚动缓冲区", input)),
+                                .map(|input| render_number_row("滚动缓冲区", input, cx)),
                         ),
                 ),
         )
 }
 
 /// 渲染关于面板
-fn render_about_panel() -> impl IntoElement {
+fn render_about_panel(cx: &App) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -961,7 +1025,7 @@ fn render_about_panel() -> impl IntoElement {
                         .w(px(64.))
                         .h(px(64.))
                         .rounded_xl()
-                        .bg(rgb(0x3b82f6))
+                        .bg(cx.theme().primary)
                         .flex()
                         .items_center()
                         .justify_center()
@@ -969,7 +1033,7 @@ fn render_about_panel() -> impl IntoElement {
                             div()
                                 .text_xl()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0xffffff))
+                                .text_color(cx.theme().primary_foreground)
                                 .child("SM"),
                         ),
                 )
@@ -977,10 +1041,15 @@ fn render_about_panel() -> impl IntoElement {
                     div()
                         .text_xl()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(0x1e293b))
+                        .text_color(cx.theme().foreground)
                         .child("ShellMaster"),
                 )
-                .child(div().text_sm().text_color(rgb(0x64748b)).child("v1.0.0")),
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("v1.0.0"),
+                ),
         )
         // 技术信息
         .child(
@@ -988,21 +1057,21 @@ fn render_about_panel() -> impl IntoElement {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(render_about_row("平台", "macOS"))
-                .child(render_about_row("架构", std::env::consts::ARCH))
-                .child(render_about_row("Rust", env!("CARGO_PKG_RUST_VERSION"))),
+                .child(render_about_row("平台", "macOS", cx))
+                .child(render_about_row("架构", std::env::consts::ARCH, cx))
+                .child(render_about_row("Rust", env!("CARGO_PKG_RUST_VERSION"), cx)),
         )
         // 版权
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(cx.theme().muted_foreground)
                 .child("© 2024 ShellMaster. All rights reserved."),
         )
 }
 
 /// 渲染按键绑定面板
-fn render_keybindings_panel() -> impl IntoElement {
+fn render_keybindings_panel(cx: &App) -> impl IntoElement {
     div().flex().flex_col().gap_6().child(
         div()
             .flex()
@@ -1013,13 +1082,13 @@ fn render_keybindings_panel() -> impl IntoElement {
             .child(
                 div()
                     .text_base()
-                    .text_color(rgb(0x64748b))
+                    .text_color(cx.theme().muted_foreground)
                     .child("按键绑定编辑器将在后续版本实现"),
             )
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x9ca3af))
+                    .text_color(cx.theme().muted_foreground)
                     .mt_2()
                     .child("可自定义终端和SFTP快捷键"),
             ),
@@ -1040,7 +1109,7 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("文件显示"))
+                .child(render_section_title("文件显示", cx))
                 .child(
                     div()
                         .flex()
@@ -1052,6 +1121,7 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sftp.show_hidden_files,
                             state.clone(),
                             |s, v| s.settings.sftp.show_hidden_files = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sftp-folders-first",
@@ -1059,6 +1129,7 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sftp.folders_first,
                             state.clone(),
                             |s, v| s.settings.sftp.folders_first = v,
+                            cx,
                         )),
                 ),
         )
@@ -1068,22 +1139,26 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("传输设置"))
+                .child(render_section_title("传输设置", cx))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(render_setting_row(
-                            "并发传输数",
-                            &format!("{}", sftp.concurrent_transfers),
-                        ))
+                        .children(
+                            state
+                                .read(cx)
+                                .concurrent_transfers_input
+                                .as_ref()
+                                .map(|input| render_number_row("并发传输数", input, cx)),
+                        )
                         .child(render_switch_row(
                             "sftp-preserve-timestamps",
                             "保留时间戳",
                             sftp.preserve_timestamps,
                             state.clone(),
                             |s, v| s.settings.sftp.preserve_timestamps = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sftp-resume-transfers",
@@ -1091,6 +1166,7 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sftp.resume_transfers,
                             state.clone(),
                             |s, v| s.settings.sftp.resume_transfers = v,
+                            cx,
                         )),
                 ),
         )
@@ -1100,7 +1176,7 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("编辑器"))
+                .child(render_section_title("编辑器", cx))
                 .child(
                     div()
                         .flex()
@@ -1112,6 +1188,7 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sftp.use_builtin_editor,
                             state.clone(),
                             |s, v| s.settings.sftp.use_builtin_editor = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sftp-syntax-highlight",
@@ -1119,6 +1196,7 @@ fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sftp.syntax_highlighting,
                             state.clone(),
                             |s, v| s.settings.sftp.syntax_highlighting = v,
+                            cx,
                         )),
                 ),
         )
@@ -1145,7 +1223,7 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("数据采集"))
+                .child(render_section_title("数据采集", cx))
                 .child(
                     div()
                         .flex()
@@ -1154,7 +1232,7 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                         .children(
                             history_retention_input
                                 .as_ref()
-                                .map(|input| render_number_row("历史保留(分钟)", input)),
+                                .map(|input| render_number_row("历史保留(分钟)", input, cx)),
                         )
                         .child(render_switch_row(
                             "monitor-auto-deploy",
@@ -1162,6 +1240,7 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                             monitor.auto_deploy_agent,
                             state.clone(),
                             |s, v| s.settings.monitor.auto_deploy_agent = v,
+                            cx,
                         )),
                 ),
         )
@@ -1171,7 +1250,7 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("显示项目"))
+                .child(render_section_title("显示项目", cx))
                 .child(
                     div()
                         .flex()
@@ -1183,6 +1262,7 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                             monitor.show_cpu,
                             state.clone(),
                             |s, v| s.settings.monitor.show_cpu = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "monitor-show-memory",
@@ -1190,6 +1270,7 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                             monitor.show_memory,
                             state.clone(),
                             |s, v| s.settings.monitor.show_memory = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "monitor-show-disk",
@@ -1197,6 +1278,7 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                             monitor.show_disk,
                             state.clone(),
                             |s, v| s.settings.monitor.show_disk = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "monitor-show-network",
@@ -1204,6 +1286,7 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                             monitor.show_network,
                             state.clone(),
                             |s, v| s.settings.monitor.show_network = v,
+                            cx,
                         )),
                 ),
         )
@@ -1213,7 +1296,7 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("告警阈值"))
+                .child(render_section_title("告警阈值", cx))
                 .child(
                     div()
                         .flex()
@@ -1222,17 +1305,17 @@ fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl In
                         .children(
                             cpu_threshold_input
                                 .as_ref()
-                                .map(|input| render_number_row("CPU (%)", input)),
+                                .map(|input| render_number_row("CPU (%)", input, cx)),
                         )
                         .children(
                             memory_threshold_input
                                 .as_ref()
-                                .map(|input| render_number_row("内存 (%)", input)),
+                                .map(|input| render_number_row("内存 (%)", input, cx)),
                         )
                         .children(
                             disk_threshold_input
                                 .as_ref()
-                                .map(|input| render_number_row("磁盘 (%)", input)),
+                                .map(|input| render_number_row("磁盘 (%)", input, cx)),
                         ),
                 ),
         )
@@ -1260,7 +1343,7 @@ fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("SSH 设置"))
+                .child(render_section_title("SSH 设置", cx))
                 .child(
                     div()
                         .flex()
@@ -1269,17 +1352,17 @@ fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                         .children(
                             default_port_input
                                 .as_ref()
-                                .map(|input| render_number_row("默认端口", input)),
+                                .map(|input| render_number_row("默认端口", input, cx)),
                         )
                         .children(
                             connection_timeout_input
                                 .as_ref()
-                                .map(|input| render_number_row("连接超时(秒)", input)),
+                                .map(|input| render_number_row("连接超时(秒, cx)", input, cx)),
                         )
                         .children(
                             keepalive_interval_input
                                 .as_ref()
-                                .map(|input| render_number_row("心跳间隔(秒)", input)),
+                                .map(|input| render_number_row("心跳间隔(秒, cx)", input, cx)),
                         )
                         .child(render_switch_row(
                             "conn-compression",
@@ -1287,6 +1370,7 @@ fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                             conn.compression,
                             state.clone(),
                             |s, v| s.settings.connection.compression = v,
+                            cx,
                         )),
                 ),
         )
@@ -1296,7 +1380,7 @@ fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("自动重连"))
+                .child(render_section_title("自动重连", cx))
                 .child(
                     div()
                         .flex()
@@ -1308,16 +1392,17 @@ fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                             conn.auto_reconnect,
                             state.clone(),
                             |s, v| s.settings.connection.auto_reconnect = v,
+                            cx,
                         ))
                         .children(
                             reconnect_attempts_input
                                 .as_ref()
-                                .map(|input| render_number_row("重连次数", input)),
+                                .map(|input| render_number_row("重连次数", input, cx)),
                         )
                         .children(
                             reconnect_interval_input
                                 .as_ref()
-                                .map(|input| render_number_row("重连间隔(秒)", input)),
+                                .map(|input| render_number_row("重连间隔(秒, cx)", input, cx)),
                         ),
                 ),
         )
@@ -1342,7 +1427,7 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("同步状态"))
+                .child(render_section_title("同步状态", cx))
                 .child(
                     div()
                         .flex()
@@ -1354,6 +1439,7 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sync.enabled,
                             state.clone(),
                             |s, v| s.settings.sync.enabled = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sync-auto",
@@ -1361,6 +1447,7 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sync.auto_sync,
                             state.clone(),
                             |s, v| s.settings.sync.auto_sync = v,
+                            cx,
                         )),
                 ),
         )
@@ -1370,7 +1457,7 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("同步内容"))
+                .child(render_section_title("同步内容", cx))
                 .child(
                     div()
                         .flex()
@@ -1382,6 +1469,7 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sync.sync_servers,
                             state.clone(),
                             |s, v| s.settings.sync.sync_servers = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sync-groups",
@@ -1389,6 +1477,7 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sync.sync_groups,
                             state.clone(),
                             |s, v| s.settings.sync.sync_groups = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sync-settings",
@@ -1396,6 +1485,7 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sync.sync_settings,
                             state.clone(),
                             |s, v| s.settings.sync.sync_settings = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sync-keybindings",
@@ -1403,6 +1493,7 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                             sync.sync_keybindings,
                             state.clone(),
                             |s, v| s.settings.sync.sync_keybindings = v,
+                            cx,
                         )),
                 ),
         )
@@ -1412,7 +1503,7 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("WebDAV 配置"))
+                .child(render_section_title("WebDAV 配置", cx))
                 .child(
                     div()
                         .flex()
@@ -1421,12 +1512,12 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                         .children(
                             webdav_url_input
                                 .as_ref()
-                                .map(|input| render_input_row("服务器地址", input)),
+                                .map(|input| render_input_row("服务器地址", input, cx)),
                         )
                         .children(
                             webdav_path_input
                                 .as_ref()
-                                .map(|input| render_input_row("同步路径", input)),
+                                .map(|input| render_input_row("同步路径", input, cx)),
                         ),
                 ),
         )
@@ -1450,7 +1541,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("启动"))
+                .child(render_section_title("启动", cx))
                 .child(
                     div()
                         .flex()
@@ -1462,6 +1553,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                             system.launch_at_login,
                             state.clone(),
                             |s, v| s.settings.system.launch_at_login = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sys-start-minimized",
@@ -1469,6 +1561,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                             system.start_minimized,
                             state.clone(),
                             |s, v| s.settings.system.start_minimized = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sys-check-updates",
@@ -1476,6 +1569,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                             system.check_updates,
                             state.clone(),
                             |s, v| s.settings.system.check_updates = v,
+                            cx,
                         )),
                 ),
         )
@@ -1485,7 +1579,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("窗口"))
+                .child(render_section_title("窗口", cx))
                 .child(
                     div()
                         .flex()
@@ -1497,6 +1591,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                             system.close_to_tray,
                             state.clone(),
                             |s, v| s.settings.system.close_to_tray = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sys-show-tray",
@@ -1504,6 +1599,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                             system.show_tray_icon,
                             state.clone(),
                             |s, v| s.settings.system.show_tray_icon = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sys-single-instance",
@@ -1511,6 +1607,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                             system.single_instance,
                             state.clone(),
                             |s, v| s.settings.system.single_instance = v,
+                            cx,
                         )),
                 ),
         )
@@ -1520,7 +1617,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("通知"))
+                .child(render_section_title("通知", cx))
                 .child(
                     div()
                         .flex()
@@ -1532,6 +1629,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                             system.notify_on_disconnect,
                             state.clone(),
                             |s, v| s.settings.system.notify_on_disconnect = v,
+                            cx,
                         ))
                         .child(render_switch_row(
                             "sys-notify-transfer",
@@ -1539,6 +1637,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                             system.notify_on_transfer,
                             state.clone(),
                             |s, v| s.settings.system.notify_on_transfer = v,
+                            cx,
                         )),
                 ),
         )
@@ -1548,7 +1647,7 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(render_section_title("日志"))
+                .child(render_section_title("日志", cx))
                 .child(
                     div()
                         .flex()
@@ -1560,11 +1659,12 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
                             system.logging_enabled,
                             state.clone(),
                             |s, v| s.settings.system.logging_enabled = v,
+                            cx,
                         ))
                         .children(
                             log_retention_input
                                 .as_ref()
-                                .map(|input| render_number_row("日志保留(天)", input)),
+                                .map(|input| render_number_row("日志保留(天, cx)", input, cx)),
                         ),
                 ),
         )
@@ -1572,45 +1672,32 @@ fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
 
 // ======================== 辅助渲染函数 ========================
 
-fn render_section_title(title: &'static str) -> impl IntoElement {
+fn render_section_title(title: &'static str, cx: &App) -> impl IntoElement {
     div()
         .text_base()
         .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(0x1e293b))
+        .text_color(cx.theme().foreground)
         .child(title)
 }
 
-fn render_setting_row(label: &'static str, value: &str) -> impl IntoElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_2()
-        .child(div().text_sm().text_color(rgb(0x475569)).child(label))
-        .child(
-            div()
-                .text_sm()
-                .text_color(rgb(0x64748b))
-                .child(value.to_string()),
-        )
-}
-
 /// 渲染带输入框的设置行（用于文本输入）
-fn render_input_row(label: &'static str, input: &Entity<InputState>) -> impl IntoElement {
+fn render_input_row(label: &'static str, input: &Entity<InputState>, cx: &App) -> impl IntoElement {
+    let text_color = cx.theme().foreground;
+
     div()
         .flex()
         .items_center()
         .justify_between()
         .py_3()
         .px_4()
-        .bg(rgb(0xf8fafc))
+        .bg(cx.theme().muted)
         .rounded_lg()
         .mb_2()
         .child(
             div()
                 .w(px(120.))
                 .text_sm()
-                .text_color(rgb(0x475569))
+                .text_color(text_color)
                 .child(label),
         )
         .child(div().w(px(200.)).child(Input::new(input).appearance(true)))
@@ -1618,12 +1705,17 @@ fn render_input_row(label: &'static str, input: &Entity<InputState>) -> impl Int
 
 /// 渲染字体输入框（带下拉选择按钮）
 fn render_font_input_row(
+    cx: &App,
     label: &'static str,
     input: &Entity<InputState>,
     fonts: &[&'static str],
 ) -> impl IntoElement {
+    use gpui::Corner;
+
     let input_clone = input.clone();
+    let current_value = input.read(cx).value().to_string();
     let fonts = fonts.to_vec();
+    let fonts_clone = fonts.clone();
 
     div()
         .flex()
@@ -1631,45 +1723,56 @@ fn render_font_input_row(
         .justify_between()
         .py_3()
         .px_4()
-        .bg(rgb(0xf8fafc))
+        .bg(cx.theme().muted)
         .rounded_lg()
         .mb_2()
         .child(
             div()
                 .w(px(120.))
                 .text_sm()
-                .text_color(rgb(0x475569))
+                .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
         .child(
-            div()
+            // 使用全宽按钮作为下拉触发器，anchor 设为 TopLeft 以便菜单在正下方显示
+            Button::new("font-dropdown")
                 .w(px(200.))
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(div().flex_1().child(Input::new(input).appearance(true)))
+                .h(px(32.))
+                .outline()
+                .justify_start() // 内容左对齐
                 .child(
-                    Button::new("font-dropdown")
-                        .outline()
-                        .compact()
-                        .dropdown_caret(true)
-                        .dropdown_menu(move |menu, _, _| {
-                            let mut menu = menu;
-                            for font in &fonts {
-                                let font_name: SharedString = (*font).into();
-                                let input_for_click = input_clone.clone();
-                                let font_val = font.to_string();
-                                menu = menu.item(PopupMenuItem::new(font_name).on_click(
-                                    move |_, window, cx| {
-                                        input_for_click.update(cx, |state, cx| {
-                                            state.set_value(font_val.clone(), window, cx);
-                                        });
-                                    },
-                                ));
-                            }
-                            menu
-                        }),
-                ),
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between() // 两端对齐：文字左侧，图标右侧
+                        .w(px(180.)) // 明确设置宽度，减去按钮内边距
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().foreground)
+                                .child(current_value),
+                        )
+                        .child(render_icon(
+                            icons::CHEVRON_DOWN,
+                            cx.theme().muted_foreground.into(),
+                        )),
+                )
+                .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
+                    let mut menu = menu.min_w(px(200.));
+                    for font in &fonts_clone {
+                        let font_name: SharedString = (*font).into();
+                        let input_for_click = input_clone.clone();
+                        let font_val = font.to_string();
+                        menu = menu.item(PopupMenuItem::new(font_name).on_click(
+                            move |_, window, cx| {
+                                input_for_click.update(cx, |state, cx| {
+                                    state.set_value(font_val.clone(), window, cx);
+                                });
+                            },
+                        ));
+                    }
+                    menu
+                }),
         )
 }
 
@@ -1717,7 +1820,10 @@ fn render_theme_select_row(
     current_value: &str,
     themes: &'static [&'static str],
     state: Entity<SettingsDialogState>,
+    cx: &App,
 ) -> impl IntoElement {
+    use gpui::Corner;
+
     let current = current_value.to_string();
 
     div()
@@ -1726,87 +1832,87 @@ fn render_theme_select_row(
         .justify_between()
         .py_3()
         .px_4()
-        .bg(rgb(0xf8fafc))
+        .bg(cx.theme().muted)
         .rounded_lg()
         .mb_2()
         .child(
             div()
                 .w(px(120.))
                 .text_sm()
-                .text_color(rgb(0x475569))
+                .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
         .child(
-            div()
+            // 使用全宽按钮作为下拉触发器，anchor 设为 TopLeft 以便菜单在正下方显示
+            Button::new("theme-dropdown")
                 .w(px(200.))
-                .flex()
-                .items_center()
-                .gap_1()
-                // 显示当前值的文本框样式
+                .h(px(32.))
+                .outline()
+                .justify_start() // 内容左对齐
                 .child(
                     div()
-                        .flex_1()
-                        .h(px(32.))
-                        .px_3()
-                        .bg(rgb(0xffffff))
-                        .border_1()
-                        .border_color(rgb(0xe2e8f0))
-                        .rounded_md()
                         .flex()
                         .items_center()
-                        .text_sm()
-                        .text_color(rgb(0x1e293b))
-                        .child(current.clone()),
+                        .justify_between() // 两端对齐：文字左侧，图标右侧
+                        .w(px(180.)) // 明确设置宽度，减去按钮内边距
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().foreground)
+                                .child(current),
+                        )
+                        .child(render_icon(
+                            icons::CHEVRON_DOWN,
+                            cx.theme().muted_foreground.into(),
+                        )),
                 )
-                // 下拉按钮
-                .child(
-                    Button::new("theme-dropdown")
-                        .outline()
-                        .compact()
-                        .dropdown_caret(true)
-                        .dropdown_menu(move |menu, _, _| {
-                            let mut menu = menu;
-                            for theme in themes {
-                                let theme_name: SharedString = (*theme).into();
-                                let theme_val = theme.to_string();
-                                let state_clone = state.clone();
-                                menu = menu.item(PopupMenuItem::new(theme_name).on_click(
-                                    move |_, _, cx| {
-                                        state_clone.update(cx, |s, _| {
-                                            s.settings.terminal.color_scheme = theme_val.clone();
-                                            s.mark_changed();
-                                        });
-                                    },
-                                ));
-                            }
-                            menu
-                        }),
-                ),
+                .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
+                    let mut menu = menu.min_w(px(200.));
+                    for theme in themes {
+                        let theme_name: SharedString = (*theme).into();
+                        let theme_val = theme.to_string();
+                        let state_clone = state.clone();
+                        menu =
+                            menu.item(PopupMenuItem::new(theme_name).on_click(move |_, _, cx| {
+                                state_clone.update(cx, |s, _| {
+                                    s.settings.terminal.color_scheme = theme_val.clone();
+                                    s.mark_changed();
+                                });
+                            }));
+                    }
+                    menu
+                }),
         )
 }
 
 /// 渲染带数字输入框的设置行（带 +/- 按钮）
 
-fn render_number_row(label: &'static str, input: &Entity<InputState>) -> impl IntoElement {
+fn render_number_row(
+    label: &'static str,
+    input: &Entity<InputState>,
+    cx: &App,
+) -> impl IntoElement {
     div()
         .flex()
         .items_center()
         .justify_between()
         .py_3()
         .px_4()
-        .bg(rgb(0xf8fafc))
+        .bg(cx.theme().muted)
         .rounded_lg()
         .mb_2()
         .child(
             div()
                 .w(px(120.))
                 .text_sm()
-                .text_color(rgb(0x475569))
+                .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
         .child(
             div()
                 .w(px(200.))
+                .flex()
+                .justify_end() // 靠右对齐
                 .child(NumberInput::new(input).appearance(true)),
         )
 }
@@ -1818,17 +1924,20 @@ fn render_switch_row(
     checked: bool,
     state: Entity<SettingsDialogState>,
     update_fn: fn(&mut SettingsDialogState, bool),
+    cx: &App,
 ) -> impl IntoElement {
+    let text_color = cx.theme().foreground;
+
     div()
         .flex()
         .items_center()
         .justify_between()
         .py_3()
         .px_4()
-        .bg(rgb(0xf8fafc))
+        .bg(cx.theme().muted)
         .rounded_lg()
         .mb_2()
-        .child(div().text_sm().text_color(rgb(0x475569)).child(label))
+        .child(div().text_sm().text_color(text_color).child(label))
         .child(
             Switch::new(id)
                 .checked(checked)
@@ -1841,7 +1950,7 @@ fn render_switch_row(
         )
 }
 
-fn render_about_row(label: &'static str, value: &'static str) -> impl IntoElement {
+fn render_about_row(label: &'static str, value: &'static str, cx: &App) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -1850,8 +1959,13 @@ fn render_about_row(label: &'static str, value: &'static str) -> impl IntoElemen
             div()
                 .w(px(80.))
                 .text_sm()
-                .text_color(rgb(0x64748b))
+                .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
-        .child(div().text_sm().text_color(rgb(0x1e293b)).child(value))
+        .child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child(value),
+        )
 }

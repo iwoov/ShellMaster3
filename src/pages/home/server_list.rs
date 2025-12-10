@@ -6,6 +6,8 @@ use gpui_component::ActiveTheme;
 use crate::components::common::icon::render_icon;
 use crate::components::common::server_dialog::ServerDialogState;
 use crate::constants::icons;
+use crate::i18n;
+use crate::models::settings::Language;
 use crate::models::{Server, ServerGroup};
 use crate::services::storage;
 
@@ -86,6 +88,11 @@ fn render_toolbar(
     dialog_state: Entity<ServerDialogState>,
     cx: &App,
 ) -> impl IntoElement {
+    // 加载当前语言
+    let lang = storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or(Language::Chinese);
+
     let state_for_card = view_state.clone();
     let state_for_list = view_state;
 
@@ -113,7 +120,7 @@ fn render_toolbar(
                     div()
                         .text_sm()
                         .text_color(cx.theme().primary_foreground)
-                        .child("添加服务器"),
+                        .child(i18n::t(&lang, "server_list.add_server")),
                 ),
         )
         .child(
@@ -455,7 +462,7 @@ fn render_server_card(
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     cx.stop_propagation();
                                     if let Err(e) = storage::delete_server(&server_id_for_delete) {
-                                        eprintln!("删除服务器失败: {}", e);
+                                        eprintln!("Failed to delete server: {}", e);
                                     }
                                     dialog_for_delete.update(cx, |s, _| {
                                         s.needs_refresh = true;
@@ -473,6 +480,11 @@ fn render_server_group(
     dialog_state: Entity<ServerDialogState>,
     colors: CardColors,
 ) -> impl IntoElement {
+    // 加载当前语言
+    let lang = storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or(Language::Chinese);
+
     let servers_owned = group.servers.clone();
     div()
         .bg(colors.bg)
@@ -513,49 +525,49 @@ fn render_server_group(
                         .w(px(180.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
-                        .child("服务器"),
+                        .child(i18n::t(&lang, "server_list.header.server")),
                 )
                 .child(
                     div()
                         .w(px(140.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
-                        .child("主机"),
+                        .child(i18n::t(&lang, "server_list.header.host")),
                 )
                 .child(
                     div()
                         .w(px(80.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
-                        .child("端口"),
+                        .child(i18n::t(&lang, "server_list.header.port")),
                 )
                 .child(
                     div()
                         .w(px(80.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
-                        .child("描述"),
+                        .child(i18n::t(&lang, "server_list.header.description")),
                 )
                 .child(
                     div()
                         .w(px(80.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
-                        .child("账号"),
+                        .child(i18n::t(&lang, "server_list.header.account")),
                 )
                 .child(
                     div()
                         .w(px(100.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
-                        .child("最近连接"),
+                        .child(i18n::t(&lang, "server_list.header.last_connected")),
                 )
                 .child(
                     div()
                         .flex_1()
                         .text_xs()
                         .text_color(colors.muted_foreground)
-                        .child("操作"),
+                        .child(i18n::t(&lang, "server_list.header.actions")),
                 ),
         )
         .child(
@@ -590,15 +602,7 @@ fn render_server_row(
         .border_color(colors.border)
         .flex()
         .items_center()
-        .hover(move |s| s.bg(colors.header_bg)) // Use header_bg/list_hover equivalent. But header_bg is #1A2535. list_hover was passed before.
-        // Wait, previous code passed `hover_bg`. `CardColors` does not have `list_hover`?
-        // Ah, `hover_bg` in `render_list_view` was `cx.theme().list_hover`.
-        // `CardColors` struct definition does NOT have `list_hover`.
-        // I need `list_hover`.
-        // I'll add `list_hover` to CardColors too.
-        // Or reuse `secondary`?
-        // `list_hover` is #334155 (same as secondary). So I can use `secondary`.
-        // Let's use `colors.secondary`.
+        .hover(move |s| s.bg(colors.header_bg))
         .child(
             div()
                 .w(px(180.))
@@ -704,7 +708,7 @@ fn render_server_row(
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             cx.stop_propagation();
                             if let Err(e) = storage::delete_server(&server_id_for_delete) {
-                                eprintln!("删除服务器失败: {}", e);
+                                eprintln!("Failed to delete server: {}", e);
                             }
                             dialog_for_delete.update(cx, |s, _| {
                                 s.needs_refresh = true;
@@ -717,6 +721,11 @@ fn render_server_row(
 
 /// 渲染空状态（没有服务器时显示）
 fn render_empty_state(dialog_state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
+    // 加载当前语言
+    let lang = storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or(Language::Chinese);
+
     div()
         .flex_1()
         .h_full()
@@ -749,13 +758,13 @@ fn render_empty_state(dialog_state: Entity<ServerDialogState>, cx: &App) -> impl
                         .text_xl()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(cx.theme().muted_foreground)
-                        .child("暂无服务器"),
+                        .child(i18n::t(&lang, "server_list.empty_title")),
                 )
                 .child(
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("点击下方按钮添加您的第一台服务器"),
+                        .child(i18n::t(&lang, "server_list.empty_description")),
                 ),
         )
         .child(
@@ -779,7 +788,7 @@ fn render_empty_state(dialog_state: Entity<ServerDialogState>, cx: &App) -> impl
                     div()
                         .text_base()
                         .text_color(cx.theme().primary_foreground)
-                        .child("添加服务器"),
+                        .child(i18n::t(&lang, "server_list.add_server")),
                 ),
         )
 }
@@ -813,6 +822,6 @@ pub fn render_placeholder(title: &str, description: &str, cx: &App) -> impl Into
                 .mt_4()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child("等待开发..."),
+                .child("Coming soon..."),
         )
 }

@@ -181,6 +181,11 @@ fn zh_cn(key: &'static str) -> &'static str {
         "server_list.header.account" => "账号",
         "server_list.header.last_connected" => "最近连接",
         "server_list.header.actions" => "操作",
+        "server_list.ungrouped" => "未分组",
+        "server_list.never_connected" => "从未",
+        "server_list.placeholder.snippets" => "代码片段功能",
+        "server_list.placeholder.known_hosts" => "已知主机管理",
+        "server_list.placeholder.history" => "连接历史记录",
 
         _ => key,
     }
@@ -360,6 +365,11 @@ fn en_us(key: &'static str) -> &'static str {
         "server_list.header.account" => "Account",
         "server_list.header.last_connected" => "Last Connected",
         "server_list.header.actions" => "Actions",
+        "server_list.ungrouped" => "Ungrouped",
+        "server_list.never_connected" => "Never",
+        "server_list.placeholder.snippets" => "Snippets Feature",
+        "server_list.placeholder.known_hosts" => "Known Hosts Management",
+        "server_list.placeholder.history" => "Connection History",
 
         _ => key,
     }

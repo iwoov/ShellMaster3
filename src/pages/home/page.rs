@@ -11,7 +11,10 @@ use crate::components::common::settings_dialog::{
     render_settings_dialog_overlay, SettingsDialogState,
 };
 use crate::constants::icons;
+use crate::i18n;
+use crate::models::settings::Language;
 use crate::models::{HistoryItem, Server, ServerGroup};
+use crate::services::storage;
 
 /// 主页状态
 pub struct HomePage {
@@ -60,6 +63,11 @@ impl HomePage {
 
     /// 从存储加载服务器分组数据
     fn load_server_groups() -> Vec<ServerGroup> {
+        // 加载当前语言
+        let lang = storage::load_settings()
+            .map(|s| s.theme.language)
+            .unwrap_or(Language::Chinese);
+
         let config = crate::services::storage::load_servers().unwrap_or_default();
 
         // 将 ServerData 转换为视图用的 Server 结构
@@ -78,10 +86,9 @@ impl HomePage {
                         port: s.port,
                         description: "-".into(),
                         account: s.username.clone(),
-                        last_connected: s
-                            .last_connected_at
-                            .clone()
-                            .unwrap_or_else(|| "从未".to_string()),
+                        last_connected: s.last_connected_at.clone().unwrap_or_else(|| {
+                            i18n::t(&lang, "server_list.never_connected").to_string()
+                        }),
                     })
                     .collect();
 
@@ -108,13 +115,13 @@ impl HomePage {
                 last_connected: s
                     .last_connected_at
                     .clone()
-                    .unwrap_or_else(|| "从未".to_string()),
+                    .unwrap_or_else(|| i18n::t(&lang, "server_list.never_connected").to_string()),
             })
             .collect();
 
         if !ungrouped_servers.is_empty() {
             server_groups.push(ServerGroup {
-                name: "未分组".to_string(),
+                name: i18n::t(&lang, "server_list.ungrouped").to_string(),
                 icon_path: icons::SERVER,
                 servers: ungrouped_servers,
             });
@@ -129,6 +136,11 @@ impl HomePage {
     }
 
     fn render_content(&self, selected_menu: MenuType, cx: &Context<Self>) -> AnyElement {
+        // 加载当前语言
+        let lang = storage::load_settings()
+            .map(|s| s.theme.language)
+            .unwrap_or(Language::Chinese);
+
         let view_mode = self.view_mode_state.read(cx).mode;
         match selected_menu {
             MenuType::Hosts => render_hosts_content(
@@ -139,15 +151,24 @@ impl HomePage {
                 cx,
             )
             .into_any_element(),
-            MenuType::Snippets => {
-                render_placeholder("Snippets", "代码片段功能", cx).into_any_element()
-            }
-            MenuType::KnownHosts => {
-                render_placeholder("Known Hosts", "已知主机管理", cx).into_any_element()
-            }
-            MenuType::History => {
-                render_placeholder("History", "连接历史记录", cx).into_any_element()
-            }
+            MenuType::Snippets => render_placeholder(
+                "Snippets",
+                i18n::t(&lang, "server_list.placeholder.snippets"),
+                cx,
+            )
+            .into_any_element(),
+            MenuType::KnownHosts => render_placeholder(
+                "Known Hosts",
+                i18n::t(&lang, "server_list.placeholder.known_hosts"),
+                cx,
+            )
+            .into_any_element(),
+            MenuType::History => render_placeholder(
+                "History",
+                i18n::t(&lang, "server_list.placeholder.history"),
+                cx,
+            )
+            .into_any_element(),
         }
     }
 }

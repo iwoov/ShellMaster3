@@ -34,6 +34,8 @@ pub struct ServerDialogState {
     pub available_groups: Vec<String>,
     /// 待应用到输入框的分组值（由下拉选中时设置）
     pub pending_group_value: Option<String>,
+    /// 待应用到输入框的私钥路径（由文件选择器设置）
+    pub pending_private_key_path: Option<String>,
     // 表单 InputState 实体（延迟创建）
     pub label_input: Option<Entity<InputState>>,
     pub host_input: Option<Entity<InputState>>,
@@ -69,6 +71,7 @@ impl Default for ServerDialogState {
             show_group_dropdown: false,
             available_groups: Vec::new(),
             pending_group_value: None,
+            pending_private_key_path: None,
             label_input: None,
             host_input: None,
             port_input: None,
@@ -133,8 +136,17 @@ impl ServerDialogState {
                 Some(cx.new(|cx| InputState::new(window, cx).placeholder("密码").masked(true)));
         }
         if self.private_key_input.is_none() {
-            self.private_key_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("点击选择私钥文件...")));
+            self.private_key_input = Some(
+                cx.new(|cx| InputState::new(window, cx).placeholder("点击浏览选择私钥文件...")),
+            );
+        }
+        // 应用待设置的私钥路径
+        if let Some(path) = self.pending_private_key_path.take() {
+            if let Some(input) = &self.private_key_input {
+                input.update(cx, |input_state, cx| {
+                    input_state.set_value(path, window, cx);
+                });
+            }
         }
         if self.passphrase_input.is_none() {
             self.passphrase_input = Some(cx.new(|cx| {
@@ -680,6 +692,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
     } else {
         div().child("加载中...").into_any_element()
     };
+    let state_for_file_picker = state.clone();
 
     let passphrase_input = if let Some(input) = &state_read.passphrase_input {
         Input::new(input).mask_toggle().into_any_element()
@@ -816,7 +829,54 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
                             .flex_col()
                             .gap_2()
                             .child(render_form_label("私钥路径", icons::CODE))
-                            .child(private_key_input),
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().flex_1().child(private_key_input))
+                                    .child(
+                                        // 浏览按钮
+                                        div()
+                                            .id("browse-private-key-btn")
+                                            .px_3()
+                                            .py_1p5()
+                                            .bg(rgb(0xf3f4f6))
+                                            .border_1()
+                                            .border_color(rgb(0xd1d5db))
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(0xe5e7eb)))
+                                            .on_click({
+                                                let state = state_for_file_picker.clone();
+                                                move |_, _, cx| {
+                                                    let state = state.clone();
+                                                    // 使用 gpui 原生文件选择 API
+                                                    let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+                                                        files: true,
+                                                        directories: false,
+                                                        multiple: false,
+                                                        prompt: Some("选择私钥文件".into()),
+                                                    });
+                                                    cx.spawn(async move |cx| {
+                                                        if let Ok(Ok(Some(paths))) = receiver.await {
+                                                            if let Some(path) = paths.first() {
+                                                                let path_str = path.to_string_lossy().to_string();
+                                                                // 设置待应用的私钥路径，下次渲染时会应用
+                                                                let _ = cx.update(|app| {
+                                                                    state.update(app, |s, _| {
+                                                                        s.pending_private_key_path = Some(path_str);
+                                                                        s.needs_refresh = true;
+                                                                    });
+                                                                });
+                                                            }
+                                                        }
+                                                    }).detach();
+                                                }
+                                            })
+                                            .child(render_icon(icons::FOLDER_OPEN, rgb(0x374151).into())),
+                                    ),
+                            ),
                     )
                     .child(
                         div()

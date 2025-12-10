@@ -93,6 +93,8 @@ pub struct SettingsDialogState {
 
     // ============ 同步设置输入 ============
     pub webdav_url_input: Option<Entity<InputState>>,
+    pub webdav_username_input: Option<Entity<InputState>>,
+    pub webdav_password_input: Option<Entity<InputState>>,
     pub webdav_path_input: Option<Entity<InputState>>,
 
     // ============ 系统设置输入 ============
@@ -130,6 +132,8 @@ impl Default for SettingsDialogState {
             concurrent_transfers_input: None,
             // 同步
             webdav_url_input: None,
+            webdav_username_input: None,
+            webdav_password_input: None,
             webdav_path_input: None,
             // 系统
             log_retention_input: None,
@@ -161,6 +165,8 @@ impl SettingsDialogState {
         self.memory_threshold_input = None;
         self.disk_threshold_input = None;
         self.webdav_url_input = None;
+        self.webdav_username_input = None;
+        self.webdav_password_input = None;
         self.webdav_path_input = None;
         self.log_retention_input = None;
     }
@@ -284,6 +290,22 @@ impl SettingsDialogState {
                 state
             }));
         }
+        if self.webdav_username_input.is_none() {
+            let value = self.settings.sync.webdav_username.clone();
+            self.webdav_username_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx).placeholder("用户名");
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.webdav_password_input.is_none() {
+            let value = self.settings.sync.webdav_password.clone();
+            self.webdav_password_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx).placeholder("密码").masked(true);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
         if self.webdav_path_input.is_none() {
             let value = self.settings.sync.webdav_path.clone();
             self.webdav_path_input = Some(cx.new(|cx| {
@@ -384,6 +406,12 @@ impl SettingsDialogState {
         // 同步
         if let Some(input) = &self.webdav_url_input {
             self.settings.sync.webdav_url = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.webdav_username_input {
+            self.settings.sync.webdav_username = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.webdav_password_input {
+            self.settings.sync.webdav_password = input.read(cx).value().to_string();
         }
         if let Some(input) = &self.webdav_path_input {
             self.settings.sync.webdav_path = input.read(cx).value().to_string();
@@ -1365,6 +1393,8 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
 
     // 获取输入状态
     let webdav_url_input = state_read.webdav_url_input.clone();
+    let webdav_username_input = state_read.webdav_username_input.clone();
+    let webdav_password_input = state_read.webdav_password_input.clone();
     let webdav_path_input = state_read.webdav_path_input.clone();
 
     div()
@@ -1458,17 +1488,51 @@ fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoE
                     div()
                         .flex()
                         .flex_col()
-                        .gap_3()
+                        .gap_2()
                         .children(
                             webdav_url_input
                                 .as_ref()
                                 .map(|input| render_input_row("服务器地址", input, cx)),
                         )
                         .children(
+                            webdav_username_input
+                                .as_ref()
+                                .map(|input| render_input_row("用户名", input, cx)),
+                        )
+                        .children(
+                            webdav_password_input
+                                .as_ref()
+                                .map(|input| render_input_row("密码", input, cx)),
+                        )
+                        .children(
                             webdav_path_input
                                 .as_ref()
                                 .map(|input| render_input_row("同步路径", input, cx)),
                         ),
+                )
+                // 测试和同步按钮
+                .child(
+                    div()
+                        .flex()
+                        .gap_3()
+                        .mt_2()
+                        .child(
+                            Button::new("test-webdav")
+                                .outline()
+                                .child("测试连接")
+                                .on_click({
+                                    let _state = state.clone();
+                                    move |_event, _window, _cx| {
+                                        // TODO: 实现测试连接功能
+                                    }
+                                }),
+                        )
+                        .child(Button::new("sync-now").child("立即同步").on_click({
+                            let _state = state.clone();
+                            move |_event, _window, _cx| {
+                                // TODO: 实现同步功能
+                            }
+                        })),
                 ),
         )
 }

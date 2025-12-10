@@ -670,7 +670,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
     };
 
     let password_input = if let Some(input) = &state_read.password_input {
-        Input::new(input).into_any_element()
+        Input::new(input).mask_toggle().into_any_element()
     } else {
         div().child("加载中...").into_any_element()
     };
@@ -682,7 +682,7 @@ fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> impl In
     };
 
     let passphrase_input = if let Some(input) = &state_read.passphrase_input {
-        Input::new(input).into_any_element()
+        Input::new(input).mask_toggle().into_any_element()
     } else {
         div().child("加载中...").into_any_element()
     };
@@ -955,7 +955,7 @@ fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> imp
         div().child("加载中...").into_any_element()
     };
     let password_input = if let Some(input) = &state_read.proxy_password_input {
-        Input::new(input).into_any_element()
+        Input::new(input).mask_toggle().into_any_element()
     } else {
         div().child("加载中...").into_any_element()
     };

@@ -9,7 +9,6 @@ use crate::models::ServerData;
 use crate::pages::connecting::ConnectingProgress;
 use crate::state::{SessionState, SessionStatus};
 
-use super::client::SshClient;
 use super::config::{AuthMethod, SshConfig};
 use super::event::{ConnectionEvent, ConnectionStage, LogEntry};
 
@@ -50,6 +49,7 @@ enum UiUpdate {
 /// 启动 SSH 连接
 ///
 /// 在 Connecting 页面渲染完成后调用此函数
+/// 流程：页面挂载 -> 200ms初始动画 -> 发起后端连接 -> 连接成功后200ms成功动画 -> 跳转session
 pub fn start_ssh_connection(
     server: ServerData,
     tab_id: String,
@@ -61,33 +61,43 @@ pub fn start_ssh_connection(
     let config = build_ssh_config(&server);
     let server_label = server.label.clone();
     let server_id = server.id.clone();
-    let start_time = std::time::Instant::now();
 
-    // 创建 UI 更新通道（用于 Tokio 线程 -> GPUI）
-    let (ui_sender, ui_receiver) = std::sync::mpsc::channel::<UiUpdate>();
-    let ui_receiver = Arc::new(Mutex::new(ui_receiver));
-
-    // 克隆用于不同任务
+    // 克隆用于异步任务
     let progress_for_result = progress_state.clone();
     let session_state_for_result = session_state.clone();
     let tab_id_for_result = tab_id.clone();
     let server_label_for_log = server_label.clone();
 
-    // 启动 SSH 连接任务
-    // 直接使用 tab_id 作为 session_id
-    let event_receiver = crate::ssh::SshManager::global().connect(config, tab_id.clone());
+    // 启动 GPUI 任务：先延迟，再启动连接，再轮询状态
+    cx.spawn(async move |async_cx| {
+        // 阶段1: 200ms 初始动画延迟 - 让连接页面有时间展示"开始连接"动画
+        println!("[SSH] 开始初始连接动画（300ms）...");
+        async_cx
+            .background_executor()
+            .timer(std::time::Duration::from_millis(300))
+            .await;
+        println!("[SSH] 初始动画完成，开始发起后端连接...");
 
-    // 在 SSH 运行时中启动事件处理任务
-    let ui_sender_for_events = ui_sender.clone();
-    crate::ssh::SshManager::global()
-        .runtime()
-        .spawn(async move {
-            handle_connection_events(event_receiver, ui_sender_for_events).await;
-        });
+        // 阶段2: 初始动画完成后，启动实际的后端SSH连接
+        let start_time = std::time::Instant::now();
 
-    // 启动 GPUI 任务来轮询 UI 更新
-    let ui_receiver_for_poll = ui_receiver.clone();
-    cx.spawn(async move |mut async_cx| {
+        // 创建 UI 更新通道（用于 Tokio 线程 -> GPUI）
+        let (ui_sender, ui_receiver) = std::sync::mpsc::channel::<UiUpdate>();
+        let ui_receiver = Arc::new(Mutex::new(ui_receiver));
+
+        // 启动 SSH 连接任务（此时后端才开始连接）
+        let event_receiver = crate::ssh::SshManager::global().connect(config, tab_id.clone());
+
+        // 在 SSH 运行时中启动事件处理任务
+        let ui_sender_for_events = ui_sender.clone();
+        crate::ssh::SshManager::global()
+            .runtime()
+            .spawn(async move {
+                handle_connection_events(event_receiver, ui_sender_for_events).await;
+            });
+
+        // 阶段3: 轮询 UI 更新状态
+        let ui_receiver_for_poll = ui_receiver.clone();
         loop {
             // 尝试接收 UI 更新
             let updates: Vec<UiUpdate> = {
@@ -133,7 +143,15 @@ pub fn start_ssh_connection(
                             eprintln!("[SSH] Failed to update last connected time: {}", e);
                         }
 
-                        // 更新会话状态为已连接
+                        // 阶段4: 300ms 成功动画延迟，让用户看到"连接成功"状态
+                        println!("[SSH] 开始连接成功动画（300ms）...");
+                        async_cx
+                            .background_executor()
+                            .timer(std::time::Duration::from_millis(300))
+                            .await;
+                        println!("[SSH] 成功动画完成，跳转到session...");
+
+                        // 阶段5: 更新会话状态为已连接，触发跳转到session
                         let tab_id_clone = tab_id_for_result.clone();
                         let _ = async_cx.update(|cx| {
                             session_state_for_result.update(cx, |state, cx| {
@@ -141,12 +159,6 @@ pub fn start_ssh_connection(
                                 cx.notify();
                             });
                         });
-
-                        // 短暂延迟确保 UI 有时间刷新
-                        async_cx
-                            .background_executor()
-                            .timer(std::time::Duration::from_millis(300))
-                            .await;
 
                         should_break = true;
                     }

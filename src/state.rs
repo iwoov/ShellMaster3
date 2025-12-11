@@ -24,6 +24,8 @@ pub struct SessionState {
     pub active_tab_id: Option<String>,
     /// 是否显示主页视图（即使有会话也可以切换到主页）
     pub show_home: bool,
+    /// 右侧 Sidebar 是否折叠
+    pub sidebar_collapsed: bool,
 }
 
 impl Default for SessionState {
@@ -32,6 +34,7 @@ impl Default for SessionState {
             tabs: Vec::new(),
             active_tab_id: None,
             show_home: true,
+            sidebar_collapsed: false,
         }
     }
 }
@@ -88,5 +91,10 @@ impl SessionState {
     /// 检查是否有任何会话标签
     pub fn has_sessions(&self) -> bool {
         !self.tabs.is_empty()
+    }
+
+    /// 切换 Sidebar 折叠状态
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar_collapsed = !self.sidebar_collapsed;
     }
 }

@@ -30,4 +30,6 @@ pub mod icons {
     pub const REFRESH: &str = "icons/refresh.svg";
     pub const UPLOAD: &str = "icons/upload.svg";
     pub const DOWNLOAD: &str = "icons/download.svg";
+    pub const PANEL_RIGHT_CLOSE: &str = "icons/panel-right-close.svg";
+    pub const PANEL_RIGHT_OPEN: &str = "icons/panel-right-open.svg";
 }

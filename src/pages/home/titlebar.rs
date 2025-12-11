@@ -73,6 +73,15 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
     let state = session_state.read(cx);
     let tabs = state.tabs.clone();
     let active_tab_id = state.active_tab_id.clone();
+    let sidebar_collapsed = state.sidebar_collapsed;
+
+    // 折叠按钮图标
+    let toggle_icon = if sidebar_collapsed {
+        icons::PANEL_RIGHT_OPEN
+    } else {
+        icons::PANEL_RIGHT_CLOSE
+    };
+    let session_state_for_toggle = session_state.clone();
 
     div()
         .h(px(44.)) // 与 Home 按钮区域高度相同
@@ -181,5 +190,26 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
                             )
                     }
                 })),
+        )
+        // 占位，将折叠按钮推到右侧
+        .child(div().flex_1())
+        // Sidebar 折叠/展开按钮
+        .child(
+            div()
+                .id("sidebar-toggle-btn")
+                .w_8()
+                .h_8()
+                .rounded_md()
+                .cursor_pointer()
+                .hover(move |s| s.bg(secondary_hover))
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_click(move |_, _, cx| {
+                    session_state_for_toggle.update(cx, |state, _| {
+                        state.toggle_sidebar();
+                    });
+                })
+                .child(render_icon(toggle_icon, muted_foreground.into())),
         )
 }

@@ -73,18 +73,17 @@ pub fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> imp
     };
 
     let state_for_group_dropdown = state.clone();
-    let available_groups = state_read.available_groups.clone();
 
     div()
         .flex()
         .flex_col()
         .gap_3()
         // 服务器分组（使用独立的 render_group_select 组件）
+        // 下拉菜单由 render_group_dropdown_overlay 在对话框顶层渲染
         .child(render_group_select(
             i18n::t(&lang, "server_dialog.group"),
             icons::FOLDER,
             state_read.group_input.as_ref(),
-            available_groups,
             state_for_group_dropdown,
             loading_text,
             cx,

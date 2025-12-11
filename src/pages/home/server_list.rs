@@ -371,8 +371,10 @@ fn render_server_card(
                     ),
                 ),
         )
-        .child(
+        .child({
             // 中部：主机信息
+            let host_for_copy = server.host.clone();
+            let server_id_for_copy = server_id.clone();
             div()
                 .flex()
                 .flex_col()
@@ -381,18 +383,42 @@ fn render_server_card(
                     div()
                         .flex()
                         .items_center()
-                        .gap_2()
+                        .justify_between()
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(colors.muted_foreground)
-                                .child("HOST"),
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(colors.muted_foreground)
+                                        .child("HOST"),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(colors.muted_foreground)
+                                        .child(server.host.clone()),
+                                ),
                         )
                         .child(
                             div()
-                                .text_sm()
-                                .text_color(colors.muted_foreground)
-                                .child(server.host.clone()),
+                                .id(SharedString::from(format!(
+                                    "card-copy-host-{}",
+                                    server_id_for_copy
+                                )))
+                                .cursor_pointer()
+                                .p_1()
+                                .rounded_sm()
+                                .hover(move |s| s.bg(colors.secondary_hover))
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        host_for_copy.clone(),
+                                    ));
+                                })
+                                .child(render_icon(icons::COPY, colors.muted_foreground.into())),
                         ),
                 )
                 .child(
@@ -412,8 +438,8 @@ fn render_server_card(
                                 .text_color(colors.muted_foreground)
                                 .child(server.port.to_string()),
                         ),
-                ),
-        )
+                )
+        })
         .child(
             // 底部：最近连接时间
             div()
@@ -529,7 +555,7 @@ fn render_server_group(
                 )
                 .child(
                     div()
-                        .w(px(140.))
+                        .w(px(170.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
                         .child(i18n::t(&lang, "server_list.header.host")),
@@ -564,7 +590,7 @@ fn render_server_group(
                 )
                 .child(
                     div()
-                        .flex_1()
+                        .w(px(70.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
                         .child(i18n::t(&lang, "server_list.header.actions")),
@@ -627,30 +653,42 @@ fn render_server_row(
                         .child(server.name.clone()),
                 ),
         )
-        .child(
+        .child({
+            let host_for_copy = server.host.clone();
             div()
-                .w(px(140.))
-                .text_sm()
-                .text_color(colors.muted_foreground)
-                .child(server.host.clone()),
-        )
-        .child(
-            div()
-                .w(px(80.))
+                .w(px(170.))
                 .flex()
                 .items_center()
                 .gap_1()
                 .child(
                     div()
-                        .cursor_pointer()
-                        .child(render_icon(icons::COPY, colors.muted_foreground.into())),
+                        .text_sm()
+                        .text_color(colors.muted_foreground)
+                        .child(server.host.clone()),
                 )
                 .child(
                     div()
-                        .text_sm()
-                        .text_color(colors.muted_foreground)
-                        .child(server.port.to_string()),
-                ),
+                        .id(SharedString::from(format!(
+                            "copy-host-{}",
+                            server_id.clone()
+                        )))
+                        .cursor_pointer()
+                        .p_1()
+                        .rounded_sm()
+                        .hover(move |s| s.bg(colors.secondary_hover))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.stop_propagation();
+                            cx.write_to_clipboard(ClipboardItem::new_string(host_for_copy.clone()));
+                        })
+                        .child(render_icon(icons::COPY, colors.muted_foreground.into())),
+                )
+        })
+        .child(
+            div()
+                .w(px(80.))
+                .text_sm()
+                .text_color(colors.muted_foreground)
+                .child(server.port.to_string()),
         )
         .child(
             div()
@@ -675,9 +713,9 @@ fn render_server_row(
         )
         .child(
             div()
-                .flex_1()
+                .w(px(80.))
                 .flex()
-                .justify_end()
+                .items_center()
                 .gap_3()
                 .child(
                     div()

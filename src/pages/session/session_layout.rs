@@ -46,7 +46,7 @@ pub fn render_session_layout(tab: &SessionTab, cx: &App) -> impl IntoElement {
             .child(resizable_panel().child(left_area))
             .child(
                 resizable_panel()
-                    .size(px(200.))
+                    .size(px(250.))
                     .child(render_session_sidebar(tab, cx)),
             ),
     )

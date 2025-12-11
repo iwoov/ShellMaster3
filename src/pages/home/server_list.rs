@@ -548,7 +548,7 @@ fn render_server_group(
                 .flex()
                 .child(
                     div()
-                        .w(px(180.))
+                        .w(px(200.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
                         .child(i18n::t(&lang, "server_list.header.server")),
@@ -569,7 +569,7 @@ fn render_server_group(
                 )
                 .child(
                     div()
-                        .w(px(80.))
+                        .w(px(150.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
                         .child(i18n::t(&lang, "server_list.header.description")),
@@ -590,7 +590,7 @@ fn render_server_group(
                 )
                 .child(
                     div()
-                        .w(px(70.))
+                        .w(px(80.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
                         .child(i18n::t(&lang, "server_list.header.actions")),
@@ -631,7 +631,7 @@ fn render_server_row(
         .hover(move |s| s.bg(colors.header_bg))
         .child(
             div()
-                .w(px(180.))
+                .w(px(200.))
                 .flex()
                 .items_center()
                 .gap_3()
@@ -692,7 +692,8 @@ fn render_server_row(
         )
         .child(
             div()
-                .w(px(80.))
+                .w(px(150.))
+                .overflow_hidden()
                 .text_sm()
                 .text_color(colors.muted_foreground)
                 .child(server.description.clone()),
@@ -700,6 +701,7 @@ fn render_server_row(
         .child(
             div()
                 .w(px(80.))
+                .overflow_hidden()
                 .text_sm()
                 .text_color(colors.muted_foreground)
                 .child(server.account.clone()),
@@ -707,6 +709,7 @@ fn render_server_row(
         .child(
             div()
                 .w(px(100.))
+                .overflow_hidden()
                 .text_sm()
                 .text_color(colors.muted_foreground)
                 .child(server.last_connected.clone()),

@@ -84,7 +84,7 @@ impl HomePage {
                         name: s.label.clone(),
                         host: s.host.clone(),
                         port: s.port,
-                        description: "-".into(),
+                        description: s.description.clone().unwrap_or_else(|| "-".into()),
                         account: s.username.clone(),
                         last_connected: s.last_connected_at.clone().unwrap_or_else(|| {
                             i18n::t(&lang, "server_list.never_connected").to_string()
@@ -110,7 +110,7 @@ impl HomePage {
                 name: s.label.clone(),
                 host: s.host.clone(),
                 port: s.port,
-                description: "-".into(),
+                description: s.description.clone().unwrap_or_else(|| "-".into()),
                 account: s.username.clone(),
                 last_connected: s
                     .last_connected_at

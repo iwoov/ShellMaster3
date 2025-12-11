@@ -72,6 +72,12 @@ pub fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> imp
         div().child(loading_text).into_any_element()
     };
 
+    let description_input = if let Some(input) = &state_read.description_input {
+        Input::new(input).into_any_element()
+    } else {
+        div().child(loading_text).into_any_element()
+    };
+
     let state_for_group_dropdown = state.clone();
 
     div()
@@ -293,6 +299,19 @@ pub fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> imp
                     .into_any_element(),
             ),
         })
+        // 描述（可选）
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(render_form_label(
+                    i18n::t(&lang, "server_dialog.description"),
+                    icons::EDIT,
+                    cx,
+                ))
+                .child(description_input),
+        )
 }
 
 /// 渲染认证方式切换按钮

@@ -168,6 +168,8 @@ fn zh_cn(key: &'static str) -> &'static str {
         "server_dialog.proxy_username" => "代理用户名 (可选)",
         "server_dialog.proxy_password" => "代理密码 (可选)",
         "server_dialog.browse" => "浏览",
+        "server_dialog.description" => "描述",
+        "server_dialog.description_placeholder" => "输入服务器描述（可选）",
         "server_dialog.no_other_settings" => "暂无其他设置选项",
 
         // 服务器列表
@@ -352,6 +354,8 @@ fn en_us(key: &'static str) -> &'static str {
         "server_dialog.proxy_username" => "Proxy Username (optional)",
         "server_dialog.proxy_password" => "Proxy Password (optional)",
         "server_dialog.browse" => "Browse",
+        "server_dialog.description" => "Description",
+        "server_dialog.description_placeholder" => "Enter server description (optional)",
         "server_dialog.no_other_settings" => "No other settings available",
 
         // Server List

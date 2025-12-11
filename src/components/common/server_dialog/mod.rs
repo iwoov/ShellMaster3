@@ -55,6 +55,8 @@ pub struct ServerDialogState {
     pub port_input: Option<Entity<InputState>>,
     pub username_input: Option<Entity<InputState>>,
     pub password_input: Option<Entity<InputState>>,
+    // 描述
+    pub description_input: Option<Entity<InputState>>,
     // 认证数据
     pub auth_type: AuthType,
     pub private_key_input: Option<Entity<InputState>>,
@@ -90,6 +92,7 @@ impl Default for ServerDialogState {
             port_input: None,
             username_input: None,
             password_input: None,
+            description_input: None,
             auth_type: AuthType::Password,
             private_key_input: None,
             passphrase_input: None,
@@ -157,6 +160,11 @@ impl ServerDialogState {
                     .placeholder(placeholder)
                     .masked(true)
             }));
+        }
+        if self.description_input.is_none() {
+            let placeholder = i18n::t(&lang, "server_dialog.description_placeholder");
+            self.description_input =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
         if self.private_key_input.is_none() {
             let placeholder = i18n::t(&lang, "server_dialog.private_key_placeholder");
@@ -269,6 +277,12 @@ impl ServerDialogState {
                                 });
                             }
                         }
+                        // 加载描述
+                        if let Some(desc) = &server_data.description {
+                            if let Some(input) = &self.description_input {
+                                input.update(cx, |s, cx| s.set_value(desc.clone(), window, cx));
+                            }
+                        }
                         // 加载跳板机设置
                         if let Some(jump_host) = &server_data.jump_host_id {
                             self.enable_jump_host = true;
@@ -378,6 +392,7 @@ impl ServerDialogState {
         let port = port_str.parse::<u16>().unwrap_or(22);
         let username = get_text(&self.username_input);
         let password = get_text(&self.password_input);
+        let description = get_text(&self.description_input);
         let private_key = get_text(&self.private_key_input);
         let passphrase = get_text(&self.passphrase_input);
         let jump_host = get_text(&self.jump_host_input);
@@ -434,6 +449,11 @@ impl ServerDialogState {
                 && !passphrase.is_empty()
             {
                 Some(passphrase) // TODO: 实际应加密
+            } else {
+                None
+            },
+            description: if !description.is_empty() {
+                Some(description)
             } else {
                 None
             },

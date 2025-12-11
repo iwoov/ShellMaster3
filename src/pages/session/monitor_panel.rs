@@ -1,17 +1,15 @@
-// Terminal 面板组件（简化版）
+// Monitor 面板组件（简化版）
 
 use gpui::*;
 use gpui_component::ActiveTheme;
 
-use crate::state::SessionTab;
-
-/// 渲染终端面板（占位）
-pub fn render_terminal_panel(_tab: &SessionTab, cx: &App) -> impl IntoElement {
+/// 渲染 Monitor 面板（占位）
+pub fn render_monitor_panel(cx: &App) -> impl IntoElement {
     let muted_foreground = cx.theme().muted_foreground;
     let bg_color = crate::theme::sidebar_color(cx);
 
     div()
-        .size_full() // 填满 resizable 分配的空间
+        .size_full()
         .bg(bg_color)
         .flex()
         .items_center()
@@ -20,6 +18,6 @@ pub fn render_terminal_panel(_tab: &SessionTab, cx: &App) -> impl IntoElement {
             div()
                 .text_sm()
                 .text_color(muted_foreground)
-                .child("Terminal"),
+                .child("Monitor"),
         )
 }

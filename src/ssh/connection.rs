@@ -20,7 +20,7 @@ pub async fn run_ssh_connection(
     session_state: Entity<SessionState>,
     async_cx: &mut AsyncApp,
 ) {
-    // 模拟连接步骤，每步 1s，总共 4s
+    // 模拟连接步骤，每步 300ms，总共 1.2s
     for (i, step_name) in CONNECT_STEPS.iter().enumerate() {
         println!(
             "[SSH] [{}] 步骤 {}/4: {}...",
@@ -29,10 +29,10 @@ pub async fn run_ssh_connection(
             step_name
         );
 
-        // 等待 1 秒（当前步骤执行中）
+        // 等待 300ms（当前步骤执行中）
         async_cx
             .background_executor()
-            .timer(Duration::from_millis(1000))
+            .timer(Duration::from_millis(300))
             .await;
 
         // 步骤完成，推进到下一步

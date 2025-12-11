@@ -202,6 +202,25 @@ fn zh_cn(key: &'static str) -> &'static str {
         // 会话页面
         "session.connected" => "已连接到",
         "session.terminal_placeholder" => "终端功能正在开发中...",
+        // 会话侧边栏
+        "session.sidebar.quick_actions" => "快捷操作",
+        "session.sidebar.new_terminal" => "新建终端",
+        "session.sidebar.file_browser" => "文件浏览",
+        "session.sidebar.system_info" => "系统信息",
+        // Monitor 面板
+        "session.monitor.title" => "系统监控",
+        "session.monitor.cpu" => "CPU 使用率",
+        "session.monitor.memory" => "内存使用",
+        "session.monitor.disk" => "磁盘使用",
+        "session.monitor.placeholder" => "监控数据加载中...",
+        // Terminal 面板
+        "session.terminal.title" => "终端",
+        "session.terminal.placeholder" => "终端正在初始化...",
+        // SFTP 面板
+        "session.sftp.title" => "文件传输",
+        "session.sftp.local" => "本地",
+        "session.sftp.remote" => "远程",
+        "session.sftp.placeholder" => "文件列表加载中...",
 
         _ => key,
     }
@@ -402,6 +421,25 @@ fn en_us(key: &'static str) -> &'static str {
         // Session Page
         "session.connected" => "Connected to",
         "session.terminal_placeholder" => "Terminal feature coming soon...",
+        // Session Sidebar
+        "session.sidebar.quick_actions" => "Quick Actions",
+        "session.sidebar.new_terminal" => "New Terminal",
+        "session.sidebar.file_browser" => "File Browser",
+        "session.sidebar.system_info" => "System Info",
+        // Monitor Panel
+        "session.monitor.title" => "System Monitor",
+        "session.monitor.cpu" => "CPU Usage",
+        "session.monitor.memory" => "Memory Usage",
+        "session.monitor.disk" => "Disk Usage",
+        "session.monitor.placeholder" => "Loading monitoring data...",
+        // Terminal Panel
+        "session.terminal.title" => "Terminal",
+        "session.terminal.placeholder" => "Initializing terminal...",
+        // SFTP Panel
+        "session.sftp.title" => "File Transfer",
+        "session.sftp.local" => "Local",
+        "session.sftp.remote" => "Remote",
+        "session.sftp.placeholder" => "Loading file list...",
 
         _ => key,
     }

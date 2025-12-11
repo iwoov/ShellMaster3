@@ -15,7 +15,7 @@ use crate::i18n;
 use crate::models::settings::Language;
 use crate::models::{HistoryItem, Server, ServerGroup};
 use crate::pages::connecting::{render_connecting_page, ConnectingProgress};
-use crate::pages::session::render_terminal_page;
+use crate::pages::session::render_session_layout;
 use crate::services::storage;
 use crate::ssh::run_ssh_connection;
 use crate::state::{SessionState, SessionStatus};
@@ -314,7 +314,7 @@ impl HomePage {
                     render_connecting_page(&tab, progress_state, session_state.clone(), cx)
                         .into_any_element()
                 }
-                SessionStatus::Connected => render_terminal_page(&tab, cx).into_any_element(),
+                SessionStatus::Connected => render_session_layout(&tab, cx).into_any_element(),
                 SessionStatus::Error(_) | SessionStatus::Disconnected => {
                     // 错误或断开状态也使用连接页面显示
                     let progress_state = self

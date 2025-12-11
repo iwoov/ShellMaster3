@@ -25,4 +25,9 @@ pub mod icons {
     pub const LOADER: &str = "icons/loader.svg";
     pub const CHECK: &str = "icons/check.svg";
     pub const X: &str = "icons/x.svg";
+    // 会话页面图标
+    pub const MONITOR: &str = "icons/monitor.svg";
+    pub const REFRESH: &str = "icons/refresh.svg";
+    pub const UPLOAD: &str = "icons/upload.svg";
+    pub const DOWNLOAD: &str = "icons/download.svg";
 }

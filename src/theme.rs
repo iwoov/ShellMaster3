@@ -32,6 +32,10 @@ pub fn init(cx: &mut App) {
     dark_config.colors.list_hover = Some("#334155".into());
     // 输入框边框
     dark_config.colors.input = Some("#475569".into());
+    // 边框颜色：更明显的蓝灰色
+    dark_config.colors.border = Some("#4a5c72".into());
+    // 标题栏边框颜色
+    dark_config.colors.title_bar_border = Some("#4a5c72".into());
 
     // 按钮颜色优化 (Dark)
     // Primary: 保持亮蓝色，确保 vibrant
@@ -61,7 +65,7 @@ pub fn init(cx: &mut App) {
     theme.dark_theme = Rc::new(dark_config);
     theme.light_theme = Rc::new(light_config);
 
-    // 重新应用配置以生效
+    // 应用当前模式的配置
     if theme.mode.is_dark() {
         theme.apply_config(&theme.dark_theme.clone());
     } else {

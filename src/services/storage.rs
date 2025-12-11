@@ -80,6 +80,16 @@ pub fn update_server(server: ServerData) -> Result<()> {
     Ok(())
 }
 
+/// 更新服务器的最后连接时间
+pub fn update_server_last_connected(server_id: &str) -> Result<()> {
+    let mut config = load_servers()?;
+    if let Some(server) = config.servers.iter_mut().find(|s| s.id == server_id) {
+        server.last_connected_at = Some(chrono::Local::now().format("%Y-%m-%d %H:%M").to_string());
+        save_servers(&config)?;
+    }
+    Ok(())
+}
+
 /// 删除服务器
 pub fn delete_server(server_id: &str) -> Result<()> {
     let mut config = load_servers()?;

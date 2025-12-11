@@ -296,10 +296,12 @@ impl HomePage {
                         let progress_for_timer = progress_state.clone();
                         let session_for_timer = session_state.clone();
                         let tab_id = tab.id.clone();
+                        let server_id_for_log = tab.server_id.clone();
                         let server_label_for_log = tab.server_label.clone();
 
                         cx.spawn(async move |_, async_cx| {
                             run_ssh_connection(
+                                server_id_for_log,
                                 server_label_for_log,
                                 tab_id,
                                 progress_for_timer,

@@ -4,6 +4,7 @@ use gpui::*;
 use std::time::Duration;
 
 use crate::pages::connecting::ConnectingProgress;
+use crate::services::storage;
 use crate::state::{SessionState, SessionStatus};
 
 /// SSH 连接步骤
@@ -14,6 +15,7 @@ pub const CONNECT_STEPS: [&str; 4] = ["初始化连接", "验证身份", "建立
 /// 这个函数会被 spawn 调用，执行异步连接操作
 /// 将来可以替换为真正的 SSH 连接逻辑
 pub async fn run_ssh_connection(
+    server_id: String,
     server_label: String,
     tab_id: String,
     progress_state: Entity<ConnectingProgress>,
@@ -46,6 +48,12 @@ pub async fn run_ssh_connection(
 
     // 所有步骤完成，更新会话状态为已连接
     println!("[SSH] [{}] 连接成功!", server_label);
+
+    // 更新服务器的最后连接时间
+    if let Err(e) = storage::update_server_last_connected(&server_id) {
+        eprintln!("[SSH] 更新服务器最后连接时间失败: {}", e);
+    }
+
     let _ = async_cx.update(|cx| {
         session_state.update(cx, |state, cx| {
             state.update_tab_status(&tab_id, SessionStatus::Connected);

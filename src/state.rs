@@ -14,6 +14,7 @@ pub enum SessionStatus {
 #[derive(Clone)]
 pub struct SessionTab {
     pub id: String,
+    pub server_id: String,
     pub server_label: String,
     pub status: SessionStatus,
 }
@@ -53,10 +54,11 @@ impl Default for SessionState {
 
 impl SessionState {
     /// 添加新的会话标签（插入到最前面）
-    pub fn add_tab(&mut self, _server_id: String, server_label: String) -> String {
+    pub fn add_tab(&mut self, server_id: String, server_label: String) -> String {
         let tab_id = uuid::Uuid::new_v4().to_string();
         let tab = SessionTab {
             id: tab_id.clone(),
+            server_id,
             server_label,
             status: SessionStatus::Connecting,
         };

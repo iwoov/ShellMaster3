@@ -8,69 +8,60 @@ use crate::constants::icons;
 use crate::i18n;
 use crate::models::settings::Language;
 use crate::services::storage;
+use crate::ssh::event::{ConnectionStage, LogEntry, LogLevel};
 use crate::state::{SessionState, SessionTab};
 
-/// 连接步骤
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ConnectStep {
-    Initializing = 0,
-    Authenticating = 1,
-    Establishing = 2,
-    Starting = 3,
-    Done = 4,
-}
-
-impl ConnectStep {
-    fn label(&self, lang: &Language) -> &'static str {
-        match self {
-            ConnectStep::Initializing => i18n::t(lang, "connecting.step.initializing"),
-            ConnectStep::Authenticating => i18n::t(lang, "connecting.step.authenticating"),
-            ConnectStep::Establishing => i18n::t(lang, "connecting.step.establishing"),
-            ConnectStep::Starting => i18n::t(lang, "connecting.step.starting"),
-            ConnectStep::Done => i18n::t(lang, "connecting.step.done"),
-        }
-    }
-}
-
-/// 连接进度状态（用于动画）
+/// 连接进度状态
 pub struct ConnectingProgress {
-    pub current_step: ConnectStep,
-    pub progress: f32, // 0.0 - 1.0
+    /// 当前连接阶段
+    pub current_stage: ConnectionStage,
+    /// 连接日志
+    pub logs: Vec<LogEntry>,
+    /// 错误信息
     pub error_message: Option<String>,
-    pub simulation_started: bool,
+    /// 是否已完成
+    pub is_completed: bool,
+    /// 是否已启动连接
+    pub connection_started: bool,
 }
 
 impl ConnectingProgress {
     pub fn new(_tab_id: String) -> Self {
         Self {
-            current_step: ConnectStep::Initializing,
-            progress: 0.0,
+            current_stage: ConnectionStage::Initializing,
+            logs: Vec::new(),
             error_message: None,
-            simulation_started: false,
+            is_completed: false,
+            connection_started: false,
         }
     }
 
-    /// 推进到下一步
-    pub fn advance(&mut self) {
-        match self.current_step {
-            ConnectStep::Initializing => {
-                self.current_step = ConnectStep::Authenticating;
-                self.progress = 0.25;
-            }
-            ConnectStep::Authenticating => {
-                self.current_step = ConnectStep::Establishing;
-                self.progress = 0.5;
-            }
-            ConnectStep::Establishing => {
-                self.current_step = ConnectStep::Starting;
-                self.progress = 0.75;
-            }
-            ConnectStep::Starting => {
-                self.current_step = ConnectStep::Done;
-                self.progress = 1.0;
-            }
-            ConnectStep::Done => {}
+    /// 更新连接阶段
+    pub fn set_stage(&mut self, stage: ConnectionStage) {
+        self.current_stage = stage;
+        if stage == ConnectionStage::Connected {
+            self.is_completed = true;
         }
+    }
+
+    /// 添加日志
+    pub fn add_log(&mut self, log: LogEntry) {
+        self.logs.push(log);
+    }
+
+    /// 设置错误
+    pub fn set_error(&mut self, error: String) {
+        self.error_message = Some(error);
+    }
+
+    /// 获取进度百分比
+    pub fn progress(&self) -> f32 {
+        self.current_stage.progress()
+    }
+
+    /// 标记连接已启动
+    pub fn mark_started(&mut self) {
+        self.connection_started = true;
     }
 }
 
@@ -86,29 +77,70 @@ pub fn render_connecting_page(
         .unwrap_or(Language::Chinese);
 
     let progress = progress_state.read(cx);
-    let current_step = progress.current_step;
-    let progress_value = progress.progress;
+    let current_stage = progress.current_stage;
+    let progress_value = progress.progress();
     let has_error = progress.error_message.is_some();
     let error_msg = progress.error_message.clone();
     let server_label = tab.server_label.clone();
     let tab_id = tab.id.clone();
+    let logs = progress.logs.clone();
 
     let bg_color = crate::theme::background_color(cx);
     let primary = cx.theme().primary;
     let foreground = cx.theme().foreground;
     let muted_foreground = cx.theme().muted_foreground;
-    let _border = cx.theme().border;
-    let _card_bg = cx.theme().popover;
     let destructive: Hsla = rgb(0xef4444).into();
+    let success_color: Hsla = rgb(0x22c55e).into();
+    let warn_color: Hsla = rgb(0xf59e0b).into();
 
     // 进度条宽度
-    let progress_width_val = 400.0_f32;
+    let progress_width_val = 420.0_f32;
     let progress_width = px(progress_width_val);
     let filled_width = px(progress_width_val * progress_value);
 
     // 克隆用于闭包
     let tab_id_for_cancel = tab_id.clone();
     let session_state_for_cancel = session_state.clone();
+
+    // 定义要显示的阶段
+    let display_stages = vec![
+        ConnectionStage::Initializing,
+        ConnectionStage::ConnectingHost,
+        ConnectionStage::Handshaking,
+        ConnectionStage::Authenticating,
+        ConnectionStage::EstablishingChannel,
+        ConnectionStage::StartingSession,
+        ConnectionStage::Connected,
+    ];
+
+    // 标题文字
+    let title = if has_error {
+        i18n::t(&lang, "connecting.error_title")
+    } else if current_stage == ConnectionStage::Connected {
+        match lang {
+            Language::Chinese => "连接成功",
+            Language::English => "Connected",
+        }
+    } else {
+        i18n::t(&lang, "connecting.title")
+    };
+
+    // 图标颜色
+    let icon_bg = if has_error {
+        destructive.opacity(0.1)
+    } else if current_stage == ConnectionStage::Connected {
+        success_color.opacity(0.1)
+    } else {
+        primary.opacity(0.1)
+    };
+
+    let icon_color = if has_error {
+        destructive
+    } else if current_stage == ConnectionStage::Connected {
+        success_color
+    } else {
+        primary
+    };
 
     div()
         .flex_1()
@@ -118,18 +150,18 @@ pub fn render_connecting_page(
         .flex_col()
         .justify_center()
         .items_center()
-        .gap_8()
+        .gap_5()
         // 服务器图标
         .child(
             div()
-                .w_20()
-                .h_20()
+                .w_16()
+                .h_16()
                 .rounded_2xl()
-                .bg(primary.opacity(0.1))
+                .bg(icon_bg)
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(render_icon(icons::SERVER, primary.into())),
+                .child(render_icon(icons::SERVER, icon_color.into())),
         )
         // 标题
         .child(
@@ -137,21 +169,17 @@ pub fn render_connecting_page(
                 .flex()
                 .flex_col()
                 .items_center()
-                .gap_2()
+                .gap_1()
                 .child(
                     div()
-                        .text_xl()
+                        .text_lg()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(foreground)
-                        .child(if has_error {
-                            i18n::t(&lang, "connecting.error_title")
-                        } else {
-                            i18n::t(&lang, "connecting.title")
-                        }),
+                        .child(title),
                 )
                 .child(
                     div()
-                        .text_base()
+                        .text_sm()
                         .text_color(muted_foreground)
                         .child(format!("\"{}\"", server_label)),
                 ),
@@ -177,56 +205,77 @@ pub fn render_connecting_page(
             // 进度条
             div()
                 .w(progress_width)
-                .h_2()
+                .h(px(6.0))
                 .bg(cx.theme().secondary)
                 .rounded_full()
                 .overflow_hidden()
-                .child(div().w(filled_width).h_full().bg(primary).rounded_full())
+                .child(
+                    div()
+                        .w(filled_width)
+                        .h_full()
+                        .bg(if current_stage == ConnectionStage::Connected {
+                            success_color
+                        } else {
+                            primary
+                        })
+                        .rounded_full(),
+                )
                 .into_any_element()
         })
-        // 步骤列表
+        // 动态步骤列表
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap_2()
-                .child(render_step(
-                    ConnectStep::Initializing,
-                    current_step,
-                    &lang,
-                    primary,
-                    foreground,
-                    muted_foreground,
-                ))
-                .child(render_step(
-                    ConnectStep::Authenticating,
-                    current_step,
-                    &lang,
-                    primary,
-                    foreground,
-                    muted_foreground,
-                ))
-                .child(render_step(
-                    ConnectStep::Establishing,
-                    current_step,
-                    &lang,
-                    primary,
-                    foreground,
-                    muted_foreground,
-                ))
-                .child(render_step(
-                    ConnectStep::Starting,
-                    current_step,
-                    &lang,
-                    primary,
-                    foreground,
-                    muted_foreground,
-                )),
+                .gap_1()
+                .children(display_stages.into_iter().map(|stage| {
+                    render_stage(
+                        stage,
+                        current_stage,
+                        &lang,
+                        primary,
+                        success_color,
+                        foreground,
+                        muted_foreground,
+                    )
+                })),
         )
-        // 取消按钮
+        // 日志区域 - 美化版（显示最近8条日志，正序）
         .child(
             div()
+                .w(progress_width)
+                .h(px(140.0))
+                .overflow_hidden()
+                .bg(cx.theme().secondary.opacity(0.15))
+                .border_1()
+                .border_color(cx.theme().border.opacity(0.3))
+                .rounded_lg()
+                .p_3()
+                .child(
+                    div().flex().flex_col().gap(px(4.0)).children(
+                        logs.iter()
+                            .rev()
+                            .take(8)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .map(|log| {
+                                render_log_entry(
+                                    log,
+                                    foreground,
+                                    muted_foreground,
+                                    warn_color,
+                                    destructive,
+                                )
+                            }),
+                    ),
+                ),
+        )
+        // 取消按钮（成功后隐藏）
+        .child(if current_stage != ConnectionStage::Connected {
+            div()
                 .id("cancel-connect-btn")
+                .mt_2()
                 .px_6()
                 .py_2()
                 .bg(cx.theme().secondary)
@@ -243,31 +292,39 @@ pub fn render_connecting_page(
                         .text_sm()
                         .text_color(foreground)
                         .child(i18n::t(&lang, "connecting.cancel")),
-                ),
-        )
+                )
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        })
 }
 
-/// 渲染单个步骤
-fn render_step(
-    step: ConnectStep,
-    current: ConnectStep,
+/// 渲染单个阶段
+fn render_stage(
+    stage: ConnectionStage,
+    current: ConnectionStage,
     lang: &Language,
     primary: Hsla,
+    success: Hsla,
     foreground: Hsla,
     muted: Hsla,
 ) -> impl IntoElement {
-    let is_done = step < current;
-    let is_current = step == current;
+    let stage_val = stage as u8;
+    let current_val = current as u8;
 
-    let (icon_color, text_color) = if is_done {
-        (primary, foreground)
+    let is_done = stage_val < current_val;
+    let is_current = stage == current;
+    let is_connected = stage == ConnectionStage::Connected && current == ConnectionStage::Connected;
+
+    let (icon_color, text_color) = if is_done || is_connected {
+        (success, foreground)
     } else if is_current {
         (primary, foreground)
     } else {
         (muted, muted)
     };
 
-    let indicator = if is_done {
+    let indicator = if is_done || is_connected {
         "✓"
     } else if is_current {
         "●"
@@ -275,22 +332,68 @@ fn render_step(
         "○"
     };
 
+    // 根据语言获取阶段标签
+    let label = match lang {
+        Language::Chinese => stage.label_zh(),
+        Language::English => stage.label_en(),
+    };
+
     div()
         .flex()
         .items_center()
-        .gap_3()
+        .gap_2()
+        .py(px(2.0))
         .child(
             div()
-                .w_5()
+                .w_4()
                 .text_center()
-                .text_sm()
+                .text_xs()
                 .text_color(icon_color)
                 .child(indicator),
         )
+        .child(div().text_sm().text_color(text_color).child(label))
+}
+
+/// 渲染日志条目
+fn render_log_entry(
+    log: &LogEntry,
+    foreground: Hsla,
+    muted: Hsla,
+    warn: Hsla,
+    error: Hsla,
+) -> impl IntoElement {
+    let (level_indicator, text_color) = match log.level {
+        LogLevel::Debug => ("◦", muted.opacity(0.7)),
+        LogLevel::Info => ("•", foreground.opacity(0.9)),
+        LogLevel::Warn => ("▲", warn),
+        LogLevel::Error => ("✕", error),
+    };
+
+    div()
+        .flex()
+        .items_start()
+        .gap_2()
         .child(
             div()
-                .text_sm()
+                .text_xs()
+                .text_color(muted.opacity(0.6))
+                .w(px(52.0))
+                .flex_shrink_0()
+                .child(format!("[{}]", log.timestamp.format("%H:%M:%S"))),
+        )
+        .child(
+            div()
+                .text_xs()
                 .text_color(text_color)
-                .child(step.label(lang)),
+                .w_3()
+                .flex_shrink_0()
+                .child(level_indicator),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(text_color)
+                .flex_1()
+                .child(log.message.clone()),
         )
 }

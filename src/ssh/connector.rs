@@ -1,0 +1,216 @@
+// SSH 连接启动器
+// 负责从 UI 层接收连接请求，并启动异步连接任务
+
+use gpui::{App, Entity};
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
+
+use crate::models::ServerData;
+use crate::pages::connecting::ConnectingProgress;
+use crate::state::{SessionState, SessionStatus};
+
+use super::client::SshClient;
+use super::config::{AuthMethod, SshConfig};
+use super::event::{ConnectionEvent, ConnectionStage, LogEntry};
+
+/// 从 ServerData 构建 SshConfig
+fn build_ssh_config(server: &ServerData) -> SshConfig {
+    let auth = match &server.auth_type {
+        crate::models::server::AuthType::Password => {
+            // 密码需要解密（暂时直接使用加密的值，后续实现解密）
+            AuthMethod::Password(server.password_encrypted.clone().unwrap_or_default())
+        }
+        crate::models::server::AuthType::PublicKey => AuthMethod::PublicKey {
+            key_path: server.private_key_path.clone().unwrap_or_default().into(),
+            passphrase: server.key_passphrase_encrypted.clone(),
+        },
+    };
+
+    SshConfig {
+        host: server.host.clone(),
+        port: server.port,
+        username: server.username.clone(),
+        auth,
+        connect_timeout: 30,
+        jump_host: None, // TODO: 从 server.jump_host_id 加载
+        proxy: None,     // TODO: 从 server.proxy 转换
+        keepalive: Default::default(),
+    }
+}
+
+/// UI 更新消息
+enum UiUpdate {
+    Stage(ConnectionStage),
+    Log(LogEntry),
+    Connected(String),
+    Failed(String),
+    Disconnected(String),
+}
+
+/// 启动 SSH 连接
+///
+/// 在 Connecting 页面渲染完成后调用此函数
+pub fn start_ssh_connection(
+    server: ServerData,
+    tab_id: String,
+    progress_state: Entity<ConnectingProgress>,
+    session_state: Entity<SessionState>,
+    cx: &mut App,
+) {
+    // 构建 SSH 配置
+    let config = build_ssh_config(&server);
+    let server_label = server.label.clone();
+    let server_id = server.id.clone();
+    let start_time = std::time::Instant::now();
+
+    // 创建 UI 更新通道（用于 Tokio 线程 -> GPUI）
+    let (ui_sender, ui_receiver) = std::sync::mpsc::channel::<UiUpdate>();
+    let ui_receiver = Arc::new(Mutex::new(ui_receiver));
+
+    // 克隆用于不同任务
+    let progress_for_result = progress_state.clone();
+    let session_state_for_result = session_state.clone();
+    let tab_id_for_result = tab_id.clone();
+    let server_label_for_log = server_label.clone();
+
+    // 启动 SSH 连接任务
+    // 直接使用 tab_id 作为 session_id
+    let event_receiver = crate::ssh::SshManager::global().connect(config, tab_id.clone());
+
+    // 在 SSH 运行时中启动事件处理任务
+    let ui_sender_for_events = ui_sender.clone();
+    crate::ssh::SshManager::global()
+        .runtime()
+        .spawn(async move {
+            handle_connection_events(event_receiver, ui_sender_for_events).await;
+        });
+
+    // 启动 GPUI 任务来轮询 UI 更新
+    let ui_receiver_for_poll = ui_receiver.clone();
+    cx.spawn(async move |mut async_cx| {
+        loop {
+            // 尝试接收 UI 更新
+            let updates: Vec<UiUpdate> = {
+                let receiver = ui_receiver_for_poll.lock().unwrap();
+                receiver.try_iter().collect()
+            };
+
+            let mut should_break = false;
+
+            for update in updates {
+                match update {
+                    UiUpdate::Stage(stage) => {
+                        let _ = async_cx.update(|cx| {
+                            progress_for_result.update(cx, |p, cx| {
+                                p.set_stage(stage);
+                                cx.notify();
+                            });
+                        });
+                    }
+                    UiUpdate::Log(log) => {
+                        let _ = async_cx.update(|cx| {
+                            progress_for_result.update(cx, |p, cx| {
+                                p.add_log(log);
+                                cx.notify();
+                            });
+                        });
+                    }
+                    UiUpdate::Connected(session_id) => {
+                        let duration = start_time.elapsed();
+                        println!(
+                            "[SSH] [{}] Connection successful! Session: {}",
+                            server_label_for_log, session_id
+                        );
+                        println!(
+                            "[SSH] Total connection time: {:.2}s",
+                            duration.as_secs_f64()
+                        );
+
+                        // 更新服务器最后连接时间
+                        if let Err(e) =
+                            crate::services::storage::update_server_last_connected(&server_id)
+                        {
+                            eprintln!("[SSH] Failed to update last connected time: {}", e);
+                        }
+
+                        // 更新会话状态为已连接
+                        let tab_id_clone = tab_id_for_result.clone();
+                        let _ = async_cx.update(|cx| {
+                            session_state_for_result.update(cx, |state, cx| {
+                                state.update_tab_status(&tab_id_clone, SessionStatus::Connected);
+                                cx.notify();
+                            });
+                        });
+
+                        // 短暂延迟确保 UI 有时间刷新
+                        async_cx
+                            .background_executor()
+                            .timer(std::time::Duration::from_millis(300))
+                            .await;
+
+                        should_break = true;
+                    }
+                    UiUpdate::Failed(error) => {
+                        eprintln!(
+                            "[SSH] [{}] Connection failed: {}",
+                            server_label_for_log, error
+                        );
+
+                        let _ = async_cx.update(|cx| {
+                            progress_for_result.update(cx, |p, cx| {
+                                p.set_error(error);
+                                cx.notify();
+                            });
+                        });
+
+                        should_break = true;
+                    }
+                    UiUpdate::Disconnected(reason) => {
+                        println!("[SSH] [{}] Disconnected: {}", server_label_for_log, reason);
+                        should_break = true;
+                    }
+                }
+            }
+
+            if should_break {
+                break;
+            }
+
+            // 等待一下再继续轮询
+            async_cx
+                .background_executor()
+                .timer(std::time::Duration::from_millis(50))
+                .await;
+        }
+    })
+    .detach();
+}
+
+/// 处理连接事件，转发到 UI 更新通道
+async fn handle_connection_events(
+    mut receiver: mpsc::UnboundedReceiver<ConnectionEvent>,
+    ui_sender: std::sync::mpsc::Sender<UiUpdate>,
+) {
+    while let Some(event) = receiver.recv().await {
+        match event {
+            ConnectionEvent::StageChanged(stage) => {
+                let _ = ui_sender.send(UiUpdate::Stage(stage));
+            }
+            ConnectionEvent::Log(entry) => {
+                let _ = ui_sender.send(UiUpdate::Log(entry));
+            }
+            ConnectionEvent::Connected { session_id } => {
+                println!("[SSH Event] Connected! Session ID: {}", session_id);
+                let _ = ui_sender.send(UiUpdate::Connected(session_id));
+            }
+            ConnectionEvent::Failed { error } => {
+                println!("[SSH Event] Failed: {}", error);
+                let _ = ui_sender.send(UiUpdate::Failed(error));
+            }
+            ConnectionEvent::Disconnected { reason } => {
+                println!("[SSH Event] Disconnected: {}", reason);
+                let _ = ui_sender.send(UiUpdate::Disconnected(reason));
+            }
+        }
+    }
+}

@@ -185,6 +185,9 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
                                         session_state_for_close.update(cx, |state, _| {
                                             state.close_tab(&tab_id_for_close);
                                         });
+                                        // 主动关闭 SSH 连接
+                                        crate::ssh::SshManager::global()
+                                            .close_session(&tab_id_for_close);
                                     })
                                     .child(render_icon(icons::X, muted_foreground.into())),
                             )

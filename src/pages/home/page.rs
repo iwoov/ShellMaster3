@@ -18,7 +18,7 @@ use crate::models::{HistoryItem, Server, ServerGroup};
 use crate::pages::connecting::{render_connecting_page, ConnectingProgress};
 use crate::pages::session::render_session_layout;
 use crate::services::storage;
-use crate::ssh::run_ssh_connection;
+use crate::ssh::start_ssh_connection;
 use crate::state::{SessionState, SessionStatus};
 
 /// 主页状态
@@ -355,14 +355,16 @@ impl HomePage {
                         .or_insert_with(|| cx.new(|_| ConnectingProgress::new(tab.id.clone())))
                         .clone();
 
-                    // 启动模拟连接（如果还没启动）
-                    let should_start = !progress_state.read(cx).simulation_started;
+                    // 检查是否需要启动连接（首次进入此 tab 时启动）
+                    let should_start = !progress_state.read(cx).connection_started;
+
                     if should_start {
                         let server_label = tab.server_label.clone();
                         println!("[SSH] 开始连接到服务器: {}", server_label);
 
+                        // 标记连接已启动
                         progress_state.update(cx, |p, _| {
-                            p.simulation_started = true;
+                            p.mark_started();
                         });
 
                         // 启动 SSH 连接（使用 SSH 模块）
@@ -370,20 +372,24 @@ impl HomePage {
                         let session_for_timer = session_state.clone();
                         let tab_id = tab.id.clone();
                         let server_id_for_log = tab.server_id.clone();
-                        let server_label_for_log = tab.server_label.clone();
 
-                        cx.spawn(async move |_, async_cx| {
-                            run_ssh_connection(
-                                server_id_for_log,
-                                server_label_for_log,
-                                tab_id,
-                                progress_for_timer,
-                                session_for_timer,
-                                async_cx,
-                            )
-                            .await;
-                        })
-                        .detach();
+                        // 根据 server_id 获取完整的 ServerData
+                        if let Ok(config) = crate::services::storage::load_servers() {
+                            if let Some(server_data) = config
+                                .servers
+                                .iter()
+                                .find(|s| s.id == server_id_for_log)
+                                .cloned()
+                            {
+                                start_ssh_connection(
+                                    server_data,
+                                    tab_id,
+                                    progress_for_timer,
+                                    session_for_timer,
+                                    cx,
+                                );
+                            }
+                        }
                     }
 
                     render_connecting_page(&tab, progress_state, session_state.clone(), cx)

@@ -15,6 +15,7 @@ mod pages;
 mod i18n;
 mod router;
 mod services;
+mod ssh;
 mod state;
 mod theme;
 

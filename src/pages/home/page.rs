@@ -1,11 +1,11 @@
 // HomePage 主页组件
 
 use gpui::*;
-// use gpui_component::ActiveTheme;
+use std::collections::HashMap;
 
 use super::server_list::{render_hosts_content, render_placeholder, ViewMode, ViewModeState};
 use super::sidebar::{render_sidebar, MenuType, SidebarState};
-use super::titlebar::render_titlebar;
+use super::titlebar::{render_home_button, render_session_titlebar, render_titlebar};
 use crate::components::common::server_dialog::{render_server_dialog_overlay, ServerDialogState};
 use crate::components::common::settings_dialog::{
     render_settings_dialog_overlay, SettingsDialogState,
@@ -14,7 +14,11 @@ use crate::constants::icons;
 use crate::i18n;
 use crate::models::settings::Language;
 use crate::models::{HistoryItem, Server, ServerGroup};
+use crate::pages::connecting::{render_connecting_page, ConnectingProgress};
+use crate::pages::session::render_terminal_page;
 use crate::services::storage;
+use crate::ssh::run_ssh_connection;
+use crate::state::{SessionState, SessionStatus};
 
 /// 主页状态
 pub struct HomePage {
@@ -24,6 +28,9 @@ pub struct HomePage {
     pub view_mode_state: Entity<ViewModeState>,
     pub dialog_state: Entity<ServerDialogState>,
     pub settings_dialog_state: Entity<SettingsDialogState>,
+    pub session_state: Entity<SessionState>,
+    // 连接进度状态（按 tab_id 索引）
+    pub connecting_progress: HashMap<String, Entity<ConnectingProgress>>,
 }
 
 impl HomePage {
@@ -38,6 +45,7 @@ impl HomePage {
 
         let dialog_state = cx.new(|_| ServerDialogState::default());
         let settings_dialog_state = cx.new(|_| SettingsDialogState::default());
+        let session_state = cx.new(|_| SessionState::default());
 
         // 从存储加载服务器数据
         let server_groups = Self::load_server_groups();
@@ -58,6 +66,8 @@ impl HomePage {
             view_mode_state,
             dialog_state,
             settings_dialog_state,
+            session_state,
+            connecting_progress: HashMap::new(),
         }
     }
 
@@ -148,6 +158,7 @@ impl HomePage {
                 view_mode,
                 self.view_mode_state.clone(),
                 self.dialog_state.clone(),
+                self.session_state.clone(),
                 cx,
             )
             .into_any_element(),
@@ -171,19 +182,13 @@ impl HomePage {
             .into_any_element(),
         }
     }
-}
 
-impl Render for HomePage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 检查是否需要刷新服务器列表
-        let needs_refresh = self.dialog_state.read(cx).needs_refresh;
-        if needs_refresh {
-            self.reload_servers();
-            self.dialog_state.update(cx, |state, _| {
-                state.needs_refresh = false;
-            });
-        }
-
+    /// 渲染主页视图（Sidebar + 服务器列表）
+    fn render_home_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let history = self.history.clone();
         let sidebar_state = self.sidebar_state.clone();
         let selected_menu = self.sidebar_state.read(cx).selected_menu;
@@ -192,33 +197,54 @@ impl Render for HomePage {
         let dialog_state = self.dialog_state.clone();
         let settings_dialog_state = self.settings_dialog_state.clone();
 
-        // 新布局：sidebar 在左侧从顶到底，右侧是 titlebar + content
+        // 检查是否有会话，决定使用哪个标题栏
+        let has_sessions = self.session_state.read(cx).has_sessions();
+        let session_state = self.session_state.clone();
+
         div()
             .size_full()
             .bg(crate::theme::background_color(cx))
             .flex()
-            .relative() // 让弹窗可以绝对定位
-            // 左侧 sidebar（从顶到底）
-            .child(render_sidebar(
-                sidebar_state,
-                selected_menu,
-                &history,
-                self.settings_dialog_state.clone(),
-                cx,
-            ))
-            // 右侧区域（titlebar + content）
+            .flex_col()
+            .relative()
+            // 第一行：Home 按钮区域 + Titlebar
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    // Home 按钮区域（独立，宽度与 sidebar 相同）
+                    .child(render_home_button(session_state.clone(), cx))
+                    // Titlebar（有会话时显示标签页）
+                    .child(if has_sessions {
+                        render_session_titlebar(session_state, cx).into_any_element()
+                    } else {
+                        render_titlebar(cx).into_any_element()
+                    }),
+            )
+            // 第二行：Sidebar + Content
             .child(
                 div()
                     .flex_1()
-                    .h_full()
+                    .w_full()
                     .flex()
-                    .flex_col()
-                    .child(render_titlebar(cx))
-                    .child(self.render_content(selected_menu, cx)),
+                    // Sidebar
+                    .child(render_sidebar(
+                        sidebar_state,
+                        selected_menu,
+                        &history,
+                        self.settings_dialog_state.clone(),
+                        cx,
+                    ))
+                    // Content
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .child(self.render_content(selected_menu, cx)),
+                    ),
             )
             // 服务器弹窗
             .children(if dialog_visible {
-                // 确保输入框已创建
                 self.dialog_state.update(cx, |state, cx| {
                     state.ensure_inputs_created(window, cx);
                 });
@@ -235,5 +261,129 @@ impl Render for HomePage {
             } else {
                 None
             })
+    }
+
+    /// 渲染会话视图（标签页 + 内容）
+    fn render_session_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let session_state = self.session_state.clone();
+        let state = session_state.read(cx);
+
+        // 获取当前活动标签
+        let active_tab = state.active_tab().cloned();
+
+        // 渲染内容区域
+        let content: AnyElement = if let Some(tab) = active_tab {
+            match &tab.status {
+                SessionStatus::Connecting => {
+                    // 获取或创建连接进度状态
+                    let progress_state = self
+                        .connecting_progress
+                        .entry(tab.id.clone())
+                        .or_insert_with(|| cx.new(|_| ConnectingProgress::new(tab.id.clone())))
+                        .clone();
+
+                    // 启动模拟连接（如果还没启动）
+                    let should_start = !progress_state.read(cx).simulation_started;
+                    if should_start {
+                        let server_label = tab.server_label.clone();
+                        println!("[SSH] 开始连接到服务器: {}", server_label);
+
+                        progress_state.update(cx, |p, _| {
+                            p.simulation_started = true;
+                        });
+
+                        // 启动 SSH 连接（使用 SSH 模块）
+                        let progress_for_timer = progress_state.clone();
+                        let session_for_timer = session_state.clone();
+                        let tab_id = tab.id.clone();
+                        let server_label_for_log = tab.server_label.clone();
+
+                        cx.spawn(async move |_, async_cx| {
+                            run_ssh_connection(
+                                server_label_for_log,
+                                tab_id,
+                                progress_for_timer,
+                                session_for_timer,
+                                async_cx,
+                            )
+                            .await;
+                        })
+                        .detach();
+                    }
+
+                    render_connecting_page(&tab, progress_state, session_state.clone(), cx)
+                        .into_any_element()
+                }
+                SessionStatus::Connected => render_terminal_page(&tab, cx).into_any_element(),
+                SessionStatus::Error(_) | SessionStatus::Disconnected => {
+                    // 错误或断开状态也使用连接页面显示
+                    let progress_state = self
+                        .connecting_progress
+                        .entry(tab.id.clone())
+                        .or_insert_with(|| cx.new(|_| ConnectingProgress::new(tab.id.clone())))
+                        .clone();
+
+                    render_connecting_page(&tab, progress_state, session_state.clone(), cx)
+                        .into_any_element()
+                }
+            }
+        } else {
+            // 没有活动标签，显示空白
+            div().into_any_element()
+        };
+
+        div()
+            .size_full()
+            .bg(crate::theme::background_color(cx))
+            .flex()
+            .flex_col()
+            // 第一行：Home 按钮区域 + 会话标题栏
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    // Home 按钮区域
+                    .child(render_home_button(session_state.clone(), cx))
+                    // 会话标题栏（带标签页）
+                    .child(render_session_titlebar(session_state, cx)),
+            )
+            // 第二行：会话内容区域
+            .child(div().flex_1().w_full().child(content))
+    }
+}
+
+impl Render for HomePage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 检查是否需要刷新服务器列表
+        let needs_refresh = self.dialog_state.read(cx).needs_refresh;
+        if needs_refresh {
+            self.reload_servers();
+            self.dialog_state.update(cx, |state, _| {
+                state.needs_refresh = false;
+            });
+        }
+
+        // 清理已关闭标签的进度状态
+        let active_tabs: Vec<String> = self
+            .session_state
+            .read(cx)
+            .tabs
+            .iter()
+            .map(|t| t.id.clone())
+            .collect();
+        self.connecting_progress
+            .retain(|id, _| active_tabs.contains(id));
+
+        // 根据 show_home 状态决定渲染哪个视图
+        let show_home = self.session_state.read(cx).show_home;
+        let has_sessions = self.session_state.read(cx).has_sessions();
+
+        // 如果 show_home=true 或没有会话，显示主页
+        // 如果 show_home=false 且有会话，显示会话视图
+        if show_home || !has_sessions {
+            self.render_home_view(window, cx).into_any_element()
+        } else {
+            self.render_session_view(cx).into_any_element()
+        }
     }
 }

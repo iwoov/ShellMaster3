@@ -86,10 +86,6 @@ pub fn render_sidebar(
         .flex()
         .flex_col()
         .child(
-            // 顶部空白区域（为 macOS 红绿灯留空间）
-            div().h(px(52.)),
-        )
-        .child(
             // 菜单项
             div().p_2().flex().flex_col().gap_1().children(
                 menus

@@ -1,7 +1,7 @@
 // 服务器列表组件
 
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_component::{ActiveTheme, InteractiveElementExt};
 
 use crate::components::common::icon::render_icon;
 use crate::components::common::server_dialog::ServerDialogState;
@@ -10,6 +10,7 @@ use crate::i18n;
 use crate::models::settings::Language;
 use crate::models::{Server, ServerGroup};
 use crate::services::storage;
+use crate::state::SessionState;
 
 /// 视图模式
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -30,11 +31,14 @@ pub fn render_hosts_content(
     view_mode: ViewMode,
     view_state: Entity<ViewModeState>,
     dialog_state: Entity<ServerDialogState>,
+    session_state: Entity<SessionState>,
     cx: &App,
 ) -> impl IntoElement {
     let dialog_state_for_list = dialog_state.clone();
     let dialog_state_for_card = dialog_state.clone();
     let dialog_state_for_empty = dialog_state.clone();
+    let session_state_for_list = session_state.clone();
+    let session_state_for_card = session_state;
 
     // 检查是否有任何服务器
     let has_servers = server_groups.iter().any(|g| !g.servers.is_empty());
@@ -69,10 +73,20 @@ pub fn render_hosts_content(
                 .px_6()
                 .pb_6()
                 .child(match view_mode {
-                    ViewMode::List => render_list_view(server_groups, dialog_state_for_list, cx)
-                        .into_any_element(),
-                    ViewMode::Card => render_card_view(server_groups, dialog_state_for_card, cx)
-                        .into_any_element(),
+                    ViewMode::List => render_list_view(
+                        server_groups,
+                        dialog_state_for_list,
+                        session_state_for_list,
+                        cx,
+                    )
+                    .into_any_element(),
+                    ViewMode::Card => render_card_view(
+                        server_groups,
+                        dialog_state_for_card,
+                        session_state_for_card,
+                        cx,
+                    )
+                    .into_any_element(),
                 })
                 .into_any_element()
         } else {
@@ -210,6 +224,7 @@ fn render_toolbar(
 fn render_list_view(
     server_groups: &[ServerGroup],
     dialog_state: Entity<ServerDialogState>,
+    session_state: Entity<SessionState>,
     cx: &App,
 ) -> impl IntoElement {
     let groups_owned: Vec<ServerGroup> = server_groups.to_vec();
@@ -232,7 +247,8 @@ fn render_list_view(
         .gap_6()
         .children(groups_owned.into_iter().map(move |group| {
             let state = dialog_state.clone();
-            render_server_group(group, state, colors)
+            let sess = session_state.clone();
+            render_server_group(group, state, sess, colors)
         }))
 }
 
@@ -252,6 +268,7 @@ struct CardColors {
 fn render_card_view(
     server_groups: &[ServerGroup],
     dialog_state: Entity<ServerDialogState>,
+    session_state: Entity<SessionState>,
     cx: &App,
 ) -> impl IntoElement {
     let groups_owned: Vec<ServerGroup> = server_groups.to_vec();
@@ -274,7 +291,8 @@ fn render_card_view(
         .gap_6()
         .children(groups_owned.into_iter().map(move |group| {
             let state = dialog_state.clone();
-            render_card_group(group, state, colors)
+            let sess = session_state.clone();
+            render_card_group(group, state, sess, colors)
         }))
 }
 
@@ -282,6 +300,7 @@ fn render_card_view(
 fn render_card_group(
     group: ServerGroup,
     dialog_state: Entity<ServerDialogState>,
+    session_state: Entity<SessionState>,
     colors: CardColors,
 ) -> impl IntoElement {
     let servers_owned = group.servers.clone();
@@ -313,7 +332,8 @@ fn render_card_group(
                 .gap_4()
                 .children(servers_owned.into_iter().map(move |server| {
                     let state = dialog_state.clone();
-                    render_server_card(server, state, colors)
+                    let sess = session_state.clone();
+                    render_server_card(server, state, sess, colors)
                 })),
         )
 }
@@ -322,13 +342,17 @@ fn render_card_group(
 fn render_server_card(
     server: Server,
     dialog_state: Entity<ServerDialogState>,
+    session_state: Entity<SessionState>,
     colors: CardColors,
 ) -> impl IntoElement {
     let server_id = server.id.clone();
     let server_id_for_edit = server_id.clone();
     let server_id_for_delete = server_id.clone();
+    let server_id_for_connect = server_id.clone();
+    let server_label_for_connect = server.name.clone();
     let dialog_for_edit = dialog_state.clone();
     let dialog_for_delete = dialog_state;
+    let session_for_connect = session_state;
 
     div()
         .id(SharedString::from(format!("card-{}", server_id)))
@@ -340,6 +364,15 @@ fn render_server_card(
         .p_4()
         .cursor_pointer()
         .hover(move |s| s.border_color(colors.primary).shadow_md())
+        // 双击连接服务器
+        .on_double_click(move |_, _, cx| {
+            session_for_connect.update(cx, |state, _| {
+                state.add_tab(
+                    server_id_for_connect.clone(),
+                    server_label_for_connect.clone(),
+                );
+            });
+        })
         .flex()
         .flex_col()
         .gap_3()
@@ -504,6 +537,7 @@ fn render_server_card(
 fn render_server_group(
     group: ServerGroup,
     dialog_state: Entity<ServerDialogState>,
+    session_state: Entity<SessionState>,
     colors: CardColors,
 ) -> impl IntoElement {
     // 加载当前语言
@@ -603,7 +637,8 @@ fn render_server_group(
                 .flex_col()
                 .children(servers_owned.into_iter().map(move |server| {
                     let state = dialog_state.clone();
-                    render_server_row(server, state, colors)
+                    let sess = session_state.clone();
+                    render_server_row(server, state, sess, colors)
                 })),
         )
 }
@@ -612,13 +647,17 @@ fn render_server_group(
 fn render_server_row(
     server: Server,
     dialog_state: Entity<ServerDialogState>,
+    session_state: Entity<SessionState>,
     colors: CardColors,
 ) -> impl IntoElement {
     let server_id = server.id.clone();
     let server_id_for_edit = server_id.clone();
     let server_id_for_delete = server_id.clone();
+    let server_id_for_connect = server_id.clone();
+    let server_label_for_connect = server.name.clone();
     let dialog_for_edit = dialog_state.clone();
     let dialog_for_delete = dialog_state;
+    let session_for_connect = session_state;
 
     div()
         .id(SharedString::from(format!("row-{}", server_id)))
@@ -628,7 +667,17 @@ fn render_server_row(
         .border_color(colors.border)
         .flex()
         .items_center()
+        .cursor_pointer()
         .hover(move |s| s.bg(colors.header_bg))
+        // 双击连接服务器
+        .on_double_click(move |_, _, cx| {
+            session_for_connect.update(cx, |state, _| {
+                state.add_tab(
+                    server_id_for_connect.clone(),
+                    server_label_for_connect.clone(),
+                );
+            });
+        })
         .child(
             div()
                 .w(px(200.))

@@ -1,5 +1,5 @@
 // 连接中页面模块
 
-pub mod log_viewer;
 pub mod page;
-pub mod progress;
+
+pub use page::{render_connecting_page, ConnectingProgress};

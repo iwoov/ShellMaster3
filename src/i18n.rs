@@ -189,6 +189,20 @@ fn zh_cn(key: &'static str) -> &'static str {
         "server_list.placeholder.known_hosts" => "已知主机管理",
         "server_list.placeholder.history" => "连接历史记录",
 
+        // 连接页面
+        "connecting.title" => "正在连接",
+        "connecting.error_title" => "连接失败",
+        "connecting.cancel" => "取消连接",
+        "connecting.step.initializing" => "初始化连接...",
+        "connecting.step.authenticating" => "验证身份...",
+        "connecting.step.establishing" => "建立安全通道...",
+        "connecting.step.starting" => "启动会话...",
+        "connecting.step.done" => "连接成功",
+
+        // 会话页面
+        "session.connected" => "已连接到",
+        "session.terminal_placeholder" => "终端功能正在开发中...",
+
         _ => key,
     }
 }
@@ -374,6 +388,20 @@ fn en_us(key: &'static str) -> &'static str {
         "server_list.placeholder.snippets" => "Snippets Feature",
         "server_list.placeholder.known_hosts" => "Known Hosts Management",
         "server_list.placeholder.history" => "Connection History",
+
+        // Connecting Page
+        "connecting.title" => "Connecting",
+        "connecting.error_title" => "Connection Failed",
+        "connecting.cancel" => "Cancel",
+        "connecting.step.initializing" => "Initializing connection...",
+        "connecting.step.authenticating" => "Authenticating...",
+        "connecting.step.establishing" => "Establishing secure channel...",
+        "connecting.step.starting" => "Starting session...",
+        "connecting.step.done" => "Connected",
+
+        // Session Page
+        "session.connected" => "Connected to",
+        "session.terminal_placeholder" => "Terminal feature coming soon...",
 
         _ => key,
     }

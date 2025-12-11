@@ -2,7 +2,6 @@
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::menu::DropdownMenu;
 use gpui_component::ActiveTheme;
 
 use crate::components::common::icon::render_icon;
@@ -12,7 +11,7 @@ use crate::models::server::AuthType;
 use crate::models::settings::Language;
 use crate::services::storage;
 
-use super::super::helpers::render_form_label;
+use super::super::helpers::{render_form_label, render_group_select};
 use super::super::ServerDialogState;
 
 /// 渲染基本信息表单
@@ -74,77 +73,22 @@ pub fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> imp
     };
 
     let state_for_group_dropdown = state.clone();
-    let current_group = state_read
-        .group_input
-        .as_ref()
-        .map(|input| input.read(cx).value().to_string())
-        .unwrap_or_default();
     let available_groups = state_read.available_groups.clone();
 
     div()
         .flex()
         .flex_col()
         .gap_3()
-        // 服务器分组（第一个选项）
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(render_form_label(
-                    i18n::t(&lang, "server_dialog.group"),
-                    icons::FOLDER,
-                    cx,
-                ))
-                .child(
-                    // 使用全宽按钮作为下拉触发器，anchor 设为 TopLeft 以便菜单在正下方显示
-                    gpui_component::button::Button::new("group-dropdown")
-                        .w_full()
-                        .h(px(32.))
-                        .outline()
-                        .justify_start() // 内容左对齐
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .w(px(460.)) // 调整宽度更接近按钮实际宽度（520 - 32 内边距 - 按钮内边距）
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .text_sm()
-                                        .text_color(cx.theme().foreground)
-                                        .child(if current_group.is_empty() {
-                                            i18n::t(&lang, "server_dialog.group_placeholder")
-                                                .to_string()
-                                        } else {
-                                            current_group.clone()
-                                        }),
-                                )
-                                .child(render_icon(
-                                    icons::CHEVRON_DOWN,
-                                    cx.theme().muted_foreground.into(),
-                                )),
-                        )
-                        .dropdown_menu_with_anchor(gpui::Corner::TopLeft, move |menu, _, _| {
-                            // 设置菜单宽度与按钮一致（右侧内容宽度 520 - 内边距 32）
-                            let mut menu = menu.min_w(px(488.));
-                            for group_name in &available_groups {
-                                let group_name_display: SharedString = group_name.clone().into();
-                                let group_val = group_name.clone();
-                                let state_clone = state_for_group_dropdown.clone();
-                                menu = menu.item(
-                                    gpui_component::menu::PopupMenuItem::new(group_name_display)
-                                        .on_click(move |_, _, cx| {
-                                            state_clone.update(cx, |s, _| {
-                                                s.pending_group_value = Some(group_val.clone());
-                                            });
-                                        }),
-                                );
-                            }
-                            menu
-                        }),
-                ),
-        )
+        // 服务器分组（使用独立的 render_group_select 组件）
+        .child(render_group_select(
+            i18n::t(&lang, "server_dialog.group"),
+            icons::FOLDER,
+            state_read.group_input.as_ref(),
+            available_groups,
+            state_for_group_dropdown,
+            loading_text,
+            cx,
+        ))
         // 服务器标签
         .child(
             div()

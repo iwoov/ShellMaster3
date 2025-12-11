@@ -520,12 +520,12 @@ fn render_group_dropdown_overlay(
             .id("group-dropdown-overlay")
             .absolute()
             // 定位到对话框内分组输入框下方
-            // 左侧菜单 180px + 右侧内边距
+            // 左侧菜单 180px + 左内边距 24px - 微调 8px
             .left(px(180. + 24. - 8.))
             // 标题栏高度 56px + 表单内边距 + 分组标签和输入框高度
             .top(px(56. + 24. + 24. + 32. + 4.)) // 约 140px
-            // 与输入框宽度一致
-            .w(px(700. - 180. - 48. - 32. + 8.))
+            // 与输入框宽度一致：对话框宽度 700 - 左侧菜单 180 - 左右内边距 48 + 微调 12px
+            .w(px(700. - 180. - 48. + 12.))
             .bg(cx.theme().popover)
             .border_1()
             .border_color(cx.theme().border)

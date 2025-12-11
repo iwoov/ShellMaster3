@@ -230,6 +230,22 @@ fn zh_cn(key: &'static str) -> &'static str {
         "session.sftp.remote" => "远程",
         "session.sftp.placeholder" => "文件列表加载中...",
 
+        // Snippets 快捷命令
+        "snippets.add_group" => "新建组",
+        "snippets.add_command" => "新建命令",
+        "snippets.breadcrumb.all" => "全部",
+        "snippets.empty.title" => "暂无快捷命令",
+        "snippets.empty.description" => "创建命令组或命令开始使用",
+        "snippets.dialog.group_name" => "组名称",
+        "snippets.dialog.command_name" => "命令名称",
+        "snippets.dialog.command_content" => "命令内容",
+        "snippets.dialog.parent_group" => "父级分组",
+        "snippets.dialog.description" => "描述",
+        "snippets.dialog.edit_group" => "编辑分组",
+        "snippets.dialog.edit_command" => "编辑命令",
+        "snippets.dialog.enter_name" => "请输入名称...",
+        "snippets.dialog.enter_command" => "请输入命令...",
+
         // 小侧栏
         "mini_sidebar.snippets" => "快捷命令",
         "mini_sidebar.transfer" => "传输管理",
@@ -460,6 +476,22 @@ fn en_us(key: &'static str) -> &'static str {
         "session.sftp.local" => "Local",
         "session.sftp.remote" => "Remote",
         "session.sftp.placeholder" => "Loading file list...",
+
+        // Snippets
+        "snippets.add_group" => "New Group",
+        "snippets.add_command" => "New Command",
+        "snippets.breadcrumb.all" => "All",
+        "snippets.empty.title" => "No Snippets",
+        "snippets.empty.description" => "Create a group or command to get started",
+        "snippets.dialog.group_name" => "Group Name",
+        "snippets.dialog.command_name" => "Command Name",
+        "snippets.dialog.command_content" => "Command Content",
+        "snippets.dialog.parent_group" => "Parent Group",
+        "snippets.dialog.description" => "Description",
+        "snippets.dialog.edit_group" => "Edit Group",
+        "snippets.dialog.edit_command" => "Edit Command",
+        "snippets.dialog.enter_name" => "Enter name...",
+        "snippets.dialog.enter_command" => "Enter command...",
 
         // Mini Sidebar
         "mini_sidebar.snippets" => "Snippets",

@@ -142,3 +142,107 @@ pub fn save_settings(settings: &AppSettings) -> Result<()> {
     fs::write(&path, content).context("无法写入设置配置文件")?;
     Ok(())
 }
+
+// ======================== Snippets (快捷命令) 持久化 ========================
+
+use crate::models::{SnippetCommand, SnippetGroup, SnippetsConfig};
+
+/// 获取 Snippets 配置文件路径
+pub fn get_snippets_file() -> Result<PathBuf> {
+    Ok(get_config_dir()?.join("snippets.json"))
+}
+
+/// 加载 Snippets 配置
+pub fn load_snippets() -> Result<SnippetsConfig> {
+    let path = get_snippets_file()?;
+    if !path.exists() {
+        return Ok(SnippetsConfig::default());
+    }
+    let content = fs::read_to_string(&path).context("无法读取 Snippets 配置文件")?;
+    let config: SnippetsConfig =
+        serde_json::from_str(&content).context("无法解析 Snippets 配置文件")?;
+    Ok(config)
+}
+
+/// 保存 Snippets 配置
+pub fn save_snippets(config: &SnippetsConfig) -> Result<()> {
+    let path = get_snippets_file()?;
+    let content = serde_json::to_string_pretty(config).context("无法序列化 Snippets 配置")?;
+    fs::write(&path, content).context("无法写入 Snippets 配置文件")?;
+    Ok(())
+}
+
+/// 添加命令组
+pub fn add_snippet_group(group: SnippetGroup) -> Result<()> {
+    let mut config = load_snippets()?;
+    config.groups.push(group);
+    save_snippets(&config)?;
+    Ok(())
+}
+
+/// 更新命令组
+pub fn update_snippet_group(group: SnippetGroup) -> Result<()> {
+    let mut config = load_snippets()?;
+    if let Some(pos) = config.groups.iter().position(|g| g.id == group.id) {
+        config.groups[pos] = group;
+        save_snippets(&config)?;
+    }
+    Ok(())
+}
+
+/// 删除命令组（级联删除子组和命令）
+pub fn delete_snippet_group(group_id: &str) -> Result<()> {
+    let mut config = load_snippets()?;
+
+    // 收集所有要删除的组 ID（包括子组）
+    let mut to_delete = vec![group_id.to_string()];
+    let mut i = 0;
+    while i < to_delete.len() {
+        let parent_id = &to_delete[i];
+        let children: Vec<String> = config
+            .groups
+            .iter()
+            .filter(|g| g.parent_id.as_deref() == Some(parent_id))
+            .map(|g| g.id.clone())
+            .collect();
+        to_delete.extend(children);
+        i += 1;
+    }
+
+    // 删除组和相关命令
+    config.groups.retain(|g| !to_delete.contains(&g.id));
+    config.commands.retain(|c| {
+        c.group_id
+            .as_ref()
+            .map_or(true, |gid| !to_delete.contains(gid))
+    });
+
+    save_snippets(&config)?;
+    Ok(())
+}
+
+/// 添加命令
+pub fn add_snippet_command(command: SnippetCommand) -> Result<()> {
+    let mut config = load_snippets()?;
+    config.commands.push(command);
+    save_snippets(&config)?;
+    Ok(())
+}
+
+/// 更新命令
+pub fn update_snippet_command(command: SnippetCommand) -> Result<()> {
+    let mut config = load_snippets()?;
+    if let Some(pos) = config.commands.iter().position(|c| c.id == command.id) {
+        config.commands[pos] = command;
+        save_snippets(&config)?;
+    }
+    Ok(())
+}
+
+/// 删除命令
+pub fn delete_snippet_command(command_id: &str) -> Result<()> {
+    let mut config = load_snippets()?;
+    config.commands.retain(|c| c.id != command_id);
+    save_snippets(&config)?;
+    Ok(())
+}

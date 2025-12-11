@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use super::server_list::{render_hosts_content, render_placeholder, ViewMode, ViewModeState};
 use super::sidebar::{render_sidebar, MenuType, SidebarState};
+use super::snippets_list::{render_snippets_content, SnippetsPageState};
 use super::titlebar::{render_home_button, render_session_titlebar, render_titlebar};
 use crate::components::common::server_dialog::{render_server_dialog_overlay, ServerDialogState};
 use crate::components::common::settings_dialog::{
@@ -29,6 +30,7 @@ pub struct HomePage {
     pub dialog_state: Entity<ServerDialogState>,
     pub settings_dialog_state: Entity<SettingsDialogState>,
     pub session_state: Entity<SessionState>,
+    pub snippets_state: Entity<SnippetsPageState>,
     // 连接进度状态（按 tab_id 索引）
     pub connecting_progress: HashMap<String, Entity<ConnectingProgress>>,
     /// 上一次的 show_home 状态，用于检测视图切换
@@ -48,6 +50,7 @@ impl HomePage {
         let dialog_state = cx.new(|_| ServerDialogState::default());
         let settings_dialog_state = cx.new(|_| SettingsDialogState::default());
         let session_state = cx.new(|_| SessionState::default());
+        let snippets_state = cx.new(|cx| SnippetsPageState::new(cx));
 
         // 从存储加载服务器数据
         let server_groups = Self::load_server_groups();
@@ -60,6 +63,7 @@ impl HomePage {
             dialog_state,
             settings_dialog_state,
             session_state,
+            snippets_state,
             connecting_progress: HashMap::new(),
             last_show_home: true,
         }
@@ -221,12 +225,9 @@ impl HomePage {
                 render_placeholder("Monitor", i18n::t(&lang, "session.monitor.title"), cx)
                     .into_any_element()
             }
-            MenuType::Snippets => render_placeholder(
-                "Snippets",
-                i18n::t(&lang, "server_list.placeholder.snippets"),
-                cx,
-            )
-            .into_any_element(),
+            MenuType::Snippets => {
+                render_snippets_content(self.snippets_state.clone(), cx).into_any_element()
+            }
             MenuType::KnownHosts => render_placeholder(
                 "Known Hosts",
                 i18n::t(&lang, "server_list.placeholder.known_hosts"),
@@ -313,6 +314,25 @@ impl HomePage {
                 Some(render_settings_dialog_overlay(settings_dialog_state, cx))
             } else {
                 None
+            })
+            // Snippets 弹窗
+            .children({
+                let snippets_dialog_open =
+                    self.snippets_state.read(cx).dialog_state.read(cx).is_open();
+                if snippets_dialog_open {
+                    let dialog_state = self.snippets_state.read(cx).dialog_state.clone();
+                    dialog_state.update(cx, |state, cx| {
+                        state.ensure_inputs_created(window, cx);
+                    });
+                    Some(
+                        crate::components::common::snippets_dialog::render_snippets_dialog_overlay(
+                            dialog_state,
+                            cx,
+                        ),
+                    )
+                } else {
+                    None
+                }
             })
     }
 
@@ -427,6 +447,22 @@ impl Render for HomePage {
             }
         }
         self.last_show_home = show_home;
+
+        // Snippets 弹窗保存后刷新
+        let snippets_needs_refresh = self
+            .snippets_state
+            .read(cx)
+            .dialog_state
+            .read(cx)
+            .needs_page_refresh;
+        if snippets_needs_refresh {
+            self.snippets_state.update(cx, |state, cx| {
+                state.refresh();
+                state.dialog_state.update(cx, |ds, _| {
+                    ds.needs_page_refresh = false;
+                });
+            });
+        }
 
         // 清理已关闭标签的进度状态
         let active_tabs: Vec<String> = self

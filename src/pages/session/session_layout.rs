@@ -22,7 +22,7 @@ pub fn render_session_layout(
     let top_area = h_resizable("session-top-h")
         .child(
             resizable_panel()
-                .size(px(220.)) // 与 home 按钮区域宽度一致
+                .size(px(219.)) // 219px + 1px 分隔条 = 220px，与 home 按钮区域对齐
                 .child(render_monitor_panel(cx)),
         )
         .child(resizable_panel().child(render_terminal_panel(tab, cx)));

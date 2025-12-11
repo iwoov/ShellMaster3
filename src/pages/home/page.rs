@@ -316,7 +316,8 @@ impl HomePage {
                 }
                 SessionStatus::Connected => {
                     let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
-                    render_session_layout(&tab, sidebar_collapsed, cx).into_any_element()
+                    render_session_layout(&tab, sidebar_collapsed, session_state.clone(), cx)
+                        .into_any_element()
                 }
                 SessionStatus::Error(_) | SessionStatus::Disconnected => {
                     // 错误或断开状态也使用连接页面显示

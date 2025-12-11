@@ -18,6 +18,15 @@ pub struct SessionTab {
     pub status: SessionStatus,
 }
 
+/// 侧边栏面板类型
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum SidebarPanel {
+    #[default]
+    Default, // 默认面板（Session 信息）
+    Snippets, // 快捷命令
+    Transfer, // 传输管理
+}
+
 /// 全局会话状态
 pub struct SessionState {
     pub tabs: Vec<SessionTab>,
@@ -26,6 +35,8 @@ pub struct SessionState {
     pub show_home: bool,
     /// 右侧 Sidebar 是否折叠
     pub sidebar_collapsed: bool,
+    /// 当前激活的侧边栏面板
+    pub active_sidebar_panel: SidebarPanel,
 }
 
 impl Default for SessionState {
@@ -35,6 +46,7 @@ impl Default for SessionState {
             active_tab_id: None,
             show_home: true,
             sidebar_collapsed: false,
+            active_sidebar_panel: SidebarPanel::Default,
         }
     }
 }
@@ -96,5 +108,14 @@ impl SessionState {
     /// 切换 Sidebar 折叠状态
     pub fn toggle_sidebar(&mut self) {
         self.sidebar_collapsed = !self.sidebar_collapsed;
+    }
+
+    /// 设置当前激活的侧边栏面板
+    pub fn set_sidebar_panel(&mut self, panel: SidebarPanel) {
+        self.active_sidebar_panel = panel;
+        // 如果 sidebar 折叠了，自动展开
+        if self.sidebar_collapsed {
+            self.sidebar_collapsed = false;
+        }
     }
 }

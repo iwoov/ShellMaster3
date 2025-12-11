@@ -222,6 +222,10 @@ fn zh_cn(key: &'static str) -> &'static str {
         "session.sftp.remote" => "远程",
         "session.sftp.placeholder" => "文件列表加载中...",
 
+        // 小侧栏
+        "mini_sidebar.snippets" => "快捷命令",
+        "mini_sidebar.transfer" => "传输管理",
+
         _ => key,
     }
 }
@@ -440,6 +444,10 @@ fn en_us(key: &'static str) -> &'static str {
         "session.sftp.local" => "Local",
         "session.sftp.remote" => "Remote",
         "session.sftp.placeholder" => "Loading file list...",
+
+        // Mini Sidebar
+        "mini_sidebar.snippets" => "Snippets",
+        "mini_sidebar.transfer" => "Transfer",
 
         _ => key,
     }

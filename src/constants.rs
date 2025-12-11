@@ -32,4 +32,7 @@ pub mod icons {
     pub const DOWNLOAD: &str = "icons/download.svg";
     pub const PANEL_RIGHT_CLOSE: &str = "icons/panel-right-close.svg";
     pub const PANEL_RIGHT_OPEN: &str = "icons/panel-right-open.svg";
+    // 小侧栏图标
+    pub const COMMAND: &str = "icons/command.svg";
+    pub const TRANSFER: &str = "icons/transfer.svg";
 }

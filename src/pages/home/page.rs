@@ -54,16 +54,7 @@ impl HomePage {
 
         Self {
             server_groups,
-            history: vec![
-                HistoryItem {
-                    name: "Los Angles-DMIT".into(),
-                    time: "24分钟前".into(),
-                },
-                HistoryItem {
-                    name: "AAITR-NAT".into(),
-                    time: "26分钟前".into(),
-                },
-            ],
+            history: Self::load_history(),
             sidebar_state,
             view_mode_state,
             dialog_state,
@@ -146,6 +137,67 @@ impl HomePage {
     /// 重新加载服务器列表
     pub fn reload_servers(&mut self) {
         self.server_groups = Self::load_server_groups();
+        self.history = Self::load_history();
+    }
+
+    /// 从存储加载历史记录
+    fn load_history() -> Vec<HistoryItem> {
+        let lang = storage::load_settings()
+            .map(|s| s.theme.language)
+            .unwrap_or(Language::Chinese);
+
+        let config = storage::load_servers().unwrap_or_default();
+        let mut servers_with_time: Vec<(String, chrono::NaiveDateTime)> = config
+            .servers
+            .iter()
+            .filter_map(|s| {
+                s.last_connected_at.as_ref().and_then(|time_str| {
+                    match chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M") {
+                        Ok(dt) => Some((s.label.clone(), dt)),
+                        Err(_) => None,
+                    }
+                })
+            })
+            .collect();
+
+        // 按时间倒序排序
+        servers_with_time.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // 取前 10 条
+        servers_with_time
+            .into_iter()
+            .take(10)
+            .map(|(name, time)| {
+                let now = chrono::Local::now().naive_local();
+                let duration = now.signed_duration_since(time);
+                let time_str = if duration.num_seconds() < 60 {
+                    i18n::t(&lang, "history.just_now").to_string()
+                } else if duration.num_minutes() < 60 {
+                    format!(
+                        "{}{}",
+                        duration.num_minutes(),
+                        i18n::t(&lang, "history.minutes_ago")
+                    )
+                } else if duration.num_hours() < 24 {
+                    format!(
+                        "{}{}",
+                        duration.num_hours(),
+                        i18n::t(&lang, "history.hours_ago")
+                    )
+                } else {
+                    format!(
+                        "{}{}",
+                        duration.num_days(),
+                        i18n::t(&lang, "history.days_ago")
+                    )
+                };
+
+                HistoryItem {
+                    name,
+                    time: time_str,
+                }
+            })
+            .collect()
     }
 
     fn render_content(&self, selected_menu: MenuType, cx: &Context<Self>) -> AnyElement {

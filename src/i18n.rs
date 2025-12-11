@@ -137,6 +137,12 @@ fn zh_cn(key: &'static str) -> &'static str {
         "sidebar.history" => "历史记录",
         "sidebar.settings" => "设置",
 
+        // 历史记录时间
+        "history.just_now" => "刚刚",
+        "history.minutes_ago" => "分钟前",
+        "history.hours_ago" => "小时前",
+        "history.days_ago" => "天前",
+
         // 服务器对话框
         "server_dialog.add_title" => "添加服务器",
         "server_dialog.edit_title" => "编辑服务器",
@@ -359,6 +365,12 @@ fn en_us(key: &'static str) -> &'static str {
         "sidebar.known_hosts" => "Known Hosts",
         "sidebar.history" => "History",
         "sidebar.settings" => "Settings",
+
+        // History Time
+        "history.just_now" => "Just now",
+        "history.minutes_ago" => "m ago",
+        "history.hours_ago" => "h ago",
+        "history.days_ago" => "d ago",
 
         // Server Dialog
         "server_dialog.add_title" => "Add Server",

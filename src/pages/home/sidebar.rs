@@ -14,36 +14,36 @@ use crate::models::HistoryItem;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MenuType {
     Hosts,
+    Monitor,
     Snippets,
     KnownHosts,
-    History,
 }
 
 impl MenuType {
     pub fn id(&self) -> &'static str {
         match self {
             MenuType::Hosts => "hosts",
+            MenuType::Monitor => "monitor",
             MenuType::Snippets => "snippets",
             MenuType::KnownHosts => "known_hosts",
-            MenuType::History => "history",
         }
     }
 
     pub fn label_key(&self) -> &'static str {
         match self {
             MenuType::Hosts => "sidebar.hosts",
+            MenuType::Monitor => "sidebar.monitor",
             MenuType::Snippets => "sidebar.snippets",
             MenuType::KnownHosts => "sidebar.known_hosts",
-            MenuType::History => "sidebar.history",
         }
     }
 
     pub fn icon(&self) -> &'static str {
         match self {
             MenuType::Hosts => icons::SERVER,
+            MenuType::Monitor => icons::MONITOR,
             MenuType::Snippets => icons::CODE,
             MenuType::KnownHosts => icons::USER,
-            MenuType::History => icons::HISTORY,
         }
     }
 }
@@ -63,9 +63,9 @@ pub fn render_sidebar(
 ) -> impl IntoElement {
     let menus = [
         MenuType::Hosts,
+        MenuType::Monitor,
         MenuType::Snippets,
         MenuType::KnownHosts,
-        MenuType::History,
     ];
 
     let lang = &settings_dialog_state.read(cx).settings.theme.language;
@@ -93,8 +93,20 @@ pub fn render_sidebar(
                     .map(|menu| render_menu_item(menu, selected_menu, state.clone(), lang, cx)),
             ),
         )
+        // 分割线
+        .child(div().mx_4().my_1().h(px(1.)).bg(cx.theme().border))
+        // 历史记录标题
         .child(
-            // 历史记录
+            div().px_4().pb_1().pt_2().child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(muted_text)
+                    .child(i18n::t(lang, "sidebar.history")),
+            ),
+        )
+        .child(
+            // 历史记录内容
             div()
                 .flex_1()
                 .p_2()

@@ -132,7 +132,9 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // 侧边栏
         "sidebar.hosts" => "服务器",
+        "sidebar.monitor" => "主机监控",
         "sidebar.snippets" => "快捷命令",
+
         "sidebar.known_hosts" => "已知主机",
         "sidebar.history" => "历史记录",
         "sidebar.settings" => "设置",
@@ -361,7 +363,9 @@ fn en_us(key: &'static str) -> &'static str {
 
         // Sidebar
         "sidebar.hosts" => "Hosts",
+        "sidebar.monitor" => "Monitor",
         "sidebar.snippets" => "Snippets",
+
         "sidebar.known_hosts" => "Known Hosts",
         "sidebar.history" => "History",
         "sidebar.settings" => "Settings",

@@ -217,6 +217,10 @@ impl HomePage {
                 cx,
             )
             .into_any_element(),
+            MenuType::Monitor => {
+                render_placeholder("Monitor", i18n::t(&lang, "session.monitor.title"), cx)
+                    .into_any_element()
+            }
             MenuType::Snippets => render_placeholder(
                 "Snippets",
                 i18n::t(&lang, "server_list.placeholder.snippets"),
@@ -226,12 +230,6 @@ impl HomePage {
             MenuType::KnownHosts => render_placeholder(
                 "Known Hosts",
                 i18n::t(&lang, "server_list.placeholder.known_hosts"),
-                cx,
-            )
-            .into_any_element(),
-            MenuType::History => render_placeholder(
-                "History",
-                i18n::t(&lang, "server_list.placeholder.history"),
                 cx,
             )
             .into_any_element(),

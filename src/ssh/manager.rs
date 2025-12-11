@@ -3,13 +3,20 @@ use std::sync::{Arc, RwLock};
 
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use super::client::SshClient;
 use super::config::SshConfig;
-use super::error::SshError;
-use super::event::ConnectionEvent;
+use super::event::{ConnectionEvent, HostKeyAction};
 use super::session::SshSession;
+
+/// 连接句柄，包含事件接收器和 host key 响应发送器
+pub struct ConnectionHandle {
+    /// 事件接收器
+    pub event_rx: mpsc::UnboundedReceiver<ConnectionEvent>,
+    /// Host key 响应发送器（用于用户确认未知主机）
+    pub host_key_tx: oneshot::Sender<HostKeyAction>,
+}
 
 /// 全局 SSH 管理器
 /// 负责管理 Tokio 运行时和所有 SSH 会话
@@ -57,6 +64,7 @@ impl SshManager {
     }
 
     /// 获取会话
+    #[allow(dead_code)]
     pub fn get_session(&self, id: &str) -> Option<Arc<SshSession>> {
         self.sessions.read().unwrap().get(id).cloned()
     }
@@ -88,18 +96,15 @@ impl SshManager {
     }
 
     /// 启动连接任务
-    /// 返回事件接收器
-    pub fn connect(
-        &self,
-        config: SshConfig,
-        session_id: String,
-    ) -> mpsc::UnboundedReceiver<ConnectionEvent> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    /// 返回 ConnectionHandle，包含事件接收器和 host key 响应发送器
+    pub fn connect(&self, config: SshConfig, session_id: String) -> ConnectionHandle {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (host_key_tx, host_key_rx) = oneshot::channel();
         let manager_config = config.clone();
 
         // 在全局运行时中启动连接任务
         self.runtime.spawn(async move {
-            let client = SshClient::new(manager_config, tx.clone());
+            let mut client = SshClient::new(manager_config, event_tx.clone(), host_key_rx);
             let result = client.connect(session_id).await;
 
             match result {
@@ -108,13 +113,16 @@ impl SshManager {
                     SshManager::global().register_session(session);
                 }
                 Err(e) => {
-                    let _ = tx.send(ConnectionEvent::Failed {
+                    let _ = event_tx.send(ConnectionEvent::Failed {
                         error: e.to_string(),
                     });
                 }
             }
         });
 
-        rx
+        ConnectionHandle {
+            event_rx,
+            host_key_tx,
+        }
     }
 }

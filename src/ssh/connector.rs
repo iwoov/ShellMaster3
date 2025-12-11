@@ -10,7 +10,8 @@ use crate::pages::connecting::ConnectingProgress;
 use crate::state::{SessionState, SessionStatus};
 
 use super::config::{AuthMethod, SshConfig};
-use super::event::{ConnectionEvent, ConnectionStage, LogEntry};
+use super::event::{ConnectionEvent, ConnectionStage, HostKeyAction, LogEntry};
+use super::manager::ConnectionHandle;
 
 /// 从 ServerData 构建 SshConfig
 fn build_ssh_config(server: &ServerData) -> SshConfig {
@@ -44,12 +45,26 @@ enum UiUpdate {
     Connected(String),
     Failed(String),
     Disconnected(String),
+    /// 需要用户确认未知主机
+    HostKeyVerification {
+        host: String,
+        port: u16,
+        key_type: String,
+        fingerprint: String,
+    },
+    /// 主机密钥变化警告
+    HostKeyMismatch {
+        host: String,
+        port: u16,
+        expected_fingerprint: String,
+        actual_fingerprint: String,
+    },
 }
 
 /// 启动 SSH 连接
 ///
 /// 在 Connecting 页面渲染完成后调用此函数
-/// 流程：页面挂载 -> 200ms初始动画 -> 发起后端连接 -> 连接成功后200ms成功动画 -> 跳转session
+/// 流程：页面挂载 -> 300ms初始动画 -> 发起后端连接 -> (host key确认) -> 连接成功后300ms成功动画 -> 跳转session
 pub fn start_ssh_connection(
     server: ServerData,
     tab_id: String,
@@ -70,7 +85,7 @@ pub fn start_ssh_connection(
 
     // 启动 GPUI 任务：先延迟，再启动连接，再轮询状态
     cx.spawn(async move |async_cx| {
-        // 阶段1: 200ms 初始动画延迟 - 让连接页面有时间展示"开始连接"动画
+        // 阶段1: 300ms 初始动画延迟 - 让连接页面有时间展示"开始连接"动画
         println!("[SSH] 开始初始连接动画（300ms）...");
         async_cx
             .background_executor()
@@ -85,15 +100,18 @@ pub fn start_ssh_connection(
         let (ui_sender, ui_receiver) = std::sync::mpsc::channel::<UiUpdate>();
         let ui_receiver = Arc::new(Mutex::new(ui_receiver));
 
-        // 启动 SSH 连接任务（此时后端才开始连接）
-        let event_receiver = crate::ssh::SshManager::global().connect(config, tab_id.clone());
+        // 启动 SSH 连接任务，获取连接句柄
+        let connection_handle = crate::ssh::SshManager::global().connect(config, tab_id.clone());
+
+        // 将 host_key_tx 包装成可共享的 Arc<Mutex>，以便在需要时使用
+        let host_key_tx = Arc::new(Mutex::new(Some(connection_handle.host_key_tx)));
 
         // 在 SSH 运行时中启动事件处理任务
         let ui_sender_for_events = ui_sender.clone();
         crate::ssh::SshManager::global()
             .runtime()
             .spawn(async move {
-                handle_connection_events(event_receiver, ui_sender_for_events).await;
+                handle_connection_events(connection_handle.event_rx, ui_sender_for_events).await;
             });
 
         // 阶段3: 轮询 UI 更新状态
@@ -121,6 +139,70 @@ pub fn start_ssh_connection(
                         let _ = async_cx.update(|cx| {
                             progress_for_result.update(cx, |p, cx| {
                                 p.add_log(log);
+                                cx.notify();
+                            });
+                        });
+                    }
+                    UiUpdate::HostKeyVerification {
+                        host,
+                        port,
+                        key_type,
+                        fingerprint,
+                    } => {
+                        println!(
+                            "[SSH] Host key verification needed for {}:{} ({}): {}",
+                            host, port, key_type, fingerprint
+                        );
+
+                        // 取出 host_key_tx 传给 UI，以便用户选择后发送响应
+                        let tx = host_key_tx.lock().unwrap().take();
+
+                        // 更新 UI 状态显示 host key 确认面板
+                        let _ = async_cx.update(|cx| {
+                            progress_for_result.update(cx, |p, cx| {
+                                p.set_host_key_verification(
+                                    host.clone(),
+                                    port,
+                                    key_type.clone(),
+                                    fingerprint.clone(),
+                                    false, // 不是 mismatch
+                                );
+                                // 将发送端存入状态，以便按钮点击时使用
+                                if let Some(tx) = tx {
+                                    p.set_host_key_tx(tx);
+                                }
+                                cx.notify();
+                            });
+                        });
+                    }
+                    UiUpdate::HostKeyMismatch {
+                        host,
+                        port,
+                        expected_fingerprint,
+                        actual_fingerprint,
+                    } => {
+                        println!(
+                            "[SSH] WARNING: Host key mismatch for {}:{}! Expected: {}, Got: {}",
+                            host, port, expected_fingerprint, actual_fingerprint
+                        );
+
+                        // 取出 host_key_tx 传给 UI
+                        let tx = host_key_tx.lock().unwrap().take();
+
+                        // 更新 UI 状态显示警告面板
+                        let _ = async_cx.update(|cx| {
+                            progress_for_result.update(cx, |p, cx| {
+                                p.set_host_key_verification(
+                                    host.clone(),
+                                    port,
+                                    String::new(), // mismatch 时 key_type 不重要
+                                    actual_fingerprint.clone(),
+                                    true, // 是 mismatch
+                                );
+                                // 将发送端存入状态
+                                if let Some(tx) = tx {
+                                    p.set_host_key_tx(tx);
+                                }
                                 cx.notify();
                             });
                         });
@@ -198,6 +280,20 @@ pub fn start_ssh_connection(
     .detach();
 }
 
+/// 发送 host key 用户响应
+pub fn send_host_key_response(
+    progress_state: Entity<ConnectingProgress>,
+    action: HostKeyAction,
+    cx: &mut App,
+) {
+    // 从 progress_state 获取 host_key_tx 并发送响应
+    progress_state.update(cx, |state, _| {
+        if let Some(tx) = state.take_host_key_tx() {
+            let _ = tx.send(action);
+        }
+    });
+}
+
 /// 处理连接事件，转发到 UI 更新通道
 async fn handle_connection_events(
     mut receiver: mpsc::UnboundedReceiver<ConnectionEvent>,
@@ -222,6 +318,45 @@ async fn handle_connection_events(
             ConnectionEvent::Disconnected { reason } => {
                 println!("[SSH Event] Disconnected: {}", reason);
                 let _ = ui_sender.send(UiUpdate::Disconnected(reason));
+            }
+            ConnectionEvent::HostKeyVerification {
+                host,
+                port,
+                key_type,
+                fingerprint,
+            } => {
+                println!(
+                    "[SSH Event] Host key verification: {}:{} ({}) {}",
+                    host, port, key_type, fingerprint
+                );
+
+                // 通知 UI 显示确认面板，用户会在 UI 中选择操作
+                // host_key_tx 会在 UI 轮询循环中传给 ConnectingProgress
+                let _ = ui_sender.send(UiUpdate::HostKeyVerification {
+                    host,
+                    port,
+                    key_type,
+                    fingerprint,
+                });
+            }
+            ConnectionEvent::HostKeyMismatch {
+                host,
+                port,
+                expected_fingerprint,
+                actual_fingerprint,
+            } => {
+                println!(
+                    "[SSH Event] Host key MISMATCH: {}:{} expected {} got {}",
+                    host, port, expected_fingerprint, actual_fingerprint
+                );
+
+                // 通知 UI 显示警告面板，用户会在 UI 中选择操作
+                let _ = ui_sender.send(UiUpdate::HostKeyMismatch {
+                    host,
+                    port,
+                    expected_fingerprint,
+                    actual_fingerprint,
+                });
             }
         }
     }

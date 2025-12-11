@@ -207,6 +207,16 @@ fn zh_cn(key: &'static str) -> &'static str {
         "connecting.step.starting" => "启动会话...",
         "connecting.step.done" => "连接成功",
 
+        // Host Key 验证
+        "connecting.host_key.first_connection" => "🔐 首次连接此主机",
+        "connecting.host_key.key_changed" => "⚠️ 主机密钥已变更",
+        "connecting.host_key.fingerprint" => "密钥指纹：",
+        "connecting.host_key.key_saved" => "✓ 密钥已自动保存",
+        "connecting.host_key.btn_accept_save" => "信任并保存",
+        "connecting.host_key.btn_accept_once" => "仅本次信任",
+        "connecting.host_key.btn_reject" => "拒绝连接",
+        "connecting.connected" => "连接成功",
+
         // 会话页面
         "session.connected" => "已连接到",
         "session.terminal_placeholder" => "终端功能正在开发中...",
@@ -453,6 +463,16 @@ fn en_us(key: &'static str) -> &'static str {
         "connecting.step.establishing" => "Establishing secure channel...",
         "connecting.step.starting" => "Starting session...",
         "connecting.step.done" => "Connected",
+
+        // Host Key Verification
+        "connecting.host_key.first_connection" => "🔐 First Connection",
+        "connecting.host_key.key_changed" => "⚠️ Host Key Changed",
+        "connecting.host_key.fingerprint" => "Fingerprint:",
+        "connecting.host_key.key_saved" => "✓ Key saved automatically",
+        "connecting.host_key.btn_accept_save" => "Trust & Save",
+        "connecting.host_key.btn_accept_once" => "Trust Once",
+        "connecting.host_key.btn_reject" => "Reject",
+        "connecting.connected" => "Connected",
 
         // Session Page
         "session.connected" => "Connected to",

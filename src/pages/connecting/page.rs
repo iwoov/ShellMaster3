@@ -23,6 +23,20 @@ pub struct ConnectingProgress {
     pub is_completed: bool,
     /// 是否已启动连接
     pub connection_started: bool,
+    /// Host key 验证状态
+    pub host_key_verification: Option<HostKeyVerificationState>,
+    /// Host key 响应发送器（用于发送用户选择）
+    host_key_tx: Option<tokio::sync::oneshot::Sender<crate::ssh::event::HostKeyAction>>,
+}
+
+/// Host key 验证状态
+#[derive(Clone)]
+pub struct HostKeyVerificationState {
+    pub host: String,
+    pub port: u16,
+    pub key_type: String,
+    pub fingerprint: String,
+    pub is_mismatch: bool, // true 表示密钥已变化（可能安全风险）
 }
 
 impl ConnectingProgress {
@@ -33,6 +47,8 @@ impl ConnectingProgress {
             error_message: None,
             is_completed: false,
             connection_started: false,
+            host_key_verification: None,
+            host_key_tx: None,
         }
     }
 
@@ -58,6 +74,44 @@ impl ConnectingProgress {
     pub fn mark_started(&mut self) {
         self.connection_started = true;
     }
+
+    /// 设置 host key 验证状态
+    pub fn set_host_key_verification(
+        &mut self,
+        host: String,
+        port: u16,
+        key_type: String,
+        fingerprint: String,
+        is_mismatch: bool,
+    ) {
+        self.host_key_verification = Some(HostKeyVerificationState {
+            host,
+            port,
+            key_type,
+            fingerprint,
+            is_mismatch,
+        });
+    }
+
+    /// 清除 host key 验证状态
+    pub fn clear_host_key_verification(&mut self) {
+        self.host_key_verification = None;
+    }
+
+    /// 设置 host key 响应发送器
+    pub fn set_host_key_tx(
+        &mut self,
+        tx: tokio::sync::oneshot::Sender<crate::ssh::event::HostKeyAction>,
+    ) {
+        self.host_key_tx = Some(tx);
+    }
+
+    /// 取出 host key 响应发送器
+    pub fn take_host_key_tx(
+        &mut self,
+    ) -> Option<tokio::sync::oneshot::Sender<crate::ssh::event::HostKeyAction>> {
+        self.host_key_tx.take()
+    }
 }
 
 /// 渲染连接页面
@@ -78,6 +132,7 @@ pub fn render_connecting_page(
     let server_label = tab.server_label.clone();
     let tab_id = tab.id.clone();
     let logs = progress.logs.clone();
+    let host_key_verification = progress.host_key_verification.clone();
 
     let bg_color = crate::theme::background_color(cx);
     let primary = cx.theme().primary;
@@ -130,10 +185,7 @@ pub fn render_connecting_page(
     let title = if has_error {
         i18n::t(&lang, "connecting.error_title")
     } else if current_stage == ConnectionStage::Connected {
-        match lang {
-            Language::Chinese => "连接成功",
-            Language::English => "Connected",
-        }
+        i18n::t(&lang, "connecting.connected")
     } else {
         i18n::t(&lang, "connecting.title")
     };
@@ -343,6 +395,193 @@ pub fn render_connecting_page(
                     .items_center()
                     .justify_center()
                     .child(div().text_sm().text_color(destructive).child(msg)),
+            )
+        } else {
+            None
+        })
+        // Host Key 验证信息显示
+        .children(if let Some(ref hk) = host_key_verification {
+            Some(
+                div()
+                    .w(container_width)
+                    .mt_4()
+                    .p_4()
+                    .bg(if hk.is_mismatch {
+                        warn_color.opacity(0.1)
+                    } else {
+                        primary.opacity(0.1)
+                    })
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(if hk.is_mismatch {
+                        warn_color.opacity(0.4)
+                    } else {
+                        primary.opacity(0.3)
+                    })
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    // 标题行
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().w_5().h_5().child(render_icon(
+                                if hk.is_mismatch {
+                                    icons::X
+                                } else {
+                                    icons::LOCK
+                                },
+                                if hk.is_mismatch {
+                                    warn_color.into()
+                                } else {
+                                    primary.into()
+                                },
+                            )))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(if hk.is_mismatch {
+                                        warn_color
+                                    } else {
+                                        foreground
+                                    })
+                                    .child(if hk.is_mismatch {
+                                        i18n::t(&lang, "connecting.host_key.key_changed")
+                                    } else {
+                                        i18n::t(&lang, "connecting.host_key.first_connection")
+                                    }),
+                            ),
+                    )
+                    // 指纹信息
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted_foreground)
+                                    .child(i18n::t(&lang, "connecting.host_key.fingerprint")),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_1()
+                                    .bg(cx.theme().secondary.opacity(0.3))
+                                    .rounded_md()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_family("monospace")
+                                            .text_color(foreground)
+                                            .child(hk.fingerprint.clone()),
+                                    ),
+                            ),
+                    )
+                    // 操作按钮
+                    .child({
+                        let ps_accept = progress_state.clone();
+                        let ps_once = progress_state.clone();
+                        let ps_reject = progress_state.clone();
+
+                        div()
+                            .flex()
+                            .gap_2()
+                            .mt_1()
+                            // 信任并保存
+                            .child(
+                                div()
+                                    .id("hk-accept-save")
+                                    .px_3()
+                                    .py(px(6.0))
+                                    .bg(primary)
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_click(move |_, _, cx| {
+                                        ps_accept.update(cx, |state, _| {
+                                            if let Some(tx) = state.take_host_key_tx() {
+                                                let _ = tx.send(
+                                                    crate::ssh::event::HostKeyAction::AcceptAndSave,
+                                                );
+                                            }
+                                        });
+                                    })
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(gpui::white())
+                                            .child(i18n::t(
+                                                &lang,
+                                                "connecting.host_key.btn_accept_save",
+                                            )),
+                                    ),
+                            )
+                            // 仅本次信任
+                            .child(
+                                div()
+                                    .id("hk-accept-once")
+                                    .px_3()
+                                    .py(px(6.0))
+                                    .bg(cx.theme().secondary)
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(cx.theme().secondary_hover))
+                                    .on_click(move |_, _, cx| {
+                                        ps_once.update(cx, |state, _| {
+                                            if let Some(tx) = state.take_host_key_tx() {
+                                                let _ = tx.send(
+                                                    crate::ssh::event::HostKeyAction::AcceptOnce,
+                                                );
+                                            }
+                                        });
+                                    })
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(foreground)
+                                            .child(i18n::t(
+                                                &lang,
+                                                "connecting.host_key.btn_accept_once",
+                                            )),
+                                    ),
+                            )
+                            // 拒绝
+                            .child(
+                                div()
+                                    .id("hk-reject")
+                                    .px_3()
+                                    .py(px(6.0))
+                                    .bg(destructive.opacity(0.1))
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(destructive.opacity(0.2)))
+                                    .on_click(move |_, _, cx| {
+                                        ps_reject.update(cx, |state, _| {
+                                            if let Some(tx) = state.take_host_key_tx() {
+                                                let _ = tx
+                                                    .send(crate::ssh::event::HostKeyAction::Reject);
+                                            }
+                                        });
+                                    })
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(destructive)
+                                            .child(i18n::t(
+                                                &lang,
+                                                "connecting.host_key.btn_reject",
+                                            )),
+                                    ),
+                            )
+                    }),
             )
         } else {
             None

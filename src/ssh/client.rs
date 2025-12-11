@@ -7,12 +7,12 @@ use std::time::Duration;
 
 use russh::client::Handle;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
 use super::config::{AuthMethod, SshConfig};
 use super::error::SshError;
-use super::event::{ConnectionEvent, ConnectionStage, LogEntry};
+use super::event::{ConnectionEvent, ConnectionStage, HostKeyAction, LogEntry};
 use super::handler::SshClientHandler;
 use super::session::SshSession;
 
@@ -23,14 +23,21 @@ pub struct SshClient {
     config: SshConfig,
     /// 事件发送器
     event_sender: mpsc::UnboundedSender<ConnectionEvent>,
+    /// Host key 响应接收器
+    host_key_response_rx: Option<oneshot::Receiver<HostKeyAction>>,
 }
 
 impl SshClient {
     /// 创建新的 SSH 客户端
-    pub fn new(config: SshConfig, event_sender: mpsc::UnboundedSender<ConnectionEvent>) -> Self {
+    pub fn new(
+        config: SshConfig,
+        event_sender: mpsc::UnboundedSender<ConnectionEvent>,
+        host_key_response_rx: oneshot::Receiver<HostKeyAction>,
+    ) -> Self {
         Self {
             config,
             event_sender,
+            host_key_response_rx: Some(host_key_response_rx),
         }
     }
 
@@ -46,7 +53,7 @@ impl SshClient {
 
     /// 执行连接（异步）
     /// 返回 SshSession 用于后续操作
-    pub async fn connect(&self, session_id: String) -> Result<SshSession, SshError> {
+    pub async fn connect(&mut self, session_id: String) -> Result<SshSession, SshError> {
         // 阶段 1: 初始化
         self.emit_stage(ConnectionStage::Initializing);
         self.log(LogEntry::info("Starting SSH connection..."));
@@ -80,7 +87,19 @@ impl SshClient {
         self.log(LogEntry::info("Starting SSH handshake..."));
 
         let russh_config = Arc::new(self.config.to_russh_config());
-        let handler = SshClientHandler::new(self.event_sender.clone(), self.config.host.clone());
+
+        // 获取 host key response receiver
+        let host_key_rx = self
+            .host_key_response_rx
+            .take()
+            .expect("host_key_response_rx should be set");
+
+        let handler = SshClientHandler::new(
+            self.event_sender.clone(),
+            self.config.host.clone(),
+            self.config.port,
+            host_key_rx,
+        );
 
         let mut handle = timeout(
             connect_timeout,

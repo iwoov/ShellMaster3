@@ -246,3 +246,85 @@ pub fn delete_snippet_command(command_id: &str) -> Result<()> {
     save_snippets(&config)?;
     Ok(())
 }
+
+// ======================== Known Hosts 持久化 ========================
+
+use crate::models::{KnownHost, KnownHostsConfig};
+
+/// 获取 Known Hosts 配置文件路径
+pub fn get_known_hosts_file() -> Result<PathBuf> {
+    Ok(get_config_dir()?.join("known_hosts.json"))
+}
+
+/// 加载 Known Hosts 配置
+pub fn load_known_hosts() -> Result<KnownHostsConfig> {
+    let path = get_known_hosts_file()?;
+    if !path.exists() {
+        return Ok(KnownHostsConfig::default());
+    }
+    let content = fs::read_to_string(&path).context("无法读取 Known Hosts 配置文件")?;
+    let config: KnownHostsConfig =
+        serde_json::from_str(&content).context("无法解析 Known Hosts 配置文件")?;
+    Ok(config)
+}
+
+/// 保存 Known Hosts 配置
+pub fn save_known_hosts(config: &KnownHostsConfig) -> Result<()> {
+    let path = get_known_hosts_file()?;
+    let content = serde_json::to_string_pretty(config).context("无法序列化 Known Hosts 配置")?;
+    fs::write(&path, content).context("无法写入 Known Hosts 配置文件")?;
+    Ok(())
+}
+
+/// 查找已知主机（通过 host:port）
+pub fn find_known_host(host: &str, port: u16) -> Result<Option<KnownHost>> {
+    let config = load_known_hosts()?;
+    let key = format!("{}:{}", host, port);
+    Ok(config.hosts.into_iter().find(|h| h.host == key))
+}
+
+/// 添加已知主机
+pub fn add_known_host(host: &str, port: u16, key_type: &str, fingerprint: &str) -> Result<()> {
+    let mut config = load_known_hosts()?;
+    let key = format!("{}:{}", host, port);
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    // 如果已存在，更新 last_used
+    if let Some(existing) = config.hosts.iter_mut().find(|h| h.host == key) {
+        existing.last_used = now;
+        existing.fingerprint = fingerprint.to_string();
+        existing.key_type = key_type.to_string();
+    } else {
+        // 添加新条目
+        config.hosts.push(KnownHost {
+            host: key,
+            key_type: key_type.to_string(),
+            fingerprint: fingerprint.to_string(),
+            first_seen: now.clone(),
+            last_used: now,
+        });
+    }
+
+    save_known_hosts(&config)?;
+    Ok(())
+}
+
+/// 删除已知主机
+pub fn remove_known_host(host: &str, port: u16) -> Result<()> {
+    let mut config = load_known_hosts()?;
+    let key = format!("{}:{}", host, port);
+    config.hosts.retain(|h| h.host != key);
+    save_known_hosts(&config)?;
+    Ok(())
+}
+
+/// 更新已知主机的最后使用时间
+pub fn update_known_host_last_used(host: &str, port: u16) -> Result<()> {
+    let mut config = load_known_hosts()?;
+    let key = format!("{}:{}", host, port);
+    if let Some(h) = config.hosts.iter_mut().find(|h| h.host == key) {
+        h.last_used = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        save_known_hosts(&config)?;
+    }
+    Ok(())
+}

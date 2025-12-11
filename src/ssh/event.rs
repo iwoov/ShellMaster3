@@ -15,6 +15,31 @@ pub enum ConnectionEvent {
     Failed { error: String },
     /// 连接断开
     Disconnected { reason: String },
+    /// 需要用户确认未知主机
+    HostKeyVerification {
+        host: String,
+        port: u16,
+        key_type: String,
+        fingerprint: String,
+    },
+    /// 主机密钥变化警告（可能安全风险）
+    HostKeyMismatch {
+        host: String,
+        port: u16,
+        expected_fingerprint: String,
+        actual_fingerprint: String,
+    },
+}
+
+/// 用户对主机密钥的响应
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostKeyAction {
+    /// 接受并保存到 known hosts
+    AcceptAndSave,
+    /// 仅此次接受（不保存）
+    AcceptOnce,
+    /// 拒绝连接
+    Reject,
 }
 
 /// 连接阶段

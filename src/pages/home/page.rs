@@ -31,6 +31,8 @@ pub struct HomePage {
     pub session_state: Entity<SessionState>,
     // 连接进度状态（按 tab_id 索引）
     pub connecting_progress: HashMap<String, Entity<ConnectingProgress>>,
+    /// 上一次的 show_home 状态，用于检测视图切换
+    last_show_home: bool,
 }
 
 impl HomePage {
@@ -68,6 +70,7 @@ impl HomePage {
             settings_dialog_state,
             session_state,
             connecting_progress: HashMap::new(),
+            last_show_home: true,
         }
     }
 
@@ -360,14 +363,20 @@ impl HomePage {
 
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 检查是否需要刷新服务器列表
-        let needs_refresh = self.dialog_state.read(cx).needs_refresh;
-        if needs_refresh {
+        // 统一的服务器列表刷新逻辑
+        let show_home = self.session_state.read(cx).show_home;
+        let needs_refresh_from_dialog = self.dialog_state.read(cx).needs_refresh;
+
+        // 刷新条件：1) 从会话视图切换到主页视图  2) 对话框保存后需要刷新
+        if (show_home && !self.last_show_home) || needs_refresh_from_dialog {
             self.reload_servers();
-            self.dialog_state.update(cx, |state, _| {
-                state.needs_refresh = false;
-            });
+            if needs_refresh_from_dialog {
+                self.dialog_state.update(cx, |state, _| {
+                    state.needs_refresh = false;
+                });
+            }
         }
+        self.last_show_home = show_home;
 
         // 清理已关闭标签的进度状态
         let active_tabs: Vec<String> = self
@@ -381,7 +390,6 @@ impl Render for HomePage {
             .retain(|id, _| active_tabs.contains(id));
 
         // 根据 show_home 状态决定渲染哪个视图
-        let show_home = self.session_state.read(cx).show_home;
         let has_sessions = self.session_state.read(cx).has_sessions();
 
         // 如果 show_home=true 或没有会话，显示主页

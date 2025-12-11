@@ -617,7 +617,7 @@ fn render_server_group(
                 )
                 .child(
                     div()
-                        .w(px(100.))
+                        .w(px(130.))
                         .text_xs()
                         .text_color(colors.muted_foreground)
                         .child(i18n::t(&lang, "server_list.header.last_connected")),
@@ -757,7 +757,7 @@ fn render_server_row(
         )
         .child(
             div()
-                .w(px(100.))
+                .w(px(130.))
                 .overflow_hidden()
                 .text_sm()
                 .text_color(colors.muted_foreground)

@@ -2,6 +2,7 @@
 
 use gpui::*;
 use gpui_component::{ActiveTheme, InteractiveElementExt};
+use tracing::error;
 
 use crate::components::common::icon::render_icon;
 use crate::components::common::server_dialog::ServerDialogState;
@@ -521,7 +522,7 @@ fn render_server_card(
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     cx.stop_propagation();
                                     if let Err(e) = storage::delete_server(&server_id_for_delete) {
-                                        eprintln!("Failed to delete server: {}", e);
+                                        error!("Failed to delete server: {}", e);
                                     }
                                     dialog_for_delete.update(cx, |s, _| {
                                         s.needs_refresh = true;
@@ -798,7 +799,7 @@ fn render_server_row(
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             cx.stop_propagation();
                             if let Err(e) = storage::delete_server(&server_id_for_delete) {
-                                eprintln!("Failed to delete server: {}", e);
+                                error!("Failed to delete server: {}", e);
                             }
                             dialog_for_delete.update(cx, |s, _| {
                                 s.needs_refresh = true;

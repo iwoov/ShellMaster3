@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
+use tracing::{error, info};
 
 use super::client::SshClient;
 use super::config::SshConfig;
@@ -78,15 +79,15 @@ impl SshManager {
     pub fn close_session(&self, id: &str) {
         if let Some(session) = self.remove_session(id) {
             let _ = self.runtime.spawn(async move {
-                println!("[SSH Manager] Closing session {}", session.id());
+                info!("[SSH Manager] Closing session {}", session.id());
                 if let Err(e) = session.close().await {
-                    eprintln!(
+                    error!(
                         "[SSH Manager] Failed to close session {}: {}",
                         session.id(),
                         e
                     );
                 } else {
-                    println!(
+                    info!(
                         "[SSH Manager] Session {} closed and resources cleaned up",
                         session.id()
                     );

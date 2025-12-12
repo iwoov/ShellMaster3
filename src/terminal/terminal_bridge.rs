@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use gpui::*;
+use tracing::{debug, error, trace, warn};
 
 use crate::models::settings::TerminalSettings;
 use crate::ssh::session::{PtyRequest, TerminalChannel};
@@ -40,7 +41,7 @@ pub fn calculate_terminal_size(
         .map(|size| f32::from(size.width))
         .unwrap_or_else(|_| {
             // fallback: 估算值
-            eprintln!("[Terminal] Warning: Failed to measure font advance, using estimation");
+            warn!("[Terminal] Warning: Failed to measure font advance, using estimation");
             settings.font_size as f32 * 0.6
         });
 
@@ -50,7 +51,7 @@ pub fn calculate_terminal_size(
     let cols = (area_width / cell_width).floor() as u32;
     let rows = (area_height / line_height).floor() as u32;
 
-    println!(
+    debug!(
         "[Terminal] Precise size calculation: cell_width={:.2}px, line_height={:.2}px, cols={}, rows={}",
         cell_width, line_height, cols.max(1), rows.max(1)
     );
@@ -75,14 +76,14 @@ pub fn create_pty_request(cols: u32, rows: u32, pix_width: f32, pix_height: f32)
 pub fn start_pty_reader(channel: Arc<TerminalChannel>, terminal: Entity<TerminalState>, cx: &App) {
     // 使用与 connector.rs 相同的 spawn 模式
     cx.spawn(async move |async_cx| {
-        println!("[PTY Reader] Started");
+        debug!("[PTY Reader] Started");
 
         loop {
             // 读取 PTY 输出
             let result = channel.read().await;
             match result {
                 Ok(Some(data)) if !data.is_empty() => {
-                    println!("[PTY Reader] Received {} bytes", data.len());
+                    trace!("[PTY Reader] Received {} bytes", data.len());
                     // 将数据喂给终端
                     let terminal_clone = terminal.clone();
                     let _ = async_cx.update(|cx| {
@@ -100,17 +101,17 @@ pub fn start_pty_reader(channel: Arc<TerminalChannel>, terminal: Entity<Terminal
                         .await;
                 }
                 Ok(None) => {
-                    println!("[PTY Reader] Channel closed");
+                    debug!("[PTY Reader] Channel closed");
                     break;
                 }
                 Err(e) => {
-                    eprintln!("[PTY Reader] Error: {:?}", e);
+                    error!("[PTY Reader] Error: {:?}", e);
                     break;
                 }
             }
         }
 
-        println!("[PTY Reader] Stopped");
+        debug!("[PTY Reader] Stopped");
     })
     .detach();
 }
@@ -118,6 +119,6 @@ pub fn start_pty_reader(channel: Arc<TerminalChannel>, terminal: Entity<Terminal
 /// 发送数据到 PTY
 pub async fn send_to_pty(channel: &TerminalChannel, data: &[u8]) {
     if let Err(e) = channel.write(data).await {
-        eprintln!("[PTY] Write error: {:?}", e);
+        error!("[PTY] Write error: {:?}", e);
     }
 }

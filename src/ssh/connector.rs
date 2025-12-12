@@ -4,6 +4,7 @@
 use gpui::{App, Entity};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 use crate::models::ServerData;
 use crate::pages::connecting::ConnectingProgress;
@@ -85,12 +86,12 @@ pub fn start_ssh_connection(
     // 启动 GPUI 任务：先延迟，再启动连接，再轮询状态
     cx.spawn(async move |async_cx| {
         // 阶段1: 300ms 初始动画延迟 - 让连接页面有时间展示"开始连接"动画
-        println!("[SSH] 开始初始连接动画（300ms）...");
+        debug!("[SSH] 开始初始连接动画（300ms）...");
         async_cx
             .background_executor()
             .timer(std::time::Duration::from_millis(300))
             .await;
-        println!("[SSH] 初始动画完成，开始发起后端连接...");
+        debug!("[SSH] 初始动画完成，开始发起后端连接...");
 
         // 阶段2: 初始动画完成后，启动实际的后端SSH连接
         let start_time = std::time::Instant::now();
@@ -139,7 +140,7 @@ pub fn start_ssh_connection(
                     key_type,
                     fingerprint,
                 } => {
-                    println!(
+                    info!(
                         "[SSH] Host key verification needed for {}:{} ({}): {}",
                         host, port, key_type, fingerprint
                     );
@@ -171,7 +172,7 @@ pub fn start_ssh_connection(
                     expected_fingerprint,
                     actual_fingerprint,
                 } => {
-                    println!(
+                    warn!(
                         "[SSH] WARNING: Host key mismatch for {}:{}! Expected: {}, Got: {}",
                         host, port, expected_fingerprint, actual_fingerprint
                     );
@@ -199,11 +200,11 @@ pub fn start_ssh_connection(
                 }
                 UiUpdate::Connected(session_id) => {
                     let duration = start_time.elapsed();
-                    println!(
+                    info!(
                         "[SSH] [{}] Connection successful! Session: {}",
                         server_label_for_log, session_id
                     );
-                    println!(
+                    info!(
                         "[SSH] Total connection time: {:.2}s",
                         duration.as_secs_f64()
                     );
@@ -212,16 +213,16 @@ pub fn start_ssh_connection(
                     if let Err(e) =
                         crate::services::storage::update_server_last_connected(&server_id)
                     {
-                        eprintln!("[SSH] Failed to update last connected time: {}", e);
+                        error!("[SSH] Failed to update last connected time: {}", e);
                     }
 
                     // 阶段4: 300ms 成功动画延迟，让用户看到"连接成功"状态
-                    println!("[SSH] 开始连接成功动画（300ms）...");
+                    debug!("[SSH] 开始连接成功动画（300ms）...");
                     async_cx
                         .background_executor()
                         .timer(std::time::Duration::from_millis(300))
                         .await;
-                    println!("[SSH] 成功动画完成，跳转到session...");
+                    debug!("[SSH] 成功动画完成，跳转到session...");
 
                     // 阶段5: 更新会话状态为已连接，触发跳转到session
                     let tab_id_clone = tab_id_for_result.clone();
@@ -235,7 +236,7 @@ pub fn start_ssh_connection(
                     should_break = true;
                 }
                 UiUpdate::Failed(error) => {
-                    eprintln!(
+                    error!(
                         "[SSH] [{}] Connection failed: {}",
                         server_label_for_log, error
                     );
@@ -250,7 +251,7 @@ pub fn start_ssh_connection(
                     should_break = true;
                 }
                 UiUpdate::Disconnected(reason) => {
-                    println!("[SSH] [{}] Disconnected: {}", server_label_for_log, reason);
+                    info!("[SSH] [{}] Disconnected: {}", server_label_for_log, reason);
                     should_break = true;
                 }
             }
@@ -277,15 +278,15 @@ async fn handle_connection_events(
                 let _ = ui_sender.send(UiUpdate::Log(entry));
             }
             ConnectionEvent::Connected { session_id } => {
-                println!("[SSH Event] Connected! Session ID: {}", session_id);
+                debug!("[SSH Event] Connected! Session ID: {}", session_id);
                 let _ = ui_sender.send(UiUpdate::Connected(session_id));
             }
             ConnectionEvent::Failed { error } => {
-                println!("[SSH Event] Failed: {}", error);
+                debug!("[SSH Event] Failed: {}", error);
                 let _ = ui_sender.send(UiUpdate::Failed(error));
             }
             ConnectionEvent::Disconnected { reason } => {
-                println!("[SSH Event] Disconnected: {}", reason);
+                debug!("[SSH Event] Disconnected: {}", reason);
                 let _ = ui_sender.send(UiUpdate::Disconnected(reason));
             }
             ConnectionEvent::HostKeyVerification {
@@ -294,7 +295,7 @@ async fn handle_connection_events(
                 key_type,
                 fingerprint,
             } => {
-                println!(
+                debug!(
                     "[SSH Event] Host key verification: {}:{} ({}) {}",
                     host, port, key_type, fingerprint
                 );
@@ -314,7 +315,7 @@ async fn handle_connection_events(
                 expected_fingerprint,
                 actual_fingerprint,
             } => {
-                println!(
+                debug!(
                     "[SSH Event] Host key MISMATCH: {}:{} expected {} got {}",
                     host, port, expected_fingerprint, actual_fingerprint
                 );

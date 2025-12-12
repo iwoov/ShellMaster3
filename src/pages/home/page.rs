@@ -2,6 +2,7 @@
 
 use gpui::*;
 use std::collections::HashMap;
+use tracing::{debug, info};
 
 use super::known_hosts_list::{render_known_hosts_content, KnownHostsPageState};
 use super::server_list::{render_hosts_content, render_placeholder, ViewMode, ViewModeState};
@@ -365,7 +366,7 @@ impl HomePage {
 
                     if should_start {
                         let server_label = tab.server_label.clone();
-                        println!("[SSH] 开始连接到服务器: {}", server_label);
+                        info!("[SSH] 开始连接到服务器: {}", server_label);
 
                         // 标记连接已启动
                         progress_state.update(cx, |p, _| {
@@ -440,7 +441,7 @@ impl HomePage {
                                 - SFTP_PANEL_HEIGHT
                                 - COMMAND_INPUT_HEIGHT;
 
-                            println!(
+                            debug!(
                                 "[Terminal] Window: {}x{}, Calculated terminal area: {}x{}",
                                 window_width, window_height, terminal_width, terminal_height
                             );

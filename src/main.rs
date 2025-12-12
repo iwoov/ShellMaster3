@@ -27,6 +27,16 @@ use pages::HomePage;
 use services::storage;
 
 fn main() {
+    // 初始化日志系统
+    // 可以通过 RUST_LOG 环境变量控制日志级别，例如：RUST_LOG=debug cargo run
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
+        )
+        .with_target(false) // 不显示 target（模块路径）
+        .init();
+
     Application::new()
         .with_assets(Assets {
             base: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),

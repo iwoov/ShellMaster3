@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use gpui::prelude::*;
 use gpui::Entity;
 use gpui_component::input::InputState;
+use tracing::{debug, error, info};
 
 /// 会话连接状态
 #[derive(Clone, Debug, PartialEq)]
@@ -216,8 +217,8 @@ impl SessionState {
             return;
         }
 
-        println!("[Terminal] Initializing PTY for tab {}", tab_id);
-        println!(
+        info!("[Terminal] Initializing PTY for tab {}", tab_id);
+        debug!(
             "[Terminal] Area size: {}x{} pixels",
             area_width, area_height
         );
@@ -238,7 +239,7 @@ impl SessionState {
             window,
             cx,
         );
-        println!(
+        debug!(
             "[Terminal] Calculated size: {}x{} (cols x rows)",
             cols, rows
         );
@@ -268,7 +269,7 @@ impl SessionState {
                     match crate::ssh::manager::SshManager::global().get_session(&session_id) {
                         Some(s) => s,
                         None => {
-                            eprintln!("[Terminal] No SSH session found for {}", session_id);
+                            error!("[Terminal] No SSH session found for {}", session_id);
                             return;
                         }
                     };
@@ -277,7 +278,7 @@ impl SessionState {
                 match session.open_terminal(pty_request).await {
                     Ok(channel) => {
                         let channel = std::sync::Arc::new(channel);
-                        println!("[Terminal] PTY channel created for {}", session_id);
+                        info!("[Terminal] PTY channel created for {}", session_id);
 
                         // 存储 channel 到 tab
                         let channel_for_state = channel.clone();
@@ -297,10 +298,10 @@ impl SessionState {
                             crate::terminal::start_pty_reader(channel, terminal_for_task, cx);
                         });
 
-                        println!("[Terminal] PTY reader started for {}", session_id);
+                        debug!("[Terminal] PTY reader started for {}", session_id);
                     }
                     Err(e) => {
-                        eprintln!("[Terminal] Failed to open PTY: {:?}", e);
+                        error!("[Terminal] Failed to open PTY: {:?}", e);
                     }
                 }
             })

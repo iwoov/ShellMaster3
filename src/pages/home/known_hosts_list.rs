@@ -2,6 +2,7 @@
 
 use gpui::*;
 use gpui_component::ActiveTheme;
+use tracing::error;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
@@ -44,7 +45,7 @@ impl KnownHostsPageState {
             let host = &host_key[..pos];
             if let Ok(port) = host_key[pos + 1..].parse::<u16>() {
                 if let Err(e) = storage::remove_known_host(host, port) {
-                    eprintln!("Failed to remove known host: {}", e);
+                    error!("Failed to remove known host: {}", e);
                 }
             }
         }

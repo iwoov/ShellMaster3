@@ -5,6 +5,7 @@ use russh::keys::PublicKey;
 use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tracing::{error, info, warn};
 
 use super::event::{ConnectionEvent, HostKeyAction, LogEntry};
 
@@ -78,11 +79,11 @@ impl russh::client::Handler for SshClientHandler {
                     if known.fingerprint == fingerprint {
                         // 指纹匹配，更新最后使用时间
                         let _ = crate::services::storage::update_known_host_last_used(&host, port);
-                        println!("[SSH] Host {} verified (known host)", host);
+                        info!("[SSH] Host {} verified (known host)", host);
                         Ok(true)
                     } else {
                         // 指纹不匹配！可能存在安全风险
-                        println!(
+                        warn!(
                             "[SSH] WARNING: Host key mismatch for {}! Expected: {}, Got: {}",
                             host, known.fingerprint, fingerprint
                         );
@@ -106,15 +107,15 @@ impl russh::client::Handler for SshClientHandler {
                                         &key_type,
                                         &fingerprint,
                                     );
-                                    println!("[SSH] User accepted and saved new key for {}", host);
+                                    info!("[SSH] User accepted and saved new key for {}", host);
                                     Ok(true)
                                 }
                                 Ok(HostKeyAction::AcceptOnce) => {
-                                    println!("[SSH] User accepted key once for {}", host);
+                                    info!("[SSH] User accepted key once for {}", host);
                                     Ok(true)
                                 }
                                 Ok(HostKeyAction::Reject) | Err(_) => {
-                                    println!("[SSH] User rejected connection to {}", host);
+                                    info!("[SSH] User rejected connection to {}", host);
                                     Ok(false)
                                 }
                             }
@@ -126,7 +127,7 @@ impl russh::client::Handler for SshClientHandler {
                 }
                 Ok(None) => {
                     // 未知主机，需要用户确认
-                    println!("[SSH] Unknown host: {}:{}", host, port);
+                    info!("[SSH] Unknown host: {}:{}", host, port);
 
                     // 发送验证请求给 UI
                     let _ = event_sender.send(ConnectionEvent::HostKeyVerification {
@@ -147,15 +148,15 @@ impl russh::client::Handler for SshClientHandler {
                                     &key_type,
                                     &fingerprint,
                                 );
-                                println!("[SSH] User accepted and saved key for {}", host);
+                                info!("[SSH] User accepted and saved key for {}", host);
                                 Ok(true)
                             }
                             Ok(HostKeyAction::AcceptOnce) => {
-                                println!("[SSH] User accepted key once for {}", host);
+                                info!("[SSH] User accepted key once for {}", host);
                                 Ok(true)
                             }
                             Ok(HostKeyAction::Reject) | Err(_) => {
-                                println!("[SSH] User rejected connection to {}", host);
+                                info!("[SSH] User rejected connection to {}", host);
                                 Ok(false)
                             }
                         }
@@ -166,7 +167,7 @@ impl russh::client::Handler for SshClientHandler {
                 }
                 Err(e) => {
                     // 读取 known hosts 失败，记录错误但仍尝试验证
-                    eprintln!("[SSH] Error reading known hosts: {}", e);
+                    error!("[SSH] Error reading known hosts: {}", e);
                     // 发送验证请求
                     let _ = event_sender.send(ConnectionEvent::HostKeyVerification {
                         host: host.clone(),

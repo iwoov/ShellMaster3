@@ -2,6 +2,7 @@
 
 use gpui::*;
 use gpui_component::ActiveTheme;
+use tracing::error;
 
 use crate::components::common::icon::render_icon;
 use crate::components::common::snippets_dialog::SnippetsDialogState;
@@ -472,7 +473,7 @@ fn render_group_card(
                                     if let Err(e) =
                                         storage::delete_snippet_group(&group_id_for_delete)
                                     {
-                                        eprintln!("Failed to delete snippet group: {}", e);
+                                        error!("Failed to delete snippet group: {}", e);
                                     }
                                     state_for_delete.update(cx, |s, _| {
                                         s.needs_refresh = true;
@@ -587,7 +588,7 @@ fn render_command_card(
                                 if let Err(e) =
                                     storage::delete_snippet_command(&command_id_for_delete)
                                 {
-                                    eprintln!("Failed to delete snippet command: {}", e);
+                                    error!("Failed to delete snippet command: {}", e);
                                 }
                                 state_for_delete.update(cx, |s, _| {
                                     s.needs_refresh = true;

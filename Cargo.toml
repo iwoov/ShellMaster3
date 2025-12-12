@@ -26,3 +26,7 @@ once_cell = "1.21.3"
 # 终端模拟
 alacritty_terminal = "0.25"
 
+# 日志
+tracing = "0.1.43"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+

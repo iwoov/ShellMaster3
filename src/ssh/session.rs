@@ -192,13 +192,14 @@ type RusshChannel = russh::Channel<Msg>;
 
 /// 终端通道
 /// 分离读写路径以避免死锁：
-/// - 读：需要 channel.wait()，会持有 channel 内部状态
-/// - 写：直接使用 handle.data()，不需要持有 channel 锁
+/// - 读：使用 read_half.wait()，独立的读取路径
+/// - 写：使用 handle.data()，直接通过 handle 发送数据
+/// - 控制：使用 write_half.window_change()/eof()，独立于读取循环
 pub struct TerminalChannel {
     id: russh::ChannelId,
     handle: Arc<Handle<SshClientHandler>>,
     read_half: Mutex<ChannelReadHalf>,
-    write_half: ChannelWriteHalf<Msg>,
+    write_half: Mutex<ChannelWriteHalf<Msg>>,
 }
 
 impl TerminalChannel {
@@ -208,7 +209,7 @@ impl TerminalChannel {
         Self {
             id,
             read_half: Mutex::new(read_half),
-            write_half,
+            write_half: Mutex::new(write_half),
             handle,
         }
     }
@@ -240,8 +241,10 @@ impl TerminalChannel {
     }
 
     /// 调整终端大小
+    /// 使用 write_half 独立于读取循环，不会被阻塞
     pub async fn resize(&self, cols: u32, rows: u32) -> Result<(), SshError> {
-        self.write_half
+        let write_half = self.write_half.lock().await;
+        write_half
             .window_change(cols, rows, 0, 0)
             .await
             .map_err(|e| SshError::Channel(e.to_string()))
@@ -249,7 +252,8 @@ impl TerminalChannel {
 
     /// 关闭通道
     pub async fn close(&self) -> Result<(), SshError> {
-        self.write_half
+        let write_half = self.write_half.lock().await;
+        write_half
             .eof()
             .await
             .map_err(|e| SshError::Channel(e.to_string()))

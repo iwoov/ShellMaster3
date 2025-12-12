@@ -2,8 +2,8 @@
 
 use gpui::*;
 use gpui_component::input::{Input, InputState};
-use gpui_component::ActiveTheme;
 use gpui_component::scroll::ScrollableElement;
+use gpui_component::ActiveTheme;
 use tracing::trace;
 
 use alacritty_terminal::term::TermMode;
@@ -88,7 +88,8 @@ pub fn render_terminal_panel(
                     }
 
                     let mode = t.term_mode();
-                    let should_alt_scroll = mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+                    let should_alt_scroll = mode
+                        .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
                         && !event.modifiers.shift;
 
                     if should_alt_scroll {
@@ -120,7 +121,8 @@ pub fn render_terminal_panel(
                     cx.stop_propagation();
                 }
 
-                if let (Some(channel), Some(bytes)) = (pty_channel_for_scroll.clone(), bytes_to_send)
+                if let (Some(channel), Some(bytes)) =
+                    (pty_channel_for_scroll.clone(), bytes_to_send)
                 {
                     cx.spawn(async move |_async_cx| {
                         if let Err(e) = channel.write(&bytes).await {
@@ -207,13 +209,13 @@ pub fn render_terminal_panel(
     // 添加终端内容
     terminal_display = terminal_display.child(if let Some(error) = pty_error {
         // PTY 失败 - 显示错误信息
-        render_error_terminal(&terminal_settings, &error, cx)
+        render_error_terminal(&terminal_settings, &error, cx).into_any_element()
     } else if let Some(terminal) = terminal_entity {
         // 有终端实例 - 渲染真实终端内容
-        render_terminal_content(terminal, &terminal_settings, cx)
+        render_terminal_content(terminal, &terminal_settings, cx).into_any_element()
     } else {
         // 等待初始化 - 显示加载提示
-        render_loading_terminal(&terminal_settings, cx)
+        render_loading_terminal(&terminal_settings, cx).into_any_element()
     });
 
     if let Some(scroll_handle) = scroll_handle {
@@ -235,7 +237,7 @@ fn render_terminal_content(
     terminal: Entity<TerminalState>,
     settings: &crate::models::settings::TerminalSettings,
     cx: &App,
-) -> Div {
+) -> impl IntoElement {
     let state = terminal.read(cx);
     let term = state.term();
     let size = state.size();

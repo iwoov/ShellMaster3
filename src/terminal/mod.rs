@@ -1,5 +1,6 @@
 // Terminal 模块 - 基于 alacritty_terminal 的终端模拟器
 
+mod batched_run;
 mod colors;
 mod keys;
 mod renderer;
@@ -7,6 +8,7 @@ mod scroll_handle;
 mod state;
 mod terminal_bridge;
 
+pub use batched_run::*;
 pub use colors::*;
 pub use keys::*;
 pub use renderer::*;

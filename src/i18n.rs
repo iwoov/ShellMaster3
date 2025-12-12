@@ -267,6 +267,9 @@ fn zh_cn(key: &'static str) -> &'static str {
         "snippets.dialog.edit_command" => "编辑命令",
         "snippets.dialog.enter_name" => "请输入名称...",
         "snippets.dialog.enter_command" => "请输入命令...",
+        // 快捷命令右键菜单
+        "snippets.context_menu.execute" => "在终端执行",
+        "snippets.context_menu.edit_in_box" => "在命令框编辑",
 
         // 小侧栏
         "mini_sidebar.snippets" => "快捷命令",
@@ -541,6 +544,9 @@ fn en_us(key: &'static str) -> &'static str {
         "snippets.dialog.edit_command" => "Edit Command",
         "snippets.dialog.enter_name" => "Enter name...",
         "snippets.dialog.enter_command" => "Enter command...",
+        // Snippet Context Menu
+        "snippets.context_menu.execute" => "Execute in Terminal",
+        "snippets.context_menu.edit_in_box" => "Edit in Command Box",
 
         // Mini Sidebar
         "mini_sidebar.snippets" => "Snippets",

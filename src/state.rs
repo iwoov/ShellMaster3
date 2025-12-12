@@ -198,6 +198,20 @@ impl SessionState {
         }
     }
 
+    /// 设置命令输入框的文本内容
+    pub fn set_command_input_text(
+        &self,
+        text: String,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(input) = &self.command_input {
+            input.update(cx, |state, cx| {
+                state.set_value(text, window, cx);
+            });
+        }
+    }
+
     /// 确保终端焦点句柄已创建
     pub fn ensure_terminal_focus_handle_created(
         &mut self,

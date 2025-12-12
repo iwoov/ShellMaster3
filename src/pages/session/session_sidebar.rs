@@ -2,8 +2,11 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme, StyledExt};
+use std::sync::Arc;
+use tracing::debug;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
@@ -179,9 +182,12 @@ fn render_tree_nodes(
             )
         }))
         // 渲染命令节点
-        .children(commands.into_iter().map(|command| {
-            let command_owned = command.clone();
-            render_command_node(command_owned, cx)
+        .children(commands.into_iter().map({
+            let session_state = session_state.clone();
+            move |command| {
+                let command_owned = command.clone();
+                render_command_node(command_owned, session_state.clone(), cx)
+            }
         }))
         .ml(indent)
 }
@@ -323,22 +329,44 @@ fn render_tree_nodes_owned(
             )
         }))
         // 渲染命令节点
-        .children(
+        .children({
+            let session_state = session_state.clone();
             commands
                 .into_iter()
-                .map(|command| render_command_node(command, cx)),
-        )
+                .map(move |command| render_command_node(command, session_state.clone(), cx))
+        })
 }
 
 /// 渲染命令节点
-fn render_command_node(command: SnippetCommand, cx: &App) -> impl IntoElement {
+fn render_command_node(
+    command: SnippetCommand,
+    session_state: Entity<SessionState>,
+    cx: &App,
+) -> impl IntoElement {
     let foreground = cx.theme().foreground;
     let muted = cx.theme().muted_foreground;
     let hover_bg = cx.theme().list_active;
 
+    // 获取语言设置
+    let lang = crate::services::storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or_default();
+
     let command_id = command.id.clone();
     let command_text = command.command.clone();
     let command_text_for_tooltip = command.command.clone();
+    let command_text_for_execute = command.command.clone();
+    let command_text_for_edit = command.command.clone();
+
+    // 获取菜单文本
+    let execute_label = crate::i18n::t(&lang, "snippets.context_menu.execute");
+    let edit_label = crate::i18n::t(&lang, "snippets.context_menu.edit_in_box");
+
+    // 获取 PTY channel 用于执行命令
+    let pty_channel = session_state
+        .read(cx)
+        .active_tab()
+        .and_then(|tab| tab.pty_channel.clone());
 
     div()
         .id(SharedString::from(format!("cmd-{}", command_id)))
@@ -356,6 +384,60 @@ fn render_command_node(command: SnippetCommand, cx: &App) -> impl IntoElement {
         })
         // 添加 tooltip 显示完整命令
         .tooltip(move |window, cx| Tooltip::new(command_text_for_tooltip.clone()).build(window, cx))
+        // 添加右键菜单
+        .context_menu(move |menu, _window, _cx| {
+            let cmd_for_execute = command_text_for_execute.clone();
+            let cmd_for_edit = command_text_for_edit.clone();
+            let pty_for_menu = pty_channel.clone();
+            let session_for_menu = session_state.clone();
+
+            menu
+                // 在终端执行
+                .item({
+                    let execute_label = execute_label.to_string();
+                    PopupMenuItem::element(move |_window, cx| {
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().foreground)
+                            .child(execute_label.clone())
+                    })
+                    .on_click(move |_, _window, cx| {
+                        if let Some(channel) = &pty_for_menu {
+                            let cmd = cmd_for_execute.clone();
+                            let channel = Arc::clone(channel);
+                            debug!("[ContextMenu] Executing command: {}", cmd);
+                            cx.spawn(async move |_| {
+                                let mut cmd_with_newline = cmd.into_bytes();
+                                cmd_with_newline.push(0x0d); // CR
+                                if let Err(e) = channel.write(&cmd_with_newline).await {
+                                    tracing::error!(
+                                        "[ContextMenu] Failed to send command: {:?}",
+                                        e
+                                    );
+                                }
+                            })
+                            .detach();
+                        }
+                    })
+                })
+                // 在命令框编辑
+                .item({
+                    let edit_label = edit_label.to_string();
+                    PopupMenuItem::element(move |_window, cx| {
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().foreground)
+                            .child(edit_label.clone())
+                    })
+                    .on_click(move |_, window, cx| {
+                        let cmd = cmd_for_edit.clone();
+                        debug!("[ContextMenu] Edit in command box: {}", cmd);
+                        session_for_menu.update(cx, |state, cx| {
+                            state.set_command_input_text(cmd, window, cx);
+                        });
+                    })
+                })
+        })
         // 命令图标（紧贴左侧）
         .child(svg().path(icons::CODE).size(px(14.)).text_color(muted))
         // 命令名称

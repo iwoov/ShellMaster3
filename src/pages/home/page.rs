@@ -405,6 +405,24 @@ impl HomePage {
                     session_state.update(cx, |state, cx| {
                         state.ensure_command_input_created(window, cx);
                     });
+
+                    // 自动初始化 PTY（在 UI 挂载成功后触发）
+                    if !tab.pty_initialized {
+                        let tab_id = tab.id.clone();
+                        session_state.update(cx, |state, cx| {
+                            // 使用估算的终端区域尺寸
+                            let estimated_width = 800.0;
+                            let estimated_height = 400.0;
+                            state.initialize_terminal(
+                                &tab_id,
+                                estimated_width,
+                                estimated_height,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+
                     let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
                     render_session_layout(&tab, sidebar_collapsed, session_state.clone(), cx)
                         .into_any_element()

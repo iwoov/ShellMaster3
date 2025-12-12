@@ -141,6 +141,7 @@ pub fn render_terminal_view(
                     .flex()
                     .items_center()
                     .justify_center()
+                    .font_family(settings.font_family.clone())
                     .text_size(px(settings.font_size as f32))
                     .child(cell.c.to_string());
             }

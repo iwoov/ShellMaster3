@@ -49,6 +49,10 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.terminal.theme" => "终端主题",
         "settings.terminal.display" => "显示",
         "settings.terminal.cursor_blink" => "光标闪烁",
+        "settings.terminal.cursor_style" => "光标样式",
+        "settings.terminal.cursor_style.block" => "块状",
+        "settings.terminal.cursor_style.bar" => "竖线",
+        "settings.terminal.cursor_style.underline" => "下划线",
         "settings.terminal.scrollback" => "滚动缓冲区",
 
         // 按键绑定
@@ -314,6 +318,10 @@ fn en_us(key: &'static str) -> &'static str {
         "settings.terminal.theme" => "Terminal Theme",
         "settings.terminal.display" => "Display",
         "settings.terminal.cursor_blink" => "Cursor Blink",
+        "settings.terminal.cursor_style" => "Cursor Style",
+        "settings.terminal.cursor_style.block" => "Block",
+        "settings.terminal.cursor_style.bar" => "Bar",
+        "settings.terminal.cursor_style.underline" => "Underline",
         "settings.terminal.scrollback" => "Scrollback Lines",
 
         // Key Bindings

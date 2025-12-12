@@ -24,6 +24,14 @@ pub struct SessionTab {
     pub server_id: String,
     pub server_label: String,
     pub status: SessionStatus,
+    /// 终端状态
+    pub terminal: Option<Entity<crate::terminal::TerminalState>>,
+    /// PTY 通道
+    pub pty_channel: Option<std::sync::Arc<crate::ssh::session::TerminalChannel>>,
+    /// PTY 是否已初始化
+    pub pty_initialized: bool,
+    /// PTY 错误信息
+    pub pty_error: Option<String>,
 }
 
 /// 侧边栏面板类型
@@ -77,6 +85,10 @@ impl SessionState {
             server_id,
             server_label,
             status: SessionStatus::Connecting,
+            terminal: None,
+            pty_channel: None,
+            pty_initialized: false,
+            pty_error: None,
         };
         // 新标签插入到最前面
         self.tabs.insert(0, tab);
@@ -181,5 +193,113 @@ impl SessionState {
                     .auto_grow(1, 20) // 1-20 行自动增长，支持多行输入
             }));
         }
+    }
+
+    /// 初始化终端（在 UI 挂载并获取尺寸后调用）
+    pub fn initialize_terminal(
+        &mut self,
+        tab_id: &str,
+        area_width: f32,
+        area_height: f32,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        // 查找 tab
+        let tab = match self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            Some(t) => t,
+            None => return,
+        };
+
+        // 检查是否已初始化或未连接
+        if tab.pty_initialized || tab.status != SessionStatus::Connected {
+            return;
+        }
+
+        println!("[Terminal] Initializing PTY for tab {}", tab_id);
+        println!(
+            "[Terminal] Area size: {}x{} pixels",
+            area_width, area_height
+        );
+
+        // 创建终端设置
+        let settings = crate::services::storage::load_settings()
+            .unwrap_or_default()
+            .terminal;
+
+        // 创建 TerminalState
+        let terminal_state = cx.new(|_cx| crate::terminal::TerminalState::new(settings.clone()));
+
+        // 计算终端尺寸
+        let (cols, rows, cell_width, line_height) =
+            crate::terminal::calculate_terminal_size(area_width, area_height, &settings);
+        println!(
+            "[Terminal] Calculated size: {}x{} (cols x rows)",
+            cols, rows
+        );
+
+        // 初始化终端尺寸
+        terminal_state.update(cx, |t, _| {
+            t.resize(area_width, area_height, cell_width, line_height);
+        });
+
+        // 存储终端状态
+        tab.terminal = Some(terminal_state.clone());
+        tab.pty_initialized = true;
+
+        // 获取 session_id（tab.id 就是 session_id）
+        let session_id = tab.id.clone();
+
+        // 创建 PTY 请求
+        let pty_request = crate::terminal::create_pty_request(area_width, area_height, &settings);
+
+        // 异步创建 PTY channel (使用 App::spawn)
+        let terminal_for_task = terminal_state.clone();
+        let session_state_for_task = cx.entity().clone();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                // 获取 SSH session
+                let session =
+                    match crate::ssh::manager::SshManager::global().get_session(&session_id) {
+                        Some(s) => s,
+                        None => {
+                            eprintln!("[Terminal] No SSH session found for {}", session_id);
+                            return;
+                        }
+                    };
+
+                // 打开终端通道
+                match session.open_terminal(pty_request).await {
+                    Ok(channel) => {
+                        let channel = std::sync::Arc::new(channel);
+                        println!("[Terminal] PTY channel created for {}", session_id);
+
+                        // 存储 channel 到 tab
+                        let channel_for_state = channel.clone();
+                        let session_id_for_state = session_id.clone();
+                        let _ = async_cx.update(|cx| {
+                            session_state_for_task.update(cx, |state, _| {
+                                if let Some(tab) =
+                                    state.tabs.iter_mut().find(|t| t.id == session_id_for_state)
+                                {
+                                    tab.pty_channel = Some(channel_for_state);
+                                }
+                            });
+                        });
+
+                        // 启动 PTY 读取循环
+                        let _ = async_cx.update(|cx| {
+                            crate::terminal::start_pty_reader(channel, terminal_for_task, cx);
+                        });
+
+                        println!("[Terminal] PTY reader started for {}", session_id);
+                    }
+                    Err(e) => {
+                        eprintln!("[Terminal] Failed to open PTY: {:?}", e);
+                    }
+                }
+            })
+            .detach();
+
+        cx.notify();
     }
 }

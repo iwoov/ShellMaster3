@@ -29,6 +29,12 @@ pub const UI_FONTS: &[&str] = &[
 
 /// 常用终端等宽字体
 pub const TERMINAL_FONTS: &[&str] = &[
+    // Nerd Fonts (powerlevel10k 推荐)
+    "MesloLGS NF",
+    "FiraCode Nerd Font",
+    "JetBrainsMono Nerd Font",
+    "Hack Nerd Font",
+    // 普通等宽字体
     "JetBrains Mono",
     "Fira Code",
     "SF Mono",

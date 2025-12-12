@@ -13,7 +13,10 @@ use alacritty_terminal::term::TermMode;
 use crate::constants::icons;
 use crate::ssh::session::TerminalChannel;
 use crate::state::{SessionState, SessionTab};
-use crate::terminal::{hex_to_hsla, keystroke_to_escape, render_terminal_view, TerminalState};
+use crate::terminal::{
+    hex_to_hsla, keystroke_to_escape, render_terminal_view, SendDown, SendEnter, SendEscape,
+    SendLeft, SendRight, SendTab, SendUp, TerminalState,
+};
 
 /// 渲染终端面板
 pub fn render_terminal_panel(
@@ -35,8 +38,10 @@ pub fn render_terminal_panel(
     let pty_error = tab.pty_error.clone();
 
     // 创建终端显示区域的基础 div
+    // 使用 key_context("Terminal") 建立终端专用键盘上下文，用于支持自定义快捷键
     let mut terminal_display = div()
         .id("terminal-display")
+        .key_context("Terminal")
         .flex_1()
         .relative()
         .overflow_hidden()
@@ -137,6 +142,120 @@ pub fn render_terminal_panel(
             });
         }
 
+        // 处理 Terminal 专用 actions（通过 key binding 触发，覆盖默认焦点切换行为）
+        // Tab 键
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_action(move |_: &SendTab, _window, cx| {
+                if let Some(channel) = channel.clone() {
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, _| t.show_cursor());
+                    }
+                    cx.spawn(async move |_| {
+                        let _ = channel.write(&[0x09]).await; // Tab = 0x09
+                    })
+                    .detach();
+                }
+            });
+        }
+        // Enter 键
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_action(move |_: &SendEnter, _window, cx| {
+                if let Some(channel) = channel.clone() {
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, _| t.show_cursor());
+                    }
+                    cx.spawn(async move |_| {
+                        let _ = channel.write(&[0x0D]).await; // Enter = 0x0D
+                    })
+                    .detach();
+                }
+            });
+        }
+        // Escape 键
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_action(move |_: &SendEscape, _window, cx| {
+                if let Some(channel) = channel.clone() {
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, _| t.show_cursor());
+                    }
+                    cx.spawn(async move |_| {
+                        let _ = channel.write(&[0x1B]).await; // Escape = 0x1B
+                    })
+                    .detach();
+                }
+            });
+        }
+        // 方向键：Up
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_action(move |_: &SendUp, _window, cx| {
+                if let Some(channel) = channel.clone() {
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, _| t.show_cursor());
+                    }
+                    cx.spawn(async move |_| {
+                        let _ = channel.write(&[0x1B, b'[', b'A']).await; // Up arrow
+                    })
+                    .detach();
+                }
+            });
+        }
+        // 方向键：Down
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_action(move |_: &SendDown, _window, cx| {
+                if let Some(channel) = channel.clone() {
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, _| t.show_cursor());
+                    }
+                    cx.spawn(async move |_| {
+                        let _ = channel.write(&[0x1B, b'[', b'B']).await; // Down arrow
+                    })
+                    .detach();
+                }
+            });
+        }
+        // 方向键：Left
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_action(move |_: &SendLeft, _window, cx| {
+                if let Some(channel) = channel.clone() {
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, _| t.show_cursor());
+                    }
+                    cx.spawn(async move |_| {
+                        let _ = channel.write(&[0x1B, b'[', b'D']).await; // Left arrow
+                    })
+                    .detach();
+                }
+            });
+        }
+        // 方向键：Right
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_action(move |_: &SendRight, _window, cx| {
+                if let Some(channel) = channel.clone() {
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, _| t.show_cursor());
+                    }
+                    cx.spawn(async move |_| {
+                        let _ = channel.write(&[0x1B, b'[', b'C']).await; // Right arrow
+                    })
+                    .detach();
+                }
+            });
+        }
+
         // 键盘：PageUp/Down 用于滚动历史（非 ALT_SCREEN），其余按键发送到 PTY
         let terminal_for_key = terminal_entity.clone();
         let pty_channel_for_key = pty_channel.clone();
@@ -196,6 +315,9 @@ pub fn render_terminal_panel(
                     }
                 })
                 .detach();
+
+                // 阻止事件冒泡，确保 Tab 等按键不会被其他组件拦截
+                cx.stop_propagation();
             }
         });
     }

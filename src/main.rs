@@ -57,6 +57,9 @@ fn main() {
             // 应用自定义全局主题配置（覆盖默认深色模式颜色）
             crate::theme::init(cx);
 
+            // 初始化终端模块（注册 Terminal 上下文的按键绑定）
+            crate::terminal::init(cx);
+
             let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
             cx.open_window(
                 WindowOptions {

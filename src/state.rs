@@ -31,6 +31,8 @@ pub struct SessionTab {
     pub pty_channel: Option<std::sync::Arc<crate::ssh::session::TerminalChannel>>,
     /// PTY 是否已初始化
     pub pty_initialized: bool,
+    /// 上次发送给远端 PTY 的尺寸 (cols, rows)
+    pub last_sent_pty_size: Option<(u32, u32)>,
     /// PTY 错误信息
     pub pty_error: Option<String>,
 }
@@ -91,6 +93,7 @@ impl SessionState {
             terminal: None,
             pty_channel: None,
             pty_initialized: false,
+            last_sent_pty_size: None,
             pty_error: None,
         };
         // 新标签插入到最前面
@@ -276,6 +279,7 @@ impl SessionState {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id_owned) {
             tab.terminal = Some(terminal_state.clone());
             tab.pty_initialized = true;
+            tab.last_sent_pty_size = Some((cols, rows));
         }
 
         // 启动光标闪烁定时器 (500ms 间隔)
@@ -358,5 +362,79 @@ impl SessionState {
             .detach();
 
         cx.notify();
+    }
+
+    /// 将本地终端尺寸与远端 PTY 尺寸同步到给定像素区域（用于窗口/布局变化时的自动 resize）
+    pub fn sync_terminal_size(
+        &mut self,
+        tab_id: &str,
+        area_width: f32,
+        area_height: f32,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if area_width <= 0.0 || area_height <= 0.0 {
+            return;
+        }
+
+        let should_initialize = {
+            let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) else {
+                return;
+            };
+            tab.status == SessionStatus::Connected && !tab.pty_initialized
+        };
+        if should_initialize {
+            // 未初始化时，直接用当前真实区域尺寸初始化（比按窗口常量推算更准确）
+            self.initialize_terminal(tab_id, area_width, area_height, window, cx);
+            return;
+        }
+
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return;
+        };
+
+        if tab.status != SessionStatus::Connected {
+            return;
+        }
+
+        let (Some(terminal), channel, last_sent) = (
+            tab.terminal.clone(),
+            tab.pty_channel.clone(),
+            tab.last_sent_pty_size,
+        ) else {
+            return;
+        };
+
+        let (cell_width, line_height) = {
+            let size = terminal.read(cx).size();
+            (size.cell_width, size.line_height)
+        };
+
+        let new_size =
+            crate::terminal::TerminalSize::from_pixels(area_width, area_height, cell_width, line_height);
+        let cols = new_size.columns as u32;
+        let rows = new_size.lines as u32;
+
+        terminal.update(cx, |t, _| {
+            t.resize(area_width, area_height, cell_width, line_height);
+        });
+
+        let Some(channel) = channel else {
+            return;
+        };
+
+        if last_sent == Some((cols, rows)) {
+            return;
+        }
+
+        tab.last_sent_pty_size = Some((cols, rows));
+        let channel_for_resize = channel.clone();
+        cx.to_async()
+            .spawn(async move |_async_cx| {
+                if let Err(e) = channel_for_resize.resize(cols, rows).await {
+                    error!("[Terminal] Failed to resize PTY: {:?}", e);
+                }
+            })
+            .detach();
     }
 }

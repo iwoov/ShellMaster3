@@ -16,7 +16,7 @@ use crate::terminal::{hex_to_hsla, keystroke_to_escape, render_terminal_view, Te
 pub fn render_terminal_panel(
     tab: &SessionTab,
     command_input: Option<Entity<InputState>>,
-    _session_state: Entity<SessionState>,
+    session_state: Entity<SessionState>,
     terminal_focus_handle: Option<FocusHandle>,
     cx: &App,
 ) -> impl IntoElement {
@@ -38,6 +38,24 @@ pub fn render_terminal_panel(
         .relative()
         .overflow_hidden()
         .cursor_text();
+
+    // 监听终端显示区域尺寸变化，并同步本地/远端 PTY 尺寸
+    let tab_id = tab.id.clone();
+    let session_state_for_resize = session_state.clone();
+    terminal_display = terminal_display.child(
+        canvas(
+            move |bounds, window, cx| {
+                let width = f32::from(bounds.size.width);
+                let height = f32::from(bounds.size.height);
+                session_state_for_resize.update(cx, |state, cx| {
+                    state.sync_terminal_size(&tab_id, width, height, window, cx);
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full(),
+    );
 
     // 如果有焦点句柄，添加事件监听
     if let Some(focus_handle) = terminal_focus_handle.clone() {

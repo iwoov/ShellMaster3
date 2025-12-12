@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use russh::client::Handle;
 use russh::client::Msg;
-use russh::ChannelMsg;
+use russh::{ChannelMsg, ChannelReadHalf, ChannelWriteHalf};
 use tokio::sync::Mutex;
 
 use super::error::SshError;
@@ -197,14 +197,18 @@ type RusshChannel = russh::Channel<Msg>;
 pub struct TerminalChannel {
     id: russh::ChannelId,
     handle: Arc<Handle<SshClientHandler>>,
-    channel: Mutex<RusshChannel>,
+    read_half: Mutex<ChannelReadHalf>,
+    write_half: ChannelWriteHalf<Msg>,
 }
 
 impl TerminalChannel {
     fn new(channel: RusshChannel, handle: Arc<Handle<SshClientHandler>>) -> Self {
+        let id = channel.id();
+        let (read_half, write_half) = channel.split();
         Self {
-            id: channel.id(),
-            channel: Mutex::new(channel),
+            id,
+            read_half: Mutex::new(read_half),
+            write_half,
             handle,
         }
     }
@@ -221,7 +225,7 @@ impl TerminalChannel {
     /// 读取终端输出
     /// 返回 None 表示通道已关闭
     pub async fn read(&self) -> Result<Option<Vec<u8>>, SshError> {
-        let mut channel = self.channel.lock().await;
+        let mut channel = self.read_half.lock().await;
 
         // wait() on Channel<Msg> returns Option<ChannelMsg> directly
         match channel.wait().await {
@@ -237,8 +241,7 @@ impl TerminalChannel {
 
     /// 调整终端大小
     pub async fn resize(&self, cols: u32, rows: u32) -> Result<(), SshError> {
-        let channel = self.channel.lock().await;
-        channel
+        self.write_half
             .window_change(cols, rows, 0, 0)
             .await
             .map_err(|e| SshError::Channel(e.to_string()))
@@ -246,8 +249,7 @@ impl TerminalChannel {
 
     /// 关闭通道
     pub async fn close(&self) -> Result<(), SshError> {
-        let channel = self.channel.lock().await;
-        channel
+        self.write_half
             .eof()
             .await
             .map_err(|e| SshError::Channel(e.to_string()))

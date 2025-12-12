@@ -3,7 +3,10 @@
 use gpui::*;
 use gpui_component::input::{Input, InputState};
 use gpui_component::ActiveTheme;
+use gpui_component::scroll::ScrollableElement;
 use tracing::trace;
+
+use alacritty_terminal::term::TermMode;
 
 use crate::constants::icons;
 use crate::state::{SessionState, SessionTab};
@@ -32,6 +35,7 @@ pub fn render_terminal_panel(
     let mut terminal_display = div()
         .id("terminal-display")
         .flex_1()
+        .relative()
         .overflow_hidden()
         .cursor_text();
 
@@ -45,103 +49,139 @@ pub fn render_terminal_panel(
                 window.focus(&focus_for_click);
             });
 
-        // 添加鼠标滚轮滚动支持
-        if let Some(terminal_for_scroll) = terminal_entity.clone() {
-            let line_height = terminal_settings.line_height as f32;
+        // 滚轮：滚动查看历史（非 ALT_SCREEN），或在 ALT_SCREEN 下发送上/下箭头模拟滚动
+        if terminal_entity.is_some() {
+            let terminal_for_scroll = terminal_entity.clone();
+            let pty_channel_for_scroll = pty_channel.clone();
             terminal_display = terminal_display.on_scroll_wheel(move |event, _window, cx| {
-                // 计算滚动行数 (正数向上，负数向下)
-                let delta_y: f32 = match event.delta {
-                    ScrollDelta::Pixels(point) => Into::<f32>::into(point.y),
-                    ScrollDelta::Lines(point) => point.y * line_height,
+                let Some(terminal) = terminal_for_scroll.clone() else {
+                    return;
                 };
 
-                // 将像素增量转换为行数 (向上滚动 = 正数 delta_y，查看历史)
-                let lines = (delta_y / line_height).round() as i32;
-                if lines != 0 {
-                    terminal_for_scroll.update(cx, |t, _| {
-                        t.scroll_lines(lines);
-                    });
-                }
-            });
-        }
+                let mut bytes_to_send: Option<Vec<u8>> = None;
+                let mut handled = false;
 
-        // 如果有 PTY 通道，添加键盘事件处理
-        if let Some(channel) = pty_channel.clone() {
-            let terminal_for_key = terminal_entity.clone();
-            let terminal_for_scroll = terminal_entity.clone();
-            terminal_display = terminal_display.on_key_down(move |event, _window, cx| {
-                // 首先检查滚动快捷键
-                let key = event.keystroke.key.as_str();
-                let modifiers = &event.keystroke.modifiers;
-
-                // 处理滚动快捷键
-                if let Some(terminal) = terminal_for_scroll.clone() {
-                    let handled = match key {
-                        "pageup" => {
-                            terminal.update(cx, |t, _| {
-                                if modifiers.shift {
-                                    t.scroll_to_top();
-                                } else {
-                                    t.scroll_page_up();
-                                }
-                            });
-                            true
-                        }
-                        "pagedown" => {
-                            terminal.update(cx, |t, _| {
-                                if modifiers.shift {
-                                    t.scroll_to_bottom();
-                                } else {
-                                    t.scroll_page_down();
-                                }
-                            });
-                            true
-                        }
-                        "home" if modifiers.shift => {
-                            terminal.update(cx, |t, _| t.scroll_to_top());
-                            true
-                        }
-                        "end" if modifiers.shift => {
-                            terminal.update(cx, |t, _| t.scroll_to_bottom());
-                            true
-                        }
-                        _ => false,
+                terminal.update(cx, |t, cx| {
+                    let Some(scroll_lines) = t.determine_scroll_lines(event, 1.0) else {
+                        return;
                     };
-
-                    if handled {
+                    if scroll_lines == 0 {
                         return;
                     }
+
+                    let mode = t.term_mode();
+                    let should_alt_scroll = mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+                        && !event.modifiers.shift;
+
+                    if should_alt_scroll {
+                        handled = true;
+
+                        let cmd = if scroll_lines > 0 { b'A' } else { b'B' };
+                        let introducer = if mode.contains(TermMode::APP_CURSOR) {
+                            b'O'
+                        } else {
+                            b'['
+                        };
+
+                        let mut content =
+                            Vec::with_capacity(scroll_lines.unsigned_abs() as usize * 3);
+                        for _ in 0..scroll_lines.abs() {
+                            content.push(0x1b);
+                            content.push(introducer);
+                            content.push(cmd);
+                        }
+                        bytes_to_send = Some(content);
+                    } else {
+                        t.scroll_by_lines(scroll_lines);
+                        handled = true;
+                        cx.notify();
+                    }
+                });
+
+                if handled {
+                    cx.stop_propagation();
                 }
 
-                // 将按键转换为转义序列
-                if let Some(bytes) =
-                    keystroke_to_escape(&event.keystroke, &event.keystroke.modifiers)
+                if let (Some(channel), Some(bytes)) = (pty_channel_for_scroll.clone(), bytes_to_send)
                 {
-                    trace!(
-                        "[Terminal] Key pressed: {:?}, sending {} bytes",
-                        event.keystroke.key,
-                        bytes.len()
-                    );
-
-                    // 自动滚动到底部并重置光标为可见（有输入时）
-                    if let Some(terminal) = terminal_for_key.clone() {
-                        terminal.update(cx, |t, _| {
-                            t.scroll_to_bottom();
-                            t.show_cursor();
-                        });
-                    }
-
-                    // 发送到 PTY (异步)
-                    let channel_clone = channel.clone();
-                    let bytes_clone = bytes.clone();
                     cx.spawn(async move |_async_cx| {
-                        if let Err(e) = channel_clone.write(&bytes_clone).await {
+                        if let Err(e) = channel.write(&bytes).await {
                             tracing::error!("[Terminal] PTY write error: {:?}", e);
                         }
                     })
                     .detach();
                 }
             });
+        }
+
+        // 键盘：PageUp/Down 用于滚动历史（非 ALT_SCREEN），其余按键发送到 PTY
+        let terminal_for_key = terminal_entity.clone();
+        let pty_channel_for_key = pty_channel.clone();
+        terminal_display = terminal_display.on_key_down(move |event, _window, cx| {
+            let key = event.keystroke.key.as_str();
+
+            if matches!(key, "pageup" | "pagedown")
+                && !event.keystroke.modifiers.control
+                && !event.keystroke.modifiers.alt
+                && !event.keystroke.modifiers.platform
+                && !event.keystroke.modifiers.function
+            {
+                let mut handled_scroll = false;
+                if let Some(terminal) = terminal_for_key.clone() {
+                    terminal.update(cx, |t, cx| {
+                        if !t.term_mode().contains(TermMode::ALT_SCREEN) {
+                            handled_scroll = true;
+                            if key == "pageup" {
+                                t.scroll_page_up();
+                            } else {
+                                t.scroll_page_down();
+                            }
+                            cx.notify();
+                        }
+                    });
+                }
+
+                if handled_scroll {
+                    cx.stop_propagation();
+                    return;
+                }
+            }
+
+            let Some(channel) = pty_channel_for_key.clone() else {
+                return;
+            };
+
+            // 将按键转换为转义序列
+            if let Some(bytes) = keystroke_to_escape(&event.keystroke, &event.keystroke.modifiers) {
+                trace!(
+                    "[Terminal] Key pressed: {:?}, sending {} bytes",
+                    event.keystroke.key,
+                    bytes.len()
+                );
+
+                // 重置光标为可见（有输入时）
+                if let Some(terminal) = terminal_for_key.clone() {
+                    terminal.update(cx, |t, _| {
+                        t.show_cursor();
+                    });
+                }
+
+                // 发送到 PTY (异步)
+                cx.spawn(async move |_async_cx| {
+                    if let Err(e) = channel.write(&bytes).await {
+                        tracing::error!("[Terminal] PTY write error: {:?}", e);
+                    }
+                })
+                .detach();
+            }
+        });
+    }
+
+    // 右侧滚动条：仅在终端正常可用时显示
+    if pty_error.is_none() && terminal_entity.is_some() {
+        if let Some(terminal) = terminal_entity.clone() {
+            let scroll_handle = terminal.read(cx).scroll_handle();
+            terminal_display = terminal_display.vertical_scrollbar(&scroll_handle);
         }
     }
 

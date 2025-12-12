@@ -3,13 +3,17 @@
 use std::sync::Arc;
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener, WindowSize};
-use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Config as TermConfig;
+use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi;
 use alacritty_terminal::Term;
+use gpui::{Pixels, ScrollWheelEvent, TouchPhase, px};
 
 use crate::models::settings::TerminalSettings;
+use crate::terminal::TerminalScrollHandle;
 
 /// 终端尺寸信息
 #[derive(Clone, Debug)]
@@ -107,30 +111,45 @@ pub struct TerminalState {
     /// 终端设置
     #[allow(dead_code)]
     settings: TerminalSettings,
+    /// 终端滚动条句柄（右侧滚动条）
+    scroll_handle: TerminalScrollHandle,
+    /// 触控板/滚轮累计像素，用于换算行数
+    scroll_px: Pixels,
     /// 光标是否可见（用于闪烁动画）
     cursor_visible: bool,
 }
 
 impl TerminalState {
+    const MAX_SCROLLBACK_LINES: usize = 100_000;
+
     /// 创建新的终端状态
     pub fn new(settings: TerminalSettings) -> Self {
         // 默认尺寸
         let size = TerminalSize::default();
 
         // 创建终端配置
-        let config = TermConfig::default();
+        let mut config = TermConfig::default();
+        config.scrolling_history =
+            (settings.scrollback_lines as usize).min(Self::MAX_SCROLLBACK_LINES);
 
         // 创建终端实例
-        let term = Term::new(config, &size, EventProxy);
+        let term = Arc::new(FairMutex::new(Term::new(config, &size, EventProxy)));
+        let scroll_handle = TerminalScrollHandle::new(
+            term.clone(),
+            px(size.line_height),
+            px(size.line_height * size.lines as f32),
+        );
 
         // 创建 VTE 解析器
         let parser = ansi::Processor::new();
 
         Self {
-            term: Arc::new(FairMutex::new(term)),
+            term,
             parser,
             size,
             settings,
+            scroll_handle,
+            scroll_px: px(0.),
             cursor_visible: true,
         }
     }
@@ -138,6 +157,11 @@ impl TerminalState {
     /// 获取终端实例的锁
     pub fn term(&self) -> &Arc<FairMutex<Term<EventProxy>>> {
         &self.term
+    }
+
+    /// 获取滚动条句柄（用于渲染右侧滚动条）
+    pub fn scroll_handle(&self) -> TerminalScrollHandle {
+        self.scroll_handle.clone()
     }
 
     /// 获取当前尺寸
@@ -149,11 +173,20 @@ impl TerminalState {
     pub fn resize(&mut self, width: f32, height: f32, cell_width: f32, line_height: f32) {
         let new_size = TerminalSize::from_pixels(width, height, cell_width, line_height);
 
-        // 只有尺寸变化时才更新
-        if new_size.columns != self.size.columns || new_size.lines != self.size.lines {
-            self.size = new_size.clone();
+        let dimensions_changed =
+            new_size.columns != self.size.columns || new_size.lines != self.size.lines;
+        let metrics_changed = (new_size.cell_width - self.size.cell_width).abs() > f32::EPSILON
+            || (new_size.line_height - self.size.line_height).abs() > f32::EPSILON;
 
-            // 更新终端尺寸
+        if dimensions_changed || metrics_changed {
+            self.size = new_size.clone();
+            self.scroll_handle.set_line_height(px(self.size.line_height));
+        }
+
+        self.scroll_handle.set_viewport_height(px(height));
+
+        // 只有终端行列变化时才需要通知 alacritty 重新布局
+        if dimensions_changed {
             let mut term = self.term.lock();
             term.resize(new_size);
         }
@@ -186,45 +219,58 @@ impl TerminalState {
         self.cursor_visible = true;
     }
 
-    // ==================== 滚动功能 ====================
-
-    /// 按行数滚动 (正数向上滚动查看历史，负数向下)
-    pub fn scroll_lines(&mut self, delta: i32) {
-        let mut term = self.term.lock();
-        term.scroll_display(Scroll::Delta(delta));
+    pub fn term_mode(&self) -> TermMode {
+        *self.term.lock().mode()
     }
 
-    /// 向上滚动一页
     pub fn scroll_page_up(&mut self) {
-        let mut term = self.term.lock();
-        term.scroll_display(Scroll::PageUp);
+        self.term.lock().scroll_display(Scroll::PageUp);
     }
 
-    /// 向下滚动一页
     pub fn scroll_page_down(&mut self) {
-        let mut term = self.term.lock();
-        term.scroll_display(Scroll::PageDown);
+        self.term.lock().scroll_display(Scroll::PageDown);
     }
 
-    /// 滚动到顶部（最早的历史）
-    pub fn scroll_to_top(&mut self) {
-        let mut term = self.term.lock();
-        term.scroll_display(Scroll::Top);
+    pub fn scroll_by_lines(&mut self, lines: i32) {
+        if lines != 0 {
+            self.term.lock().scroll_display(Scroll::Delta(lines));
+        }
     }
 
-    /// 滚动到底部（最新内容）
     pub fn scroll_to_bottom(&mut self) {
-        let mut term = self.term.lock();
-        term.scroll_display(Scroll::Bottom);
+        self.term.lock().scroll_display(Scroll::Bottom);
     }
 
-    /// 获取当前 display_offset（用于判断滚动位置）
     pub fn display_offset(&self) -> usize {
         self.term.lock().grid().display_offset()
     }
 
-    /// 是否已滚动到底部
-    pub fn is_at_bottom(&self) -> bool {
-        self.display_offset() == 0
+    pub fn determine_scroll_lines(
+        &mut self,
+        e: &ScrollWheelEvent,
+        scroll_multiplier: f32,
+    ) -> Option<i32> {
+        let line_height = px(self.size.line_height);
+        match e.touch_phase {
+            TouchPhase::Started => {
+                self.scroll_px = px(0.);
+                None
+            }
+            TouchPhase::Moved => {
+                let old_offset = (self.scroll_px / line_height) as i32;
+
+                self.scroll_px += e.delta.pixel_delta(line_height).y * scroll_multiplier;
+
+                let new_offset = (self.scroll_px / line_height) as i32;
+
+                let viewport_height = line_height * self.size.lines;
+                if viewport_height > px(0.) {
+                    self.scroll_px %= viewport_height;
+                }
+
+                Some(new_offset - old_offset)
+            }
+            TouchPhase::Ended => None,
+        }
     }
 }

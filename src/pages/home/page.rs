@@ -409,14 +409,46 @@ impl HomePage {
                     // 自动初始化 PTY（在 UI 挂载成功后触发）
                     if !tab.pty_initialized {
                         let tab_id = tab.id.clone();
+                        let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
                         session_state.update(cx, |state, cx| {
-                            // 使用估算的终端区域尺寸
-                            let estimated_width = 800.0;
-                            let estimated_height = 400.0;
+                            // 根据窗口尺寸计算终端区域
+                            // 布局常量（与 session_layout.rs 保持一致）
+                            const TITLEBAR_HEIGHT: f32 = 44.0;
+                            const MONITOR_PANEL_WIDTH: f32 = 220.0; // 219px + 1px 分隔条
+                            const SFTP_PANEL_HEIGHT: f32 = 300.0;
+                            const SIDEBAR_WIDTH: f32 = 230.0;
+                            const MINI_SIDEBAR_WIDTH: f32 = 28.0;
+                            const COMMAND_INPUT_HEIGHT: f32 = 40.0; // 24px 按钮 + 2*8px padding
+
+                            // 获取窗口内容区域尺寸
+                            let window_size = window.viewport_size();
+                            let window_width = f32::from(window_size.width);
+                            let window_height = f32::from(window_size.height);
+
+                            // 计算终端区域尺寸
+                            let sidebar_width = if sidebar_collapsed {
+                                0.0
+                            } else {
+                                SIDEBAR_WIDTH
+                            };
+                            let terminal_width = window_width
+                                - MONITOR_PANEL_WIDTH
+                                - sidebar_width
+                                - MINI_SIDEBAR_WIDTH;
+                            let terminal_height = window_height
+                                - TITLEBAR_HEIGHT
+                                - SFTP_PANEL_HEIGHT
+                                - COMMAND_INPUT_HEIGHT;
+
+                            println!(
+                                "[Terminal] Window: {}x{}, Calculated terminal area: {}x{}",
+                                window_width, window_height, terminal_width, terminal_height
+                            );
+
                             state.initialize_terminal(
                                 &tab_id,
-                                estimated_width,
-                                estimated_height,
+                                terminal_width.max(100.0),
+                                terminal_height.max(100.0),
                                 window,
                                 cx,
                             );

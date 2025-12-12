@@ -9,38 +9,63 @@ use crate::models::settings::TerminalSettings;
 use crate::ssh::session::{PtyRequest, TerminalChannel};
 use crate::terminal::TerminalState;
 
-/// 计算终端尺寸
+/// 使用 GPUI text_system 精确计算终端尺寸
 ///
-/// 根据渲染区域像素尺寸和字体设置，计算终端的列数和行数
+/// 通过测量字体中 'm' 字符的实际 advance width 来精确计算终端的列数和行数
 pub fn calculate_terminal_size(
     area_width: f32,
     area_height: f32,
     settings: &TerminalSettings,
+    window: &Window,
+    cx: &App,
 ) -> (u32, u32, f32, f32) {
-    // 等宽字体：字符宽度约为字体大小的 0.6 倍
-    let cell_width = settings.font_size as f32 * 0.6;
+    let text_system = window.text_system();
+
+    // 构建字体
+    let font = Font {
+        family: settings.font_family.clone().into(),
+        features: FontFeatures::default(),
+        fallbacks: None,
+        weight: FontWeight::NORMAL,
+        style: FontStyle::Normal,
+    };
+
+    // 解析字体 ID
+    let font_id = text_system.resolve_font(&font);
+    let font_size: Pixels = px(settings.font_size as f32);
+
+    // 精确测量 'm' 字符的 advance width 作为 cell_width
+    let cell_width = text_system
+        .advance(font_id, font_size, 'm')
+        .map(|size| f32::from(size.width))
+        .unwrap_or_else(|_| {
+            // fallback: 估算值
+            eprintln!("[Terminal] Warning: Failed to measure font advance, using estimation");
+            settings.font_size as f32 * 0.6
+        });
+
+    // 行高计算
     let line_height = settings.font_size as f32 * settings.line_height;
 
     let cols = (area_width / cell_width).floor() as u32;
     let rows = (area_height / line_height).floor() as u32;
 
+    println!(
+        "[Terminal] Precise size calculation: cell_width={:.2}px, line_height={:.2}px, cols={}, rows={}",
+        cell_width, line_height, cols.max(1), rows.max(1)
+    );
+
     (cols.max(1), rows.max(1), cell_width, line_height)
 }
 
-/// 根据渲染区域尺寸创建 PTY 请求
-pub fn create_pty_request(
-    area_width: f32,
-    area_height: f32,
-    settings: &TerminalSettings,
-) -> PtyRequest {
-    let (cols, rows, _, _) = calculate_terminal_size(area_width, area_height, settings);
-
+/// 根据已计算的尺寸创建 PTY 请求
+pub fn create_pty_request(cols: u32, rows: u32, pix_width: f32, pix_height: f32) -> PtyRequest {
     PtyRequest {
         term: "xterm-256color".to_string(),
         col_width: cols,
         row_height: rows,
-        pix_width: area_width as u32,
-        pix_height: area_height as u32,
+        pix_width: pix_width as u32,
+        pix_height: pix_height as u32,
         modes: vec![],
     }
 }

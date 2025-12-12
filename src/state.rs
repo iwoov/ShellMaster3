@@ -231,8 +231,13 @@ impl SessionState {
         let terminal_state = cx.new(|_cx| crate::terminal::TerminalState::new(settings.clone()));
 
         // 计算终端尺寸
-        let (cols, rows, cell_width, line_height) =
-            crate::terminal::calculate_terminal_size(area_width, area_height, &settings);
+        let (cols, rows, cell_width, line_height) = crate::terminal::calculate_terminal_size(
+            area_width,
+            area_height,
+            &settings,
+            window,
+            cx,
+        );
         println!(
             "[Terminal] Calculated size: {}x{} (cols x rows)",
             cols, rows
@@ -250,8 +255,8 @@ impl SessionState {
         // 获取 session_id（tab.id 就是 session_id）
         let session_id = tab.id.clone();
 
-        // 创建 PTY 请求
-        let pty_request = crate::terminal::create_pty_request(area_width, area_height, &settings);
+        // 创建 PTY 请求（使用已计算的 cols/rows）
+        let pty_request = crate::terminal::create_pty_request(cols, rows, area_width, area_height);
 
         // 异步创建 PTY channel (使用 App::spawn)
         let terminal_for_task = terminal_state.clone();

@@ -174,7 +174,6 @@ impl SessionState {
     }
 
     /// 刷新快捷命令配置
-    #[allow(dead_code)]
     pub fn refresh_snippets_config(&mut self) {
         self.snippets_config = crate::services::storage::load_snippets().ok();
     }
@@ -410,8 +409,12 @@ impl SessionState {
             (size.cell_width, size.line_height)
         };
 
-        let new_size =
-            crate::terminal::TerminalSize::from_pixels(area_width, area_height, cell_width, line_height);
+        let new_size = crate::terminal::TerminalSize::from_pixels(
+            area_width,
+            area_height,
+            cell_width,
+            line_height,
+        );
         let cols = new_size.columns as u32;
         let rows = new_size.lines as u32;
 

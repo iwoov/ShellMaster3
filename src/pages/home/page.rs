@@ -522,11 +522,16 @@ impl Render for HomePage {
             .read(cx)
             .needs_page_refresh;
         if snippets_needs_refresh {
+            // 刷新 Home 页面的 SnippetsPageState
             self.snippets_state.update(cx, |state, cx| {
                 state.refresh();
                 state.dialog_state.update(cx, |ds, _| {
                     ds.needs_page_refresh = false;
                 });
+            });
+            // 同时刷新 Session 页面的 snippets_config
+            self.session_state.update(cx, |state, _| {
+                state.refresh_snippets_config();
             });
         }
 

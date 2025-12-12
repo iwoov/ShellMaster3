@@ -48,6 +48,7 @@ pub fn render_terminal_view(
     term: &Term<EventProxy>,
     size: &TerminalSize,
     settings: &TerminalSettings,
+    cursor_visible: bool,
     cx: &App,
 ) -> Div {
     let bounds = TerminalBounds::new(size);
@@ -155,6 +156,7 @@ pub fn render_terminal_view(
             cursor_color,
             &settings.cursor_style,
             size,
+            cursor_visible,
         ))
 }
 
@@ -202,7 +204,13 @@ fn render_cursor(
     color: Hsla,
     style: &CursorStyle,
     size: &TerminalSize,
+    cursor_visible: bool,
 ) -> Div {
+    // 如果光标不可见，返回空 div
+    if !cursor_visible {
+        return div();
+    }
+
     let x = point.column.0 as f32 * size.cell_width;
     let y = point.line.0 as f32 * size.line_height;
 

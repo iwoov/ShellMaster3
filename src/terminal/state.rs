@@ -107,6 +107,8 @@ pub struct TerminalState {
     /// 终端设置
     #[allow(dead_code)]
     settings: TerminalSettings,
+    /// 光标是否可见（用于闪烁动画）
+    cursor_visible: bool,
 }
 
 impl TerminalState {
@@ -129,6 +131,7 @@ impl TerminalState {
             parser,
             size,
             settings,
+            cursor_visible: true,
         }
     }
 
@@ -166,5 +169,20 @@ impl TerminalState {
     /// 向终端输入字符串
     pub fn input_str(&mut self, s: &str) {
         self.input(s.as_bytes());
+    }
+
+    /// 切换光标可见性（用于闪烁动画）
+    pub fn toggle_cursor_visibility(&mut self) {
+        self.cursor_visible = !self.cursor_visible;
+    }
+
+    /// 获取光标可见状态
+    pub fn is_cursor_visible(&self) -> bool {
+        self.cursor_visible
+    }
+
+    /// 重置光标为可见（例如有输入时）
+    pub fn show_cursor(&mut self) {
+        self.cursor_visible = true;
     }
 }

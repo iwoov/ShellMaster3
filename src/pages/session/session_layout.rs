@@ -18,8 +18,9 @@ pub fn render_session_layout(
     session_state: Entity<SessionState>,
     cx: &App,
 ) -> impl IntoElement {
-    // 获取命令输入状态
+    // 获取命令输入状态和终端焦点句柄
     let command_input = session_state.read(cx).command_input.clone();
+    let terminal_focus_handle = session_state.read(cx).get_terminal_focus_handle();
 
     // 上方区域：Monitor | Terminal （水平分隔）
     let top_area = h_resizable("session-top-h")
@@ -32,6 +33,7 @@ pub fn render_session_layout(
             tab,
             command_input,
             session_state.clone(),
+            terminal_focus_handle,
             cx,
         )));
 

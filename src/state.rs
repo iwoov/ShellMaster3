@@ -4,7 +4,7 @@ use crate::models::SnippetsConfig;
 use std::collections::HashSet;
 
 use gpui::prelude::*;
-use gpui::Entity;
+use gpui::{Entity, FocusHandle};
 use gpui_component::input::InputState;
 use tracing::{debug, error, info};
 
@@ -59,6 +59,8 @@ pub struct SessionState {
     pub snippets_config: Option<SnippetsConfig>,
     /// 终端命令输入状态
     pub command_input: Option<Entity<InputState>>,
+    /// 终端焦点句柄（用于键盘事件处理）
+    pub terminal_focus_handle: Option<FocusHandle>,
 }
 
 impl Default for SessionState {
@@ -72,6 +74,7 @@ impl Default for SessionState {
             snippets_expanded: HashSet::new(),
             snippets_config: None,
             command_input: None,
+            terminal_focus_handle: None,
         }
     }
 }
@@ -193,6 +196,22 @@ impl SessionState {
         }
     }
 
+    /// 确保终端焦点句柄已创建
+    pub fn ensure_terminal_focus_handle_created(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> FocusHandle {
+        if self.terminal_focus_handle.is_none() {
+            self.terminal_focus_handle = Some(cx.focus_handle());
+        }
+        self.terminal_focus_handle.clone().unwrap()
+    }
+
+    /// 获取终端焦点句柄（如果存在）
+    pub fn get_terminal_focus_handle(&self) -> Option<FocusHandle> {
+        self.terminal_focus_handle.clone()
+    }
+
     /// 初始化终端（在 UI 挂载并获取尺寸后调用）
     pub fn initialize_terminal(
         &mut self,
@@ -202,14 +221,22 @@ impl SessionState {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        // 查找 tab
-        let tab = match self.tabs.iter_mut().find(|t| t.id == tab_id) {
-            Some(t) => t,
-            None => return,
+        // 先确保终端焦点句柄已创建（在任何可变借用之前）
+        self.ensure_terminal_focus_handle_created(cx);
+
+        // 查找 tab 并检查状态
+        let tab_id_owned = tab_id.to_string();
+
+        // 使用闭包来限制可变借用的作用域
+        let should_initialize = {
+            if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
+                !tab.pty_initialized && tab.status == SessionStatus::Connected
+            } else {
+                false
+            }
         };
 
-        // 检查是否已初始化或未连接
-        if tab.pty_initialized || tab.status != SessionStatus::Connected {
+        if !should_initialize {
             return;
         }
 
@@ -245,12 +272,38 @@ impl SessionState {
             t.resize(area_width, area_height, cell_width, line_height);
         });
 
-        // 存储终端状态
-        tab.terminal = Some(terminal_state.clone());
-        tab.pty_initialized = true;
+        // 存储终端状态（现在可以安全地可变借用 tab）
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id_owned) {
+            tab.terminal = Some(terminal_state.clone());
+            tab.pty_initialized = true;
+        }
 
-        // 获取 session_id（tab.id 就是 session_id）
-        let session_id = tab.id.clone();
+        // 启动光标闪烁定时器 (500ms 间隔)
+        let terminal_for_blink = terminal_state.clone();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                loop {
+                    // 等待 500ms
+                    async_cx
+                        .background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+
+                    // 切换光标可见性
+                    let result = async_cx.update(|cx| {
+                        terminal_for_blink.update(cx, |t, cx| {
+                            t.toggle_cursor_visibility();
+                            cx.notify();
+                        });
+                    });
+
+                    // 如果更新失败（例如终端已关闭），退出循环
+                    if result.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
 
         // 创建 PTY 请求（使用已计算的 cols/rows）
         let pty_request = crate::terminal::create_pty_request(cols, rows, area_width, area_height);
@@ -258,6 +311,7 @@ impl SessionState {
         // 异步创建 PTY channel (使用 App::spawn)
         let terminal_for_task = terminal_state.clone();
         let session_state_for_task = cx.entity().clone();
+        let session_id = tab_id_owned.clone();
         cx.to_async()
             .spawn(async move |async_cx| {
                 // 获取 SSH session

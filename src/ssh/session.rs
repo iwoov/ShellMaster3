@@ -136,7 +136,7 @@ impl SshSession {
         // 请求 Shell
         channel.request_shell(false).await.map_err(SshError::from)?;
 
-        Ok(TerminalChannel::new(channel))
+        Ok(TerminalChannel::new(channel, self.handle.clone()))
     }
 
     /// 打开执行通道（用于 Monitor 执行命令）
@@ -191,24 +191,31 @@ impl SshSession {
 type RusshChannel = russh::Channel<Msg>;
 
 /// 终端通道
+/// 分离读写路径以避免死锁：
+/// - 读：需要 channel.wait()，会持有 channel 内部状态
+/// - 写：直接使用 handle.data()，不需要持有 channel 锁
 pub struct TerminalChannel {
+    id: russh::ChannelId,
+    handle: Arc<Handle<SshClientHandler>>,
     channel: Mutex<RusshChannel>,
 }
 
 impl TerminalChannel {
-    fn new(channel: RusshChannel) -> Self {
+    fn new(channel: RusshChannel, handle: Arc<Handle<SshClientHandler>>) -> Self {
         Self {
+            id: channel.id(),
             channel: Mutex::new(channel),
+            handle,
         }
     }
 
     /// 写入数据到终端
+    /// 直接通过 handle 发送，不阻塞读取循环
     pub async fn write(&self, data: &[u8]) -> Result<(), SshError> {
-        let channel = self.channel.lock().await;
-        channel
-            .data(data)
+        self.handle
+            .data(self.id, data.to_vec().into())
             .await
-            .map_err(|e| SshError::Channel(e.to_string()))
+            .map_err(|_| SshError::Channel("Failed to send data to channel".to_string()))
     }
 
     /// 读取终端输出

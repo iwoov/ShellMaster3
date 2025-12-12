@@ -1,5 +1,7 @@
 // Terminal 面板组件 - 包含终端区域和命令输入框
 
+use std::sync::Arc;
+
 use gpui::*;
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::ScrollableElement;
@@ -9,6 +11,7 @@ use tracing::trace;
 use alacritty_terminal::term::TermMode;
 
 use crate::constants::icons;
+use crate::ssh::session::TerminalChannel;
 use crate::state::{SessionState, SessionTab};
 use crate::terminal::{hex_to_hsla, keystroke_to_escape, render_terminal_view, TerminalState};
 
@@ -210,9 +213,9 @@ pub fn render_terminal_panel(
     terminal_display = terminal_display.child(if let Some(error) = pty_error {
         // PTY 失败 - 显示错误信息
         render_error_terminal(&terminal_settings, &error, cx).into_any_element()
-    } else if let Some(terminal) = terminal_entity {
+    } else if let Some(ref terminal) = terminal_entity {
         // 有终端实例 - 渲染真实终端内容
-        render_terminal_content(terminal, &terminal_settings, cx).into_any_element()
+        render_terminal_content(terminal.clone(), &terminal_settings, cx).into_any_element()
     } else {
         // 等待初始化 - 显示加载提示
         render_loading_terminal(&terminal_settings, cx).into_any_element()
@@ -229,7 +232,13 @@ pub fn render_terminal_panel(
         // 终端显示区域（上方，占据大部分空间）
         .child(terminal_display)
         // 命令输入区域（下方）
-        .child(render_command_input(border_color, command_input, cx))
+        .child(render_command_input(
+            border_color,
+            command_input,
+            pty_channel,
+            terminal_entity,
+            cx,
+        ))
 }
 
 /// 渲染真实终端内容
@@ -309,9 +318,16 @@ fn render_loading_terminal(settings: &crate::models::settings::TerminalSettings,
 fn render_command_input(
     border_color: Hsla,
     command_input: Option<Entity<InputState>>,
+    pty_channel: Option<Arc<TerminalChannel>>,
+    terminal: Option<Entity<TerminalState>>,
     cx: &App,
 ) -> impl IntoElement {
     let primary = cx.theme().primary;
+
+    // 克隆用于闭包
+    let input_for_click = command_input.clone();
+    let channel_for_click = pty_channel.clone();
+    let terminal_for_click = terminal.clone();
 
     div()
         .id("command-input-area")
@@ -346,6 +362,45 @@ fn render_command_input(
                         .justify_center()
                         .cursor_pointer()
                         .hover(move |s| s.bg(primary.opacity(0.8)))
+                        .on_click(move |_, window, cx| {
+                            // 获取输入框和 PTY channel
+                            let Some(input) = input_for_click.clone() else {
+                                return;
+                            };
+                            let Some(channel) = channel_for_click.clone() else {
+                                return;
+                            };
+
+                            // 读取输入内容
+                            let content = input.read(cx).value().to_string();
+                            if content.is_empty() {
+                                return;
+                            }
+
+                            // 将内容转换为字节并追加回车符
+                            let mut bytes = content.into_bytes();
+                            bytes.push(0x0d); // CR (回车)
+
+                            // 重置光标可见（有输入时）
+                            if let Some(terminal) = terminal_for_click.clone() {
+                                terminal.update(cx, |t, _| {
+                                    t.show_cursor();
+                                });
+                            }
+
+                            // 异步发送到 PTY
+                            cx.spawn(async move |_async_cx| {
+                                if let Err(e) = channel.write(&bytes).await {
+                                    tracing::error!("[Terminal] PTY write error: {:?}", e);
+                                }
+                            })
+                            .detach();
+
+                            // 清空输入框
+                            input.update(cx, |state, cx| {
+                                state.set_value(String::new(), window, cx);
+                            });
+                        })
                         .child(
                             svg()
                                 .path(icons::SEND)

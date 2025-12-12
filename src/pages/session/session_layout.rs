@@ -18,6 +18,9 @@ pub fn render_session_layout(
     session_state: Entity<SessionState>,
     cx: &App,
 ) -> impl IntoElement {
+    // 获取命令输入状态
+    let command_input = session_state.read(cx).command_input.clone();
+
     // 上方区域：Monitor | Terminal （水平分隔）
     let top_area = h_resizable("session-top-h")
         .child(
@@ -25,7 +28,7 @@ pub fn render_session_layout(
                 .size(px(219.)) // 219px + 1px 分隔条 = 220px，与 home 按钮区域对齐
                 .child(render_monitor_panel(cx)),
         )
-        .child(resizable_panel().child(render_terminal_panel(tab, cx)));
+        .child(resizable_panel().child(render_terminal_panel(tab, command_input, cx)));
 
     // 左侧区域：上方区域 | SFTP （垂直分隔，约 60% : 40%）
     let left_area = v_resizable("session-left-v")

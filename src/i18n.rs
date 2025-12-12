@@ -239,6 +239,9 @@ fn zh_cn(key: &'static str) -> &'static str {
         "session.sftp.local" => "本地",
         "session.sftp.remote" => "远程",
         "session.sftp.placeholder" => "文件列表加载中...",
+        // 终端输入
+        "session.terminal.simulated" => "模拟终端区域",
+        "session.terminal.command_placeholder" => "输入命令...",
 
         // Snippets 快捷命令
         "snippets.add_group" => "新建组",
@@ -501,6 +504,9 @@ fn en_us(key: &'static str) -> &'static str {
         "session.sftp.local" => "Local",
         "session.sftp.remote" => "Remote",
         "session.sftp.placeholder" => "Loading file list...",
+        // Terminal Input
+        "session.terminal.simulated" => "Simulated Terminal",
+        "session.terminal.command_placeholder" => "Enter command...",
 
         // Snippets
         "snippets.add_group" => "New Group",

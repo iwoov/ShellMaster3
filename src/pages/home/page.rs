@@ -338,7 +338,11 @@ impl HomePage {
     }
 
     /// 渲染会话视图（标签页 + 内容）
-    fn render_session_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_session_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let session_state = self.session_state.clone();
         let state = session_state.read(cx);
 
@@ -397,6 +401,10 @@ impl HomePage {
                         .into_any_element()
                 }
                 SessionStatus::Connected => {
+                    // 确保命令输入框已创建
+                    session_state.update(cx, |state, cx| {
+                        state.ensure_command_input_created(window, cx);
+                    });
                     let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
                     render_session_layout(&tab, sidebar_collapsed, session_state.clone(), cx)
                         .into_any_element()
@@ -490,7 +498,7 @@ impl Render for HomePage {
         if show_home || !has_sessions {
             self.render_home_view(window, cx).into_any_element()
         } else {
-            self.render_session_view(cx).into_any_element()
+            self.render_session_view(window, cx).into_any_element()
         }
     }
 }

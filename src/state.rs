@@ -3,6 +3,10 @@
 use crate::models::SnippetsConfig;
 use std::collections::HashSet;
 
+use gpui::prelude::*;
+use gpui::Entity;
+use gpui_component::input::InputState;
+
 /// 会话连接状态
 #[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)] // Error/Disconnected 将来用于错误处理
@@ -45,6 +49,8 @@ pub struct SessionState {
     pub snippets_expanded: HashSet<String>,
     /// 快捷命令配置缓存
     pub snippets_config: Option<SnippetsConfig>,
+    /// 终端命令输入状态
+    pub command_input: Option<Entity<InputState>>,
 }
 
 impl Default for SessionState {
@@ -57,6 +63,7 @@ impl Default for SessionState {
             active_sidebar_panel: SidebarPanel::Default,
             snippets_expanded: HashSet::new(),
             snippets_config: None,
+            command_input: None,
         }
     }
 }
@@ -154,5 +161,25 @@ impl SessionState {
     /// 刷新快捷命令配置
     pub fn refresh_snippets_config(&mut self) {
         self.snippets_config = crate::services::storage::load_snippets().ok();
+    }
+
+    /// 确保命令输入框已创建
+    pub fn ensure_command_input_created(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.command_input.is_none() {
+            let lang = crate::services::storage::load_settings()
+                .map(|s| s.theme.language)
+                .unwrap_or(crate::models::settings::Language::Chinese);
+            let placeholder = crate::i18n::t(&lang, "session.terminal.command_placeholder");
+
+            self.command_input = Some(cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(placeholder)
+                    .auto_grow(1, 20) // 1-20 行自动增长，支持多行输入
+            }));
+        }
     }
 }

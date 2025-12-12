@@ -37,4 +37,5 @@ pub mod icons {
     pub const COMMAND: &str = "icons/command.svg";
     pub const TRANSFER: &str = "icons/transfer.svg";
     pub const FINGERPRINT: &str = "icons/fingerprint.svg";
+    pub const SEND: &str = "icons/send.svg";
 }

@@ -177,13 +177,14 @@ pub fn render_terminal_panel(
         });
     }
 
-    // 右侧滚动条：仅在终端正常可用时显示
-    if pty_error.is_none() && terminal_entity.is_some() {
-        if let Some(terminal) = terminal_entity.clone() {
-            let scroll_handle = terminal.read(cx).scroll_handle();
-            terminal_display = terminal_display.vertical_scrollbar(&scroll_handle);
-        }
-    }
+    // 右侧滚动条：仅在终端正常可用时显示（需要作为最后的 child，确保绘制在最上层）
+    let scroll_handle = if pty_error.is_none() {
+        terminal_entity
+            .as_ref()
+            .map(|terminal| terminal.read(cx).scroll_handle())
+    } else {
+        None
+    };
 
     // 添加终端内容
     terminal_display = terminal_display.child(if let Some(error) = pty_error {
@@ -196,6 +197,10 @@ pub fn render_terminal_panel(
         // 等待初始化 - 显示加载提示
         render_loading_terminal(&terminal_settings, cx)
     });
+
+    if let Some(scroll_handle) = scroll_handle {
+        terminal_display = terminal_display.vertical_scrollbar(&scroll_handle);
+    }
 
     div()
         .size_full()

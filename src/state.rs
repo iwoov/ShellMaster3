@@ -38,7 +38,6 @@ pub struct SessionTab {
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum SidebarPanel {
     #[default]
-    Default, // 默认面板（Session 信息）
     Snippets, // 快捷命令
     Transfer, // 传输管理
 }
@@ -68,7 +67,7 @@ impl Default for SessionState {
             active_tab_id: None,
             show_home: true,
             sidebar_collapsed: false,
-            active_sidebar_panel: SidebarPanel::Default,
+            active_sidebar_panel: SidebarPanel::Snippets,
             snippets_expanded: HashSet::new(),
             snippets_config: None,
             command_input: None,
@@ -95,6 +94,8 @@ impl SessionState {
         self.active_tab_id = Some(tab_id.clone());
         // 切换到会话视图
         self.show_home = false;
+        // 确保默认面板（快捷命令）的数据已加载
+        self.load_snippets_config();
         tab_id
     }
 

@@ -27,10 +27,6 @@ pub fn render_session_sidebar(
 
     // 根据不同面板显示不同内容
     let (title, content) = match active_panel {
-        SidebarPanel::Default => (
-            "Sidebar",
-            render_placeholder_content("默认面板", muted_foreground).into_any_element(),
-        ),
         SidebarPanel::Snippets => (
             crate::i18n::t(&lang, "mini_sidebar.snippets"),
             render_snippets_tree(session_state.clone(), cx).into_any_element(),

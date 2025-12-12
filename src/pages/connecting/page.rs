@@ -459,12 +459,13 @@ pub fn render_connecting_page(
                     .child(
                         div()
                             .flex()
-                            .flex_col()
-                            .gap_1()
+                            .items_center()
+                            .gap_2()
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(muted_foreground)
+                                    .flex_shrink_0()
                                     .child(i18n::t(&lang, "connecting.host_key.fingerprint")),
                             )
                             .child(

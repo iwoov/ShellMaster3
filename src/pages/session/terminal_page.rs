@@ -8,6 +8,7 @@ use crate::constants::icons;
 use crate::i18n;
 use crate::models::settings::Language;
 use crate::state::SessionTab;
+use crate::terminal::{hex_to_hsla, render_empty_terminal};
 
 /// 渲染终端面板
 pub fn render_terminal_panel(
@@ -15,35 +16,30 @@ pub fn render_terminal_panel(
     command_input: Option<Entity<InputState>>,
     cx: &App,
 ) -> impl IntoElement {
-    let muted_foreground = cx.theme().muted_foreground;
-    let bg_color = crate::theme::sidebar_color(cx);
     let border_color = cx.theme().border;
 
-    // 获取语言设置
-    let lang = crate::services::storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or(Language::Chinese);
+    // 获取语言设置和终端设置
+    let settings = crate::services::storage::load_settings().unwrap_or_default();
+    let lang = settings.theme.language.clone();
+    let terminal_settings = settings.terminal.clone();
 
     div()
         .size_full()
-        .bg(bg_color)
         .flex()
         .flex_col()
-        // 模拟终端区域（上方，占据大部分空间）
+        // 终端显示区域（上方，占据大部分空间）
         .child(
             div()
                 .id("terminal-display")
                 .flex_1()
                 .overflow_hidden()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(muted_foreground)
-                        .child(i18n::t(&lang, "session.terminal.simulated")),
-                ),
+                // TODO: 当有真正的终端实例时，使用 render_terminal_view
+                // 目前显示空终端，使用设置中的背景色
+                .child(render_empty_terminal(
+                    &terminal_settings,
+                    &i18n::t(&lang, "session.terminal.simulated"),
+                    cx,
+                )),
         )
         // 命令输入区域（下方）
         .child(render_command_input(border_color, command_input, cx))

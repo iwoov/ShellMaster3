@@ -17,6 +17,7 @@ mod router;
 mod services;
 mod ssh;
 mod state;
+mod terminal;
 mod theme;
 
 use assets::Assets;

@@ -1,5 +1,8 @@
 // 全局 AppState
 
+use crate::models::SnippetsConfig;
+use std::collections::HashSet;
+
 /// 会话连接状态
 #[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)] // Error/Disconnected 将来用于错误处理
@@ -38,6 +41,10 @@ pub struct SessionState {
     pub sidebar_collapsed: bool,
     /// 当前激活的侧边栏面板
     pub active_sidebar_panel: SidebarPanel,
+    /// 快捷命令树展开的组 ID 集合
+    pub snippets_expanded: HashSet<String>,
+    /// 快捷命令配置缓存
+    pub snippets_config: Option<SnippetsConfig>,
 }
 
 impl Default for SessionState {
@@ -48,6 +55,8 @@ impl Default for SessionState {
             show_home: true,
             sidebar_collapsed: false,
             active_sidebar_panel: SidebarPanel::Default,
+            snippets_expanded: HashSet::new(),
+            snippets_config: None,
         }
     }
 }
@@ -119,5 +128,31 @@ impl SessionState {
         if self.sidebar_collapsed {
             self.sidebar_collapsed = false;
         }
+    }
+
+    /// 切换快捷命令组的展开状态
+    pub fn toggle_snippets_group(&mut self, group_id: &str) {
+        if self.snippets_expanded.contains(group_id) {
+            self.snippets_expanded.remove(group_id);
+        } else {
+            self.snippets_expanded.insert(group_id.to_string());
+        }
+    }
+
+    /// 检查快捷命令组是否展开
+    pub fn is_snippets_group_expanded(&self, group_id: &str) -> bool {
+        self.snippets_expanded.contains(group_id)
+    }
+
+    /// 加载快捷命令配置（如果尚未加载）
+    pub fn load_snippets_config(&mut self) {
+        if self.snippets_config.is_none() {
+            self.snippets_config = crate::services::storage::load_snippets().ok();
+        }
+    }
+
+    /// 刷新快捷命令配置
+    pub fn refresh_snippets_config(&mut self) {
+        self.snippets_config = crate::services::storage::load_snippets().ok();
     }
 }

@@ -20,6 +20,7 @@ pub mod icons {
     pub const FOLDER_OPEN: &str = "icons/folder-open.svg";
     pub const FOLDER: &str = "icons/folder.svg";
     pub const CHEVRON_DOWN: &str = "icons/chevron-down.svg";
+    pub const CHEVRON_RIGHT: &str = "icons/chevron-right.svg";
     pub const CLOUD: &str = "icons/cloud.svg";
     // 会话状态图标
     pub const LOADER: &str = "icons/loader.svg";

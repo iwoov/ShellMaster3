@@ -67,6 +67,7 @@ pub fn render_session_layout(
         .hover(|s| s.bg(hover_bg))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             snippets_session_state.update(cx, |state, _| {
+                state.load_snippets_config();
                 state.set_sidebar_panel(SidebarPanel::Snippets);
             });
         })
@@ -146,7 +147,12 @@ pub fn render_session_layout(
                     .child(
                         resizable_panel()
                             .size(px(230.))
-                            .child(render_session_sidebar(tab, active_panel, cx)),
+                            .child(render_session_sidebar(
+                                tab,
+                                active_panel,
+                                session_state.clone(),
+                                cx,
+                            )),
                     ),
             )
             .child(mini_sidebar)

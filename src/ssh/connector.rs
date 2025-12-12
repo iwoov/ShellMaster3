@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+use crate::models::server::ProxyType;
 use crate::models::ServerData;
+use crate::pages::connecting::page::ConnectionDetails;
 use crate::pages::connecting::ConnectingProgress;
 use crate::state::{SessionState, SessionStatus};
 
@@ -76,6 +78,45 @@ pub fn start_ssh_connection(
     let config = build_ssh_config(&server);
     let server_label = server.label.clone();
     let server_id = server.id.clone();
+
+    // 构建连接详情
+    let mut details = ConnectionDetails {
+        host: server.host.clone(),
+        port: server.port,
+        proxy_desc: None,
+        jump_host_desc: None,
+    };
+
+    // 解析代理描述
+    if let Some(proxy) = &server.proxy {
+        if proxy.enabled {
+            let type_str = match proxy.proxy_type {
+                ProxyType::Http => "HTTP",
+                ProxyType::Socks5 => "SOCKS5",
+            };
+            details.proxy_desc = Some(format!(
+                "{} Proxy ({}:{})",
+                type_str, proxy.host, proxy.port
+            ));
+        }
+    }
+
+    // 解析跳板机描述
+    if let Some(jump_id) = &server.jump_host_id {
+        if let Ok(config) = crate::services::storage::load_servers() {
+            if let Some(jump_server) = config.servers.iter().find(|s| s.id == *jump_id) {
+                details.jump_host_desc = Some(format!(
+                    "{} ({}:{})",
+                    jump_server.label, jump_server.host, jump_server.port
+                ));
+            }
+        }
+    }
+
+    // 更新 UI 显示连接详情
+    progress_state.update(cx, |p, _| {
+        p.set_connection_details(details);
+    });
 
     // 克隆用于异步任务
     let progress_for_result = progress_state.clone();

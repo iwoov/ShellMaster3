@@ -11,6 +11,15 @@ use crate::services::storage;
 use crate::ssh::event::{ConnectionStage, LogEntry, LogLevel};
 use crate::state::{SessionState, SessionTab};
 
+/// 连接详情
+#[derive(Clone, Debug)]
+pub struct ConnectionDetails {
+    pub host: String,
+    pub port: u16,
+    pub proxy_desc: Option<String>,
+    pub jump_host_desc: Option<String>,
+}
+
 /// 连接进度状态
 pub struct ConnectingProgress {
     /// 当前连接阶段
@@ -27,6 +36,8 @@ pub struct ConnectingProgress {
     pub host_key_verification: Option<HostKeyVerificationState>,
     /// Host key 响应发送器（用于发送用户选择）
     host_key_tx: Option<tokio::sync::oneshot::Sender<crate::ssh::event::HostKeyAction>>,
+    /// 连接详情
+    pub connection_details: Option<ConnectionDetails>,
 }
 
 /// Host key 验证状态
@@ -49,6 +60,7 @@ impl ConnectingProgress {
             connection_started: false,
             host_key_verification: None,
             host_key_tx: None,
+            connection_details: None,
         }
     }
 
@@ -111,6 +123,11 @@ impl ConnectingProgress {
         &mut self,
     ) -> Option<tokio::sync::oneshot::Sender<crate::ssh::event::HostKeyAction>> {
         self.host_key_tx.take()
+    }
+
+    /// 设置连接详情
+    pub fn set_connection_details(&mut self, details: ConnectionDetails) {
+        self.connection_details = Some(details);
     }
 }
 
@@ -191,7 +208,7 @@ pub fn render_connecting_page(
     };
 
     // 图标颜色
-    let icon_bg = if has_error {
+    let _icon_bg = if has_error {
         destructive.opacity(0.1)
     } else if current_stage == ConnectionStage::Connected {
         success_color.opacity(0.1)
@@ -199,7 +216,7 @@ pub fn render_connecting_page(
         primary.opacity(0.1)
     };
 
-    let icon_color = if has_error {
+    let _icon_color = if has_error {
         destructive
     } else if current_stage == ConnectionStage::Connected {
         success_color
@@ -216,50 +233,82 @@ pub fn render_connecting_page(
         .justify_center()
         .items_center()
         .gap_8()
-        // 服务器图标
+        // 连接信息区域 (紧凑版)
         .child(
             div()
                 .flex()
                 .flex_col()
                 .items_center()
-                .gap_4()
+                .gap_1()
+                // 第一行：服务器名称 + 状态
                 .child(
                     div()
-                        .w_20()
-                        .h_20()
-                        .rounded_2xl()
-                        .bg(icon_bg)
                         .flex()
-                        .items_center()
-                        .justify_center()
+                        .items_baseline() // 基线对齐让大小文字更好看
+                        .gap_3()
+                        // 服务器名称
                         .child(
                             div()
-                                .w_10()
-                                .h_10()
-                                .child(render_icon(icons::SERVER, icon_color.into())),
+                                .text_2xl()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(foreground)
+                                .child(server_label),
+                        )
+                        // 状态文本
+                        .child(
+                            div()
+                                .text_base() // 稍微调小一点
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(if has_error {
+                                    destructive
+                                } else if current_stage == ConnectionStage::Connected {
+                                    success_color
+                                } else {
+                                    primary
+                                })
+                                .child(title),
                         ),
                 )
-                // 标题
-                .child(
+                // 第二行：连接详情 (Host:Port • Mode)
+                .child(if let Some(details) = &progress.connection_details {
                     div()
                         .flex()
-                        .flex_col()
                         .items_center()
-                        .gap_1()
+                        .gap_3()
+                        .text_sm()
+                        .text_color(muted_foreground)
+                        // Host:Port
                         .child(
                             div()
-                                .text_xl()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(foreground)
-                                .child(title),
+                                .flex()
+                                .gap_1()
+                                .child(i18n::t(&lang, "connecting.host_key.host"))
+                                .child(format!("{}:{}", details.host, details.port)),
                         )
-                        .child(
+                        // 分隔符
+                        .child(div().w(px(1.0)).h(px(12.0)).bg(cx.theme().border).mx_1())
+                        // 连接方式
+                        .child({
+                            let mode_text = if let Some(jump) = &details.jump_host_desc {
+                                i18n::t(&lang, "connecting.mode.jump_host").replace("{}", jump)
+                            } else if let Some(proxy) = &details.proxy_desc {
+                                i18n::t(&lang, "connecting.mode.proxy").replace("{}", proxy)
+                            } else {
+                                i18n::t(&lang, "connecting.mode.direct").to_string()
+                            };
+
                             div()
-                                .text_base()
-                                .text_color(muted_foreground)
-                                .child(format!("\"{}\"", server_label)),
-                        ),
-                ),
+                                .px_2()
+                                .py(px(2.0))
+                                .bg(cx.theme().secondary.opacity(0.3)) // 保持 badge 样式但更紧凑
+                                .rounded_md()
+                                .text_xs()
+                                .child(mode_text)
+                        })
+                        .into_any_element()
+                } else {
+                    div().into_any_element()
+                }),
         )
         // 进度步进器 (Stepper)
         .child(
@@ -455,6 +504,49 @@ pub fn render_connecting_page(
                                     }),
                             ),
                     )
+                    // 主机信息
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted_foreground)
+                                    .flex_shrink_0()
+                                    .child(i18n::t(&lang, "connecting.host_key.host")),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(foreground)
+                                    .child(format!("{}:{}", hk.host, hk.port)),
+                            ),
+                    )
+                    // 密钥类型
+                    .child(if !hk.key_type.is_empty() {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted_foreground)
+                                    .flex_shrink_0()
+                                    .child(i18n::t(&lang, "connecting.host_key.type")),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(foreground)
+                                    .child(hk.key_type.clone()),
+                            )
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    })
                     // 指纹信息
                     .child(
                         div()
@@ -510,6 +602,7 @@ pub fn render_connecting_page(
                                                     crate::ssh::event::HostKeyAction::AcceptAndSave,
                                                 );
                                             }
+                                            state.clear_host_key_verification();
                                         });
                                     })
                                     .child(
@@ -540,6 +633,7 @@ pub fn render_connecting_page(
                                                     crate::ssh::event::HostKeyAction::AcceptOnce,
                                                 );
                                             }
+                                            state.clear_host_key_verification();
                                         });
                                     })
                                     .child(
@@ -569,6 +663,7 @@ pub fn render_connecting_page(
                                                 let _ = tx
                                                     .send(crate::ssh::event::HostKeyAction::Reject);
                                             }
+                                            state.clear_host_key_verification();
                                         });
                                     })
                                     .child(

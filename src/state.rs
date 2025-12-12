@@ -160,11 +160,6 @@ impl SessionState {
         }
     }
 
-    /// 检查快捷命令组是否展开
-    pub fn is_snippets_group_expanded(&self, group_id: &str) -> bool {
-        self.snippets_expanded.contains(group_id)
-    }
-
     /// 加载快捷命令配置（如果尚未加载）
     pub fn load_snippets_config(&mut self) {
         if self.snippets_config.is_none() {
@@ -173,6 +168,7 @@ impl SessionState {
     }
 
     /// 刷新快捷命令配置
+    #[allow(dead_code)]
     pub fn refresh_snippets_config(&mut self) {
         self.snippets_config = crate::services::storage::load_snippets().ok();
     }

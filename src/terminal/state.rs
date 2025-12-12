@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener, WindowSize};
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::vte::ansi;
@@ -184,5 +184,47 @@ impl TerminalState {
     /// 重置光标为可见（例如有输入时）
     pub fn show_cursor(&mut self) {
         self.cursor_visible = true;
+    }
+
+    // ==================== 滚动功能 ====================
+
+    /// 按行数滚动 (正数向上滚动查看历史，负数向下)
+    pub fn scroll_lines(&mut self, delta: i32) {
+        let mut term = self.term.lock();
+        term.scroll_display(Scroll::Delta(delta));
+    }
+
+    /// 向上滚动一页
+    pub fn scroll_page_up(&mut self) {
+        let mut term = self.term.lock();
+        term.scroll_display(Scroll::PageUp);
+    }
+
+    /// 向下滚动一页
+    pub fn scroll_page_down(&mut self) {
+        let mut term = self.term.lock();
+        term.scroll_display(Scroll::PageDown);
+    }
+
+    /// 滚动到顶部（最早的历史）
+    pub fn scroll_to_top(&mut self) {
+        let mut term = self.term.lock();
+        term.scroll_display(Scroll::Top);
+    }
+
+    /// 滚动到底部（最新内容）
+    pub fn scroll_to_bottom(&mut self) {
+        let mut term = self.term.lock();
+        term.scroll_display(Scroll::Bottom);
+    }
+
+    /// 获取当前 display_offset（用于判断滚动位置）
+    pub fn display_offset(&self) -> usize {
+        self.term.lock().grid().display_offset()
+    }
+
+    /// 是否已滚动到底部
+    pub fn is_at_bottom(&self) -> bool {
+        self.display_offset() == 0
     }
 }

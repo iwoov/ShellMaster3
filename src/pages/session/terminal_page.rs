@@ -45,10 +45,74 @@ pub fn render_terminal_panel(
                 window.focus(&focus_for_click);
             });
 
+        // 添加鼠标滚轮滚动支持
+        if let Some(terminal_for_scroll) = terminal_entity.clone() {
+            let line_height = terminal_settings.line_height as f32;
+            terminal_display = terminal_display.on_scroll_wheel(move |event, _window, cx| {
+                // 计算滚动行数 (正数向上，负数向下)
+                let delta_y: f32 = match event.delta {
+                    ScrollDelta::Pixels(point) => Into::<f32>::into(point.y),
+                    ScrollDelta::Lines(point) => point.y * line_height,
+                };
+
+                // 将像素增量转换为行数 (向上滚动 = 正数 delta_y，查看历史)
+                let lines = (delta_y / line_height).round() as i32;
+                if lines != 0 {
+                    terminal_for_scroll.update(cx, |t, _| {
+                        t.scroll_lines(lines);
+                    });
+                }
+            });
+        }
+
         // 如果有 PTY 通道，添加键盘事件处理
         if let Some(channel) = pty_channel.clone() {
             let terminal_for_key = terminal_entity.clone();
+            let terminal_for_scroll = terminal_entity.clone();
             terminal_display = terminal_display.on_key_down(move |event, _window, cx| {
+                // 首先检查滚动快捷键
+                let key = event.keystroke.key.as_str();
+                let modifiers = &event.keystroke.modifiers;
+
+                // 处理滚动快捷键
+                if let Some(terminal) = terminal_for_scroll.clone() {
+                    let handled = match key {
+                        "pageup" => {
+                            terminal.update(cx, |t, _| {
+                                if modifiers.shift {
+                                    t.scroll_to_top();
+                                } else {
+                                    t.scroll_page_up();
+                                }
+                            });
+                            true
+                        }
+                        "pagedown" => {
+                            terminal.update(cx, |t, _| {
+                                if modifiers.shift {
+                                    t.scroll_to_bottom();
+                                } else {
+                                    t.scroll_page_down();
+                                }
+                            });
+                            true
+                        }
+                        "home" if modifiers.shift => {
+                            terminal.update(cx, |t, _| t.scroll_to_top());
+                            true
+                        }
+                        "end" if modifiers.shift => {
+                            terminal.update(cx, |t, _| t.scroll_to_bottom());
+                            true
+                        }
+                        _ => false,
+                    };
+
+                    if handled {
+                        return;
+                    }
+                }
+
                 // 将按键转换为转义序列
                 if let Some(bytes) =
                     keystroke_to_escape(&event.keystroke, &event.keystroke.modifiers)
@@ -59,9 +123,10 @@ pub fn render_terminal_panel(
                         bytes.len()
                     );
 
-                    // 重置光标为可见（有输入时）
+                    // 自动滚动到底部并重置光标为可见（有输入时）
                     if let Some(terminal) = terminal_for_key.clone() {
                         terminal.update(cx, |t, _| {
+                            t.scroll_to_bottom();
                             t.show_cursor();
                         });
                     }

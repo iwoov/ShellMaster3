@@ -49,7 +49,7 @@ pub fn render_terminal_view(
     size: &TerminalSize,
     settings: &TerminalSettings,
     cursor_visible: bool,
-    cx: &App,
+    _cx: &App,
 ) -> Div {
     let bounds = TerminalBounds::new(size);
 
@@ -62,11 +62,19 @@ pub fn render_terminal_view(
     let mut cells: Vec<RenderCell> = Vec::new();
     let content = term.renderable_content();
 
+    // 获取 display_offset - 用于将 grid 行位置转换为屏幕行位置
+    let display_offset = content.display_offset as i32;
+
     for cell in content.display_iter {
         let point = cell.point;
 
+        // 将 grid 行位置转换为屏幕行位置
+        // display_iter 返回的行位置范围是 [-display_offset, screen_lines - display_offset)
+        // 我们需要将其转换为屏幕坐标 [0, screen_lines)
+        let screen_line = point.line.0 + display_offset;
+
         // 跳过屏幕外的单元格
-        if point.line.0 < 0 || point.line.0 >= size.lines as i32 {
+        if screen_line < 0 || screen_line >= size.lines as i32 {
             continue;
         }
 
@@ -92,8 +100,9 @@ pub fn render_terminal_view(
             None
         };
 
+        // 存储屏幕坐标而非 grid 坐标
         cells.push(RenderCell {
-            point,
+            point: AlacPoint::new(alacritty_terminal::index::Line(screen_line), point.column),
             fg,
             bg,
             c,
@@ -101,12 +110,13 @@ pub fn render_terminal_view(
         });
     }
 
-    // 获取光标位置
+    // 获取光标位置并转换为屏幕坐标
     let cursor = content.cursor;
-    let cursor_point = cursor.point;
-
-    // 构建渲染元素
-    let theme_bg = crate::theme::sidebar_color(cx);
+    let cursor_screen_line = cursor.point.line.0 + display_offset;
+    let cursor_point = AlacPoint::new(
+        alacritty_terminal::index::Line(cursor_screen_line),
+        cursor.point.column,
+    );
 
     div()
         .size_full()

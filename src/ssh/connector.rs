@@ -10,8 +10,7 @@ use crate::pages::connecting::ConnectingProgress;
 use crate::state::{SessionState, SessionStatus};
 
 use super::config::{AuthMethod, SshConfig};
-use super::event::{ConnectionEvent, ConnectionStage, HostKeyAction, LogEntry};
-use super::manager::ConnectionHandle;
+use super::event::{ConnectionEvent, ConnectionStage, LogEntry};
 
 /// 从 ServerData 构建 SshConfig
 fn build_ssh_config(server: &ServerData) -> SshConfig {
@@ -96,9 +95,8 @@ pub fn start_ssh_connection(
         // 阶段2: 初始动画完成后，启动实际的后端SSH连接
         let start_time = std::time::Instant::now();
 
-        // 创建 UI 更新通道（用于 Tokio 线程 -> GPUI）
-        let (ui_sender, ui_receiver) = std::sync::mpsc::channel::<UiUpdate>();
-        let ui_receiver = Arc::new(Mutex::new(ui_receiver));
+        // 创建 UI 更新通道（使用 tokio unbounded channel 实现事件驱动）
+        let (ui_sender, mut ui_receiver) = tokio::sync::mpsc::unbounded_channel::<UiUpdate>();
 
         // 启动 SSH 连接任务，获取连接句柄
         let connection_handle = crate::ssh::SshManager::global().connect(config, tab_id.clone());
@@ -114,190 +112,161 @@ pub fn start_ssh_connection(
                 handle_connection_events(connection_handle.event_rx, ui_sender_for_events).await;
             });
 
-        // 阶段3: 轮询 UI 更新状态
-        let ui_receiver_for_poll = ui_receiver.clone();
-        loop {
-            // 尝试接收 UI 更新
-            let updates: Vec<UiUpdate> = {
-                let receiver = ui_receiver_for_poll.lock().unwrap();
-                receiver.try_iter().collect()
-            };
-
+        // 阶段3: 异步接收 UI 更新事件（事件驱动，无需轮询）
+        while let Some(update) = ui_receiver.recv().await {
             let mut should_break = false;
 
-            for update in updates {
-                match update {
-                    UiUpdate::Stage(stage) => {
-                        let _ = async_cx.update(|cx| {
-                            progress_for_result.update(cx, |p, cx| {
-                                p.set_stage(stage);
-                                cx.notify();
-                            });
+            match update {
+                UiUpdate::Stage(stage) => {
+                    let _ = async_cx.update(|cx| {
+                        progress_for_result.update(cx, |p, cx| {
+                            p.set_stage(stage);
+                            cx.notify();
                         });
-                    }
-                    UiUpdate::Log(log) => {
-                        let _ = async_cx.update(|cx| {
-                            progress_for_result.update(cx, |p, cx| {
-                                p.add_log(log);
-                                cx.notify();
-                            });
+                    });
+                }
+                UiUpdate::Log(log) => {
+                    let _ = async_cx.update(|cx| {
+                        progress_for_result.update(cx, |p, cx| {
+                            p.add_log(log);
+                            cx.notify();
                         });
-                    }
-                    UiUpdate::HostKeyVerification {
-                        host,
-                        port,
-                        key_type,
-                        fingerprint,
-                    } => {
-                        println!(
-                            "[SSH] Host key verification needed for {}:{} ({}): {}",
-                            host, port, key_type, fingerprint
-                        );
+                    });
+                }
+                UiUpdate::HostKeyVerification {
+                    host,
+                    port,
+                    key_type,
+                    fingerprint,
+                } => {
+                    println!(
+                        "[SSH] Host key verification needed for {}:{} ({}): {}",
+                        host, port, key_type, fingerprint
+                    );
 
-                        // 取出 host_key_tx 传给 UI，以便用户选择后发送响应
-                        let tx = host_key_tx.lock().unwrap().take();
+                    // 取出 host_key_tx 传给 UI，以便用户选择后发送响应
+                    let tx = host_key_tx.lock().unwrap().take();
 
-                        // 更新 UI 状态显示 host key 确认面板
-                        let _ = async_cx.update(|cx| {
-                            progress_for_result.update(cx, |p, cx| {
-                                p.set_host_key_verification(
-                                    host.clone(),
-                                    port,
-                                    key_type.clone(),
-                                    fingerprint.clone(),
-                                    false, // 不是 mismatch
-                                );
-                                // 将发送端存入状态，以便按钮点击时使用
-                                if let Some(tx) = tx {
-                                    p.set_host_key_tx(tx);
-                                }
-                                cx.notify();
-                            });
+                    // 更新 UI 状态显示 host key 确认面板
+                    let _ = async_cx.update(|cx| {
+                        progress_for_result.update(cx, |p, cx| {
+                            p.set_host_key_verification(
+                                host.clone(),
+                                port,
+                                key_type.clone(),
+                                fingerprint.clone(),
+                                false, // 不是 mismatch
+                            );
+                            // 将发送端存入状态，以便按钮点击时使用
+                            if let Some(tx) = tx {
+                                p.set_host_key_tx(tx);
+                            }
+                            cx.notify();
                         });
-                    }
-                    UiUpdate::HostKeyMismatch {
-                        host,
-                        port,
-                        expected_fingerprint,
-                        actual_fingerprint,
-                    } => {
-                        println!(
-                            "[SSH] WARNING: Host key mismatch for {}:{}! Expected: {}, Got: {}",
-                            host, port, expected_fingerprint, actual_fingerprint
-                        );
+                    });
+                }
+                UiUpdate::HostKeyMismatch {
+                    host,
+                    port,
+                    expected_fingerprint,
+                    actual_fingerprint,
+                } => {
+                    println!(
+                        "[SSH] WARNING: Host key mismatch for {}:{}! Expected: {}, Got: {}",
+                        host, port, expected_fingerprint, actual_fingerprint
+                    );
 
-                        // 取出 host_key_tx 传给 UI
-                        let tx = host_key_tx.lock().unwrap().take();
+                    // 取出 host_key_tx 传给 UI
+                    let tx = host_key_tx.lock().unwrap().take();
 
-                        // 更新 UI 状态显示警告面板
-                        let _ = async_cx.update(|cx| {
-                            progress_for_result.update(cx, |p, cx| {
-                                p.set_host_key_verification(
-                                    host.clone(),
-                                    port,
-                                    String::new(), // mismatch 时 key_type 不重要
-                                    actual_fingerprint.clone(),
-                                    true, // 是 mismatch
-                                );
-                                // 将发送端存入状态
-                                if let Some(tx) = tx {
-                                    p.set_host_key_tx(tx);
-                                }
-                                cx.notify();
-                            });
+                    // 更新 UI 状态显示警告面板
+                    let _ = async_cx.update(|cx| {
+                        progress_for_result.update(cx, |p, cx| {
+                            p.set_host_key_verification(
+                                host.clone(),
+                                port,
+                                String::new(), // mismatch 时 key_type 不重要
+                                actual_fingerprint.clone(),
+                                true, // 是 mismatch
+                            );
+                            // 将发送端存入状态
+                            if let Some(tx) = tx {
+                                p.set_host_key_tx(tx);
+                            }
+                            cx.notify();
                         });
+                    });
+                }
+                UiUpdate::Connected(session_id) => {
+                    let duration = start_time.elapsed();
+                    println!(
+                        "[SSH] [{}] Connection successful! Session: {}",
+                        server_label_for_log, session_id
+                    );
+                    println!(
+                        "[SSH] Total connection time: {:.2}s",
+                        duration.as_secs_f64()
+                    );
+
+                    // 更新服务器最后连接时间
+                    if let Err(e) =
+                        crate::services::storage::update_server_last_connected(&server_id)
+                    {
+                        eprintln!("[SSH] Failed to update last connected time: {}", e);
                     }
-                    UiUpdate::Connected(session_id) => {
-                        let duration = start_time.elapsed();
-                        println!(
-                            "[SSH] [{}] Connection successful! Session: {}",
-                            server_label_for_log, session_id
-                        );
-                        println!(
-                            "[SSH] Total connection time: {:.2}s",
-                            duration.as_secs_f64()
-                        );
 
-                        // 更新服务器最后连接时间
-                        if let Err(e) =
-                            crate::services::storage::update_server_last_connected(&server_id)
-                        {
-                            eprintln!("[SSH] Failed to update last connected time: {}", e);
-                        }
+                    // 阶段4: 300ms 成功动画延迟，让用户看到"连接成功"状态
+                    println!("[SSH] 开始连接成功动画（300ms）...");
+                    async_cx
+                        .background_executor()
+                        .timer(std::time::Duration::from_millis(300))
+                        .await;
+                    println!("[SSH] 成功动画完成，跳转到session...");
 
-                        // 阶段4: 300ms 成功动画延迟，让用户看到"连接成功"状态
-                        println!("[SSH] 开始连接成功动画（300ms）...");
-                        async_cx
-                            .background_executor()
-                            .timer(std::time::Duration::from_millis(300))
-                            .await;
-                        println!("[SSH] 成功动画完成，跳转到session...");
-
-                        // 阶段5: 更新会话状态为已连接，触发跳转到session
-                        let tab_id_clone = tab_id_for_result.clone();
-                        let _ = async_cx.update(|cx| {
-                            session_state_for_result.update(cx, |state, cx| {
-                                state.update_tab_status(&tab_id_clone, SessionStatus::Connected);
-                                cx.notify();
-                            });
+                    // 阶段5: 更新会话状态为已连接，触发跳转到session
+                    let tab_id_clone = tab_id_for_result.clone();
+                    let _ = async_cx.update(|cx| {
+                        session_state_for_result.update(cx, |state, cx| {
+                            state.update_tab_status(&tab_id_clone, SessionStatus::Connected);
+                            cx.notify();
                         });
+                    });
 
-                        should_break = true;
-                    }
-                    UiUpdate::Failed(error) => {
-                        eprintln!(
-                            "[SSH] [{}] Connection failed: {}",
-                            server_label_for_log, error
-                        );
+                    should_break = true;
+                }
+                UiUpdate::Failed(error) => {
+                    eprintln!(
+                        "[SSH] [{}] Connection failed: {}",
+                        server_label_for_log, error
+                    );
 
-                        let _ = async_cx.update(|cx| {
-                            progress_for_result.update(cx, |p, cx| {
-                                p.set_error(error);
-                                cx.notify();
-                            });
+                    let _ = async_cx.update(|cx| {
+                        progress_for_result.update(cx, |p, cx| {
+                            p.set_error(error);
+                            cx.notify();
                         });
+                    });
 
-                        should_break = true;
-                    }
-                    UiUpdate::Disconnected(reason) => {
-                        println!("[SSH] [{}] Disconnected: {}", server_label_for_log, reason);
-                        should_break = true;
-                    }
+                    should_break = true;
+                }
+                UiUpdate::Disconnected(reason) => {
+                    println!("[SSH] [{}] Disconnected: {}", server_label_for_log, reason);
+                    should_break = true;
                 }
             }
 
             if should_break {
                 break;
             }
-
-            // 等待一下再继续轮询
-            async_cx
-                .background_executor()
-                .timer(std::time::Duration::from_millis(50))
-                .await;
         }
     })
     .detach();
 }
 
-/// 发送 host key 用户响应
-pub fn send_host_key_response(
-    progress_state: Entity<ConnectingProgress>,
-    action: HostKeyAction,
-    cx: &mut App,
-) {
-    // 从 progress_state 获取 host_key_tx 并发送响应
-    progress_state.update(cx, |state, _| {
-        if let Some(tx) = state.take_host_key_tx() {
-            let _ = tx.send(action);
-        }
-    });
-}
-
 /// 处理连接事件，转发到 UI 更新通道
 async fn handle_connection_events(
     mut receiver: mpsc::UnboundedReceiver<ConnectionEvent>,
-    ui_sender: std::sync::mpsc::Sender<UiUpdate>,
+    ui_sender: mpsc::UnboundedSender<UiUpdate>,
 ) {
     while let Some(event) = receiver.recv().await {
         match event {

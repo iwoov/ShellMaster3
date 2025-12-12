@@ -2,6 +2,7 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme, StyledExt};
 
 use crate::components::common::icon::render_icon;
@@ -337,6 +338,7 @@ fn render_command_node(command: SnippetCommand, cx: &App) -> impl IntoElement {
 
     let command_id = command.id.clone();
     let command_text = command.command.clone();
+    let command_text_for_tooltip = command.command.clone();
 
     div()
         .id(SharedString::from(format!("cmd-{}", command_id)))
@@ -352,6 +354,8 @@ fn render_command_node(command: SnippetCommand, cx: &App) -> impl IntoElement {
             // 点击复制命令到剪贴板
             cx.write_to_clipboard(ClipboardItem::new_string(command_text.clone()));
         })
+        // 添加 tooltip 显示完整命令
+        .tooltip(move |window, cx| Tooltip::new(command_text_for_tooltip.clone()).build(window, cx))
         // 命令图标（紧贴左侧）
         .child(svg().path(icons::CODE).size(px(14.)).text_color(muted))
         // 命令名称

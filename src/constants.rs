@@ -35,4 +35,5 @@ pub mod icons {
     // 小侧栏图标
     pub const COMMAND: &str = "icons/command.svg";
     pub const TRANSFER: &str = "icons/transfer.svg";
+    pub const FINGERPRINT: &str = "icons/fingerprint.svg";
 }

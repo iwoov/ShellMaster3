@@ -208,10 +208,10 @@ fn zh_cn(key: &'static str) -> &'static str {
         "connecting.step.done" => "连接成功",
 
         // Host Key 验证
-        "connecting.host_key.first_connection" => "🔐 首次连接此主机",
-        "connecting.host_key.key_changed" => "⚠️ 主机密钥已变更",
+        "connecting.host_key.first_connection" => "首次连接此主机",
+        "connecting.host_key.key_changed" => "主机密钥已变更",
         "connecting.host_key.fingerprint" => "密钥指纹：",
-        "connecting.host_key.key_saved" => "✓ 密钥已自动保存",
+        "connecting.host_key.key_saved" => "密钥已自动保存",
         "connecting.host_key.btn_accept_save" => "信任并保存",
         "connecting.host_key.btn_accept_once" => "仅本次信任",
         "connecting.host_key.btn_reject" => "拒绝连接",
@@ -259,6 +259,11 @@ fn zh_cn(key: &'static str) -> &'static str {
         // 小侧栏
         "mini_sidebar.snippets" => "快捷命令",
         "mini_sidebar.transfer" => "传输管理",
+
+        // 已知主机
+        "known_hosts.empty.title" => "暂无已知主机",
+        "known_hosts.empty.description" => "连接服务器并信任主机密钥后，会在这里显示",
+        "known_hosts.items" => "项",
 
         _ => key,
     }
@@ -465,10 +470,10 @@ fn en_us(key: &'static str) -> &'static str {
         "connecting.step.done" => "Connected",
 
         // Host Key Verification
-        "connecting.host_key.first_connection" => "🔐 First Connection",
-        "connecting.host_key.key_changed" => "⚠️ Host Key Changed",
+        "connecting.host_key.first_connection" => "First Connection",
+        "connecting.host_key.key_changed" => "Host Key Changed",
         "connecting.host_key.fingerprint" => "Fingerprint:",
-        "connecting.host_key.key_saved" => "✓ Key saved automatically",
+        "connecting.host_key.key_saved" => "Key saved automatically",
         "connecting.host_key.btn_accept_save" => "Trust & Save",
         "connecting.host_key.btn_accept_once" => "Trust Once",
         "connecting.host_key.btn_reject" => "Reject",
@@ -516,6 +521,11 @@ fn en_us(key: &'static str) -> &'static str {
         // Mini Sidebar
         "mini_sidebar.snippets" => "Snippets",
         "mini_sidebar.transfer" => "Transfer",
+
+        // Known Hosts
+        "known_hosts.empty.title" => "No Known Hosts",
+        "known_hosts.empty.description" => "Connect to a server and trust its key to see it here",
+        "known_hosts.items" => "hosts",
 
         _ => key,
     }

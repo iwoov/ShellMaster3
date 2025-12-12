@@ -43,7 +43,7 @@ impl MenuType {
             MenuType::Hosts => icons::SERVER,
             MenuType::Monitor => icons::MONITOR,
             MenuType::Snippets => icons::CODE,
-            MenuType::KnownHosts => icons::USER,
+            MenuType::KnownHosts => icons::FINGERPRINT,
         }
     }
 }

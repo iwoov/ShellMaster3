@@ -3,6 +3,7 @@
 use gpui::*;
 use std::collections::HashMap;
 
+use super::known_hosts_list::{render_known_hosts_content, KnownHostsPageState};
 use super::server_list::{render_hosts_content, render_placeholder, ViewMode, ViewModeState};
 use super::sidebar::{render_sidebar, MenuType, SidebarState};
 use super::snippets_list::{render_snippets_content, SnippetsPageState};
@@ -31,6 +32,7 @@ pub struct HomePage {
     pub settings_dialog_state: Entity<SettingsDialogState>,
     pub session_state: Entity<SessionState>,
     pub snippets_state: Entity<SnippetsPageState>,
+    pub known_hosts_state: Entity<KnownHostsPageState>,
     // 连接进度状态（按 tab_id 索引）
     pub connecting_progress: HashMap<String, Entity<ConnectingProgress>>,
     /// 上一次的 show_home 状态，用于检测视图切换
@@ -51,6 +53,7 @@ impl HomePage {
         let settings_dialog_state = cx.new(|_| SettingsDialogState::default());
         let session_state = cx.new(|_| SessionState::default());
         let snippets_state = cx.new(|cx| SnippetsPageState::new(cx));
+        let known_hosts_state = cx.new(|_| KnownHostsPageState::new());
 
         // 从存储加载服务器数据
         let server_groups = Self::load_server_groups();
@@ -64,6 +67,7 @@ impl HomePage {
             settings_dialog_state,
             session_state,
             snippets_state,
+            known_hosts_state,
             connecting_progress: HashMap::new(),
             last_show_home: true,
         }
@@ -228,12 +232,9 @@ impl HomePage {
             MenuType::Snippets => {
                 render_snippets_content(self.snippets_state.clone(), cx).into_any_element()
             }
-            MenuType::KnownHosts => render_placeholder(
-                "Known Hosts",
-                i18n::t(&lang, "server_list.placeholder.known_hosts"),
-                cx,
-            )
-            .into_any_element(),
+            MenuType::KnownHosts => {
+                render_known_hosts_content(self.known_hosts_state.clone(), cx).into_any_element()
+            }
         }
     }
 

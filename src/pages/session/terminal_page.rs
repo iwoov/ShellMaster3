@@ -55,16 +55,36 @@ pub fn render_terminal_panel(
         .cursor_text();
 
     // 监听终端显示区域尺寸变化，并同步本地/远端 PTY 尺寸
+    // 同时记录终端区域在窗口中的位置，用于鼠标坐标转换
     let tab_id = tab.id.clone();
     let session_state_for_resize = session_state.clone();
+    let terminal_for_bounds = terminal_entity.clone();
     terminal_display = terminal_display.child(
         canvas(
-            move |bounds, window, cx| {
+            move |bounds, _window, cx| {
                 let width = f32::from(bounds.size.width);
                 let height = f32::from(bounds.size.height);
+                let origin_x = f32::from(bounds.origin.x);
+                let origin_y = f32::from(bounds.origin.y);
+
+                // 更新尺寸
                 session_state_for_resize.update(cx, |state, cx| {
-                    state.sync_terminal_size(&tab_id, width, height, window, cx);
+                    state.sync_terminal_size(&tab_id, width, height, cx);
                 });
+
+                // 更新 bounds origin（用于鼠标坐标转换）
+                if let Some(terminal) = terminal_for_bounds.clone() {
+                    terminal.update(cx, |t, _| {
+                        let old = t.bounds_origin();
+                        if (old.0 - origin_x).abs() > 1.0 || (old.1 - origin_y).abs() > 1.0 {
+                            tracing::debug!(
+                                "[Terminal] Bounds origin updated: ({:.1}, {:.1}) -> ({:.1}, {:.1})",
+                                old.0, old.1, origin_x, origin_y
+                            );
+                        }
+                        t.set_bounds_origin(origin_x, origin_y);
+                    });
+                }
             },
             |_, _, _, _| {},
         )
@@ -75,12 +95,69 @@ pub fn render_terminal_panel(
     // 如果有焦点句柄，添加事件监听
     if let Some(focus_handle) = terminal_focus_handle.clone() {
         let focus_for_click = focus_handle.clone();
-        terminal_display = terminal_display
-            .track_focus(&focus_handle)
-            // 点击获取焦点
-            .on_mouse_down(MouseButton::Left, move |_, window, _cx| {
-                window.focus(&focus_for_click);
+        terminal_display = terminal_display.track_focus(&focus_handle);
+
+        // 鼠标按下：获取焦点并开始选择
+        {
+            let terminal = terminal_entity.clone();
+            let focus = focus_for_click.clone();
+            terminal_display =
+                terminal_display.on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                    // 先获取焦点
+                    window.focus(&focus);
+
+                    // 开始选择
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, cx| {
+                            // 获取终端区域在窗口中的偏移，转换为相对坐标
+                            let (origin_x, origin_y) = t.bounds_origin();
+                            let rel_x: f32 = f32::from(event.position.x) - origin_x;
+                            let rel_y: f32 = f32::from(event.position.y) - origin_y;
+
+                            t.start_selection(rel_x, rel_y, event.click_count);
+                            cx.notify();
+                        });
+                    }
+                });
+        }
+
+        // 鼠标移动（拖动）：更新选择
+        {
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_mouse_move(move |event, _window, cx| {
+                // 只有按住左键拖动时才更新选择
+                if event.pressed_button != Some(gpui::MouseButton::Left) {
+                    return;
+                }
+
+                if let Some(terminal) = terminal.clone() {
+                    terminal.update(cx, |t, cx| {
+                        // 获取终端区域在窗口中的偏移，转换为相对坐标
+                        let (origin_x, origin_y) = t.bounds_origin();
+                        let rel_x: f32 = f32::from(event.position.x) - origin_x;
+                        let rel_y: f32 = f32::from(event.position.y) - origin_y;
+
+                        t.update_selection(rel_x, rel_y);
+                        cx.notify();
+                    });
+                }
             });
+        }
+
+        // 鼠标释放：结束选择
+        {
+            let terminal = terminal_entity.clone();
+            terminal_display =
+                terminal_display.on_mouse_up(MouseButton::Left, move |_event, _window, cx| {
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, cx| {
+                            let _selected_text = t.end_selection();
+                            // 选择结束后不清除选择，保留高亮显示
+                            cx.notify();
+                        });
+                    }
+                });
+        }
 
         // 滚轮：滚动查看历史（非 ALT_SCREEN），或在 ALT_SCREEN 下发送上/下箭头模拟滚动
         if terminal_entity.is_some() {
@@ -264,10 +341,19 @@ pub fn render_terminal_panel(
         }
         // 复制：将终端选中文本复制到剪贴板
         {
+            let terminal = terminal_entity.clone();
             terminal_display = terminal_display.on_action(move |_: &TerminalCopy, _window, cx| {
-                // TODO: 实现终端文本选择功能后，这里将复制选中的文本
-                // 目前先记录日志，后续添加选择功能
-                tracing::debug!("[Terminal] Copy action triggered");
+                if let Some(terminal) = terminal.clone() {
+                    let selected_text = terminal.update(cx, |t, _| t.selection_to_string());
+                    if let Some(text) = selected_text {
+                        if !text.is_empty() {
+                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                            tracing::debug!("[Terminal] Copied {} chars to clipboard", text.len());
+                        }
+                    } else {
+                        tracing::debug!("[Terminal] No text selected for copy");
+                    }
+                }
                 // 阻止事件继续传播
                 cx.stop_propagation();
             });

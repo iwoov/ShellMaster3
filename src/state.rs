@@ -463,38 +463,15 @@ impl SessionState {
 
     /// 将本地终端尺寸与远端 PTY 尺寸同步到给定像素区域（用于窗口/布局变化时的自动 resize）
     /// 只同步当前激活的终端实例
+    /// 注意：初始化由单独的机制触发，此方法仅处理 resize
     pub fn sync_terminal_size(
         &mut self,
         tab_id: &str,
         area_width: f32,
         area_height: f32,
-        window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
         if area_width <= 0.0 || area_height <= 0.0 {
-            return;
-        }
-
-        // 检查是否需要初始化
-        let should_initialize = {
-            let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) else {
-                return;
-            };
-            if tab.status != SessionStatus::Connected {
-                return;
-            }
-            let Some(active_id) = &tab.active_terminal_id else {
-                return;
-            };
-            let Some(instance) = tab.terminals.iter().find(|t| &t.id == active_id) else {
-                return;
-            };
-            !instance.pty_initialized
-        };
-
-        if should_initialize {
-            // 未初始化时，直接用当前真实区域尺寸初始化
-            self.initialize_terminal(tab_id, area_width, area_height, window, cx);
             return;
         }
 
@@ -514,6 +491,11 @@ impl SessionState {
         let Some(instance) = tab.terminals.iter_mut().find(|t| t.id == active_id) else {
             return;
         };
+
+        // 如果未初始化，跳过（初始化由其他机制触发）
+        if !instance.pty_initialized {
+            return;
+        }
 
         let (Some(terminal), channel, last_sent) = (
             instance.terminal.clone(),

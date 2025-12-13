@@ -3,14 +3,16 @@
 use std::sync::Arc;
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener, WindowSize};
-use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::index::{Column, Direction, Line, Point as AlacPoint};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi;
 use alacritty_terminal::Term;
-use gpui::{Pixels, ScrollWheelEvent, TouchPhase, px};
+use gpui::{px, Pixels, ScrollWheelEvent, TouchPhase};
 
 use crate::models::settings::TerminalSettings;
 use crate::terminal::TerminalScrollHandle;
@@ -117,6 +119,8 @@ pub struct TerminalState {
     scroll_px: Pixels,
     /// 光标是否可见（用于闪烁动画）
     cursor_visible: bool,
+    /// 终端显示区域在窗口中的偏移原点
+    bounds_origin: (f32, f32),
 }
 
 impl TerminalState {
@@ -151,6 +155,7 @@ impl TerminalState {
             scroll_handle,
             scroll_px: px(0.),
             cursor_visible: true,
+            bounds_origin: (0.0, 0.0),
         }
     }
 
@@ -169,6 +174,16 @@ impl TerminalState {
         &self.size
     }
 
+    /// 设置终端显示区域在窗口中的偏移原点
+    pub fn set_bounds_origin(&mut self, origin_x: f32, origin_y: f32) {
+        self.bounds_origin = (origin_x, origin_y);
+    }
+
+    /// 获取终端显示区域在窗口中的偏移原点
+    pub fn bounds_origin(&self) -> (f32, f32) {
+        self.bounds_origin
+    }
+
     /// 调整终端尺寸
     pub fn resize(&mut self, width: f32, height: f32, cell_width: f32, line_height: f32) {
         let new_size = TerminalSize::from_pixels(width, height, cell_width, line_height);
@@ -180,7 +195,8 @@ impl TerminalState {
 
         if dimensions_changed || metrics_changed {
             self.size = new_size.clone();
-            self.scroll_handle.set_line_height(px(self.size.line_height));
+            self.scroll_handle
+                .set_line_height(px(self.size.line_height));
         }
 
         self.scroll_handle.set_viewport_height(px(height));
@@ -272,5 +288,108 @@ impl TerminalState {
             }
             TouchPhase::Ended => None,
         }
+    }
+
+    // ==================== 文本选择 API ====================
+
+    /// 像素坐标转换为终端网格坐标
+    /// 返回 (AlacPoint, Direction) - 网格点和鼠标在单元格中的位置（左/右半边）
+    pub fn pixel_to_grid_point(&self, x: f32, y: f32) -> (AlacPoint, Direction) {
+        let display_offset = self.display_offset();
+        let cell_width = self.size.cell_width;
+        let line_height = self.size.line_height;
+
+        // 计算列号
+        let mut col = (x / cell_width).floor() as usize;
+        let cell_x = x.max(0.0) % cell_width;
+        let half_cell = cell_width / 2.0;
+
+        // 判断鼠标在单元格左半边还是右半边
+        let mut side = if cell_x > half_cell {
+            Direction::Right
+        } else {
+            Direction::Left
+        };
+
+        // 限制列号范围
+        if col >= self.size.columns {
+            col = self.size.columns.saturating_sub(1);
+            side = Direction::Right;
+        }
+
+        // 计算行号（考虑滚动偏移）
+        let mut line = (y / line_height).floor() as i32;
+        if line >= self.size.lines as i32 {
+            line = self.size.lines as i32 - 1;
+            side = Direction::Right;
+        } else if line < 0 {
+            line = 0;
+            side = Direction::Left;
+        }
+
+        // 应用滚动偏移（display_offset 是向上滚动的行数）
+        let grid_line = line - display_offset as i32;
+
+        (AlacPoint::new(Line(grid_line), Column(col)), side)
+    }
+
+    /// 开始选择（鼠标按下时调用）
+    /// click_count: 1 = 简单选择, 2 = 词选择, 3 = 行选择
+    pub fn start_selection(&mut self, x: f32, y: f32, click_count: usize) {
+        let (point, side) = self.pixel_to_grid_point(x, y);
+
+        let selection_type = match click_count {
+            2 => SelectionType::Semantic,
+            3 => SelectionType::Lines,
+            _ => SelectionType::Simple,
+        };
+
+        let selection = Selection::new(selection_type, point, side);
+
+        let mut term = self.term.lock();
+        term.selection = Some(selection);
+
+        tracing::debug!(
+            "[Terminal] Start selection: pixel=({:.1}, {:.1}) bounds=({:.1}, {:.1}) grid=({}, {}) type={:?} click_count={}",
+            x, y,
+            self.bounds_origin.0, self.bounds_origin.1,
+            point.line.0, point.column.0,
+            selection_type,
+            click_count
+        );
+    }
+
+    /// 更新选择（鼠标拖动时调用）
+    pub fn update_selection(&mut self, x: f32, y: f32) {
+        let (point, side) = self.pixel_to_grid_point(x, y);
+
+        let mut term = self.term.lock();
+        if let Some(ref mut selection) = term.selection {
+            selection.update(point, side);
+        }
+    }
+
+    /// 结束选择（鼠标释放时调用）
+    /// 返回选中的文本（如果有）
+    pub fn end_selection(&mut self) -> Option<String> {
+        self.selection_to_string()
+    }
+
+    /// 清除选择
+    pub fn clear_selection(&mut self) {
+        let mut term = self.term.lock();
+        term.selection = None;
+    }
+
+    /// 获取当前选中的文本
+    pub fn selection_to_string(&self) -> Option<String> {
+        let term = self.term.lock();
+        term.selection_to_string()
+    }
+
+    /// 检查是否有选择
+    pub fn has_selection(&self) -> bool {
+        let term = self.term.lock();
+        term.selection.is_some()
     }
 }

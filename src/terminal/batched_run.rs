@@ -215,6 +215,8 @@ pub struct LayoutResult {
     pub text_runs: Vec<BatchedTextRun>,
     /// 背景矩形
     pub background_rects: Vec<BackgroundRect>,
+    /// 选择高亮矩形
+    pub selection_rects: Vec<BackgroundRect>,
 }
 
 /// 布局网格 - 将终端单元格转换为批量文本运行和背景矩形
@@ -224,9 +226,14 @@ pub fn layout_grid(term: &Term<EventProxy>, settings: &TerminalSettings) -> Layo
 
     let fg_default = hex_to_hsla(&settings.foreground_color);
     let bg_default = hex_to_hsla(&settings.background_color);
+    let selection_color = hex_to_hsla(&settings.selection_color);
+
+    // 获取选择范围
+    let selection = content.selection;
 
     let mut text_runs: Vec<BatchedTextRun> = Vec::with_capacity(200);
     let mut background_rects: Vec<BackgroundRect> = Vec::with_capacity(100);
+    let mut selection_rects: Vec<BackgroundRect> = Vec::with_capacity(50);
     let mut current_run: Option<BatchedTextRun> = None;
 
     let mut cell_count = 0;
@@ -246,6 +253,26 @@ pub fn layout_grid(term: &Term<EventProxy>, settings: &TerminalSettings) -> Layo
         }
 
         let c = cell.c;
+
+        // 检查是否在选择范围内
+        let is_selected = if let Some(ref sel) = selection {
+            point >= sel.start && point <= sel.end
+        } else {
+            false
+        };
+
+        // 如果被选中，添加选择高亮矩形
+        if is_selected {
+            if let Some(ref mut last_rect) = selection_rects.last_mut() {
+                if last_rect.can_extend(display_line, col, selection_color) {
+                    last_rect.extend();
+                } else {
+                    selection_rects.push(BackgroundRect::new(display_line, col, selection_color));
+                }
+            } else {
+                selection_rects.push(BackgroundRect::new(display_line, col, selection_color));
+            }
+        }
 
         // 处理颜色反转
         let (fg, bg) = if flags.contains(Flags::INVERSE) {
@@ -303,15 +330,17 @@ pub fn layout_grid(term: &Term<EventProxy>, settings: &TerminalSettings) -> Layo
     }
 
     tracing::trace!(
-        "layout_grid: {} cells → {} runs, {} bg_rects",
+        "layout_grid: {} cells → {} runs, {} bg_rects, {} sel_rects",
         cell_count,
         text_runs.len(),
-        background_rects.len()
+        background_rects.len(),
+        selection_rects.len()
     );
 
     LayoutResult {
         text_runs,
         background_rects,
+        selection_rects,
     }
 }
 

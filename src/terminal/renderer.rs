@@ -65,7 +65,12 @@ pub fn render_terminal_view(
                         rect.paint(origin, cell_width, line_height, window);
                     }
 
-                    // 2. 绘制文本运行
+                    // 2. 绘制选择高亮矩形
+                    for rect in &layout.selection_rects {
+                        rect.paint(origin, cell_width, line_height, window);
+                    }
+
+                    // 3. 绘制文本运行
                     for run in &layout.text_runs {
                         run.paint(
                             origin,
@@ -78,7 +83,7 @@ pub fn render_terminal_view(
                         );
                     }
 
-                    // 3. 绘制光标
+                    // 4. 绘制光标
                     if cursor_visible {
                         if let Some(point) = cursor_point {
                             paint_cursor(

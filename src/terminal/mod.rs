@@ -21,7 +21,17 @@ use gpui::{actions, App, KeyBinding};
 // 定义终端专用 actions
 actions!(
     terminal,
-    [SendTab, SendEscape, SendEnter, SendUp, SendDown, SendLeft, SendRight,]
+    [
+        SendTab,
+        SendEscape,
+        SendEnter,
+        SendUp,
+        SendDown,
+        SendLeft,
+        SendRight,
+        TerminalCopy,
+        TerminalPaste,
+    ]
 );
 
 /// 终端上下文名称
@@ -42,5 +52,14 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("down", SendDown, Some(TERMINAL_CONTEXT)),
         KeyBinding::new("left", SendLeft, Some(TERMINAL_CONTEXT)),
         KeyBinding::new("right", SendRight, Some(TERMINAL_CONTEXT)),
+        // 复制粘贴快捷键（macOS 使用 cmd，其他平台使用 ctrl）
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-c", TerminalCopy, Some(TERMINAL_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-v", TerminalPaste, Some(TERMINAL_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-c", TerminalCopy, Some(TERMINAL_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-v", TerminalPaste, Some(TERMINAL_CONTEXT)),
     ]);
 }

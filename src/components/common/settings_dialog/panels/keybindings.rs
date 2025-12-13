@@ -8,28 +8,112 @@ use crate::i18n;
 
 use super::super::SettingsDialogState;
 
+/// 定义快捷键配置结构
+struct KeyBindingItem {
+    action: &'static str,
+    shortcut_mac: &'static str,
+    shortcut_other: &'static str,
+}
+
+/// 获取终端快捷键列表
+fn get_terminal_keybindings() -> Vec<KeyBindingItem> {
+    vec![
+        KeyBindingItem {
+            action: "settings.keybindings.copy",
+            shortcut_mac: "⌘C",
+            shortcut_other: "Ctrl+C",
+        },
+        KeyBindingItem {
+            action: "settings.keybindings.paste",
+            shortcut_mac: "⌘V",
+            shortcut_other: "Ctrl+V",
+        },
+    ]
+}
+
 /// 渲染按键绑定面板
 pub fn render_keybindings_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
     let lang = &state.read(cx).settings.theme.language;
-    div().flex().flex_col().gap_6().child(
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .h(px(200.))
-            .child(
-                div()
-                    .text_base()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(i18n::t(lang, "settings.keybindings.coming_soon")),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .mt_2()
-                    .child(i18n::t(lang, "settings.keybindings.description")),
-            ),
-    )
+    let border_color = cx.theme().border;
+    let muted_fg = cx.theme().muted_foreground;
+    let text_color = cx.theme().foreground;
+    let bg_hover = cx.theme().secondary;
+
+    let bindings = get_terminal_keybindings();
+
+    // 根据平台选择不同的快捷键显示
+    #[cfg(target_os = "macos")]
+    let is_mac = true;
+    #[cfg(not(target_os = "macos"))]
+    let is_mac = false;
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .child(
+            // 终端快捷键分组
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                // 分组标题
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(text_color)
+                        .child(i18n::t(lang, "settings.keybindings.terminal_title")),
+                )
+                // 快捷键列表
+                .child(
+                    div()
+                        .rounded(px(6.))
+                        .border_1()
+                        .border_color(border_color)
+                        .overflow_hidden()
+                        .children(bindings.iter().enumerate().map(|(idx, item)| {
+                            let shortcut = if is_mac {
+                                item.shortcut_mac
+                            } else {
+                                item.shortcut_other
+                            };
+
+                            div()
+                                .w_full()
+                                .px_3()
+                                .py_2()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .when(idx > 0, |s| s.border_t_1().border_color(border_color))
+                                .hover(|s| s.bg(bg_hover))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(text_color)
+                                        .child(i18n::t(lang, item.action)),
+                                )
+                                .child(
+                                    div()
+                                        .px_2()
+                                        .py(px(2.))
+                                        .rounded(px(4.))
+                                        .bg(cx.theme().muted)
+                                        .text_xs()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(muted_fg)
+                                        .child(shortcut),
+                                )
+                        })),
+                ),
+        )
+        // 底部提示
+        .child(
+            div()
+                .mt_4()
+                .text_sm()
+                .text_color(muted_fg)
+                .child(i18n::t(lang, "settings.keybindings.more_coming_soon")),
+        )
 }

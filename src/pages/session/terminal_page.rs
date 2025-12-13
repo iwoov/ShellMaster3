@@ -16,7 +16,7 @@ use crate::ssh::session::TerminalChannel;
 use crate::state::{SessionState, SessionTab};
 use crate::terminal::{
     hex_to_hsla, keystroke_to_escape, render_terminal_view, SendDown, SendEnter, SendEscape,
-    SendLeft, SendRight, SendTab, SendUp, TerminalState,
+    SendLeft, SendRight, SendTab, SendUp, TerminalCopy, TerminalPaste, TerminalState,
 };
 
 /// 渲染终端面板
@@ -260,6 +260,47 @@ pub fn render_terminal_panel(
                     })
                     .detach();
                 }
+            });
+        }
+        // 复制：将终端选中文本复制到剪贴板
+        {
+            terminal_display = terminal_display.on_action(move |_: &TerminalCopy, _window, cx| {
+                // TODO: 实现终端文本选择功能后，这里将复制选中的文本
+                // 目前先记录日志，后续添加选择功能
+                tracing::debug!("[Terminal] Copy action triggered");
+                // 阻止事件继续传播
+                cx.stop_propagation();
+            });
+        }
+        // 粘贴：从剪贴板读取文本并发送到 PTY
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_action(move |_: &TerminalPaste, _window, cx| {
+                if let Some(channel) = channel.clone() {
+                    // 从剪贴板读取文本
+                    if let Some(clipboard_item) = cx.read_from_clipboard() {
+                        if let Some(text) = clipboard_item.text() {
+                            let bytes = text.as_bytes().to_vec();
+                            tracing::debug!("[Terminal] Paste action: {} bytes", bytes.len());
+
+                            // 重置光标为可见
+                            if let Some(terminal) = terminal.clone() {
+                                terminal.update(cx, |t, _| t.show_cursor());
+                            }
+
+                            // 发送到 PTY
+                            cx.spawn(async move |_| {
+                                if let Err(e) = channel.write(&bytes).await {
+                                    tracing::error!("[Terminal] PTY write error on paste: {:?}", e);
+                                }
+                            })
+                            .detach();
+                        }
+                    }
+                }
+                // 阻止事件继续传播
+                cx.stop_propagation();
             });
         }
 

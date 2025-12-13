@@ -56,8 +56,10 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.terminal.scrollback" => "滚动缓冲区",
 
         // 按键绑定
-        "settings.keybindings.coming_soon" => "按键绑定编辑器将在后续版本实现",
-        "settings.keybindings.description" => "可自定义终端和SFTP快捷键",
+        "settings.keybindings.terminal_title" => "终端快捷键",
+        "settings.keybindings.copy" => "复制",
+        "settings.keybindings.paste" => "粘贴",
+        "settings.keybindings.more_coming_soon" => "更多快捷键设置将在后续版本提供",
 
         // SFTP 设置
         "settings.sftp.file_display" => "文件显示",
@@ -334,8 +336,12 @@ fn en_us(key: &'static str) -> &'static str {
         "settings.terminal.scrollback" => "Scrollback Lines",
 
         // Key Bindings
-        "settings.keybindings.coming_soon" => "Key bindings editor coming in a future release",
-        "settings.keybindings.description" => "Customize terminal and SFTP shortcuts",
+        "settings.keybindings.terminal_title" => "Terminal Shortcuts",
+        "settings.keybindings.copy" => "Copy",
+        "settings.keybindings.paste" => "Paste",
+        "settings.keybindings.more_coming_soon" => {
+            "More shortcut settings coming in a future release"
+        }
 
         // SFTP Settings
         "settings.sftp.file_display" => "File Display",

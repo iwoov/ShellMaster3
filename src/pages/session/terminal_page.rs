@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::ScrollableElement;
@@ -32,10 +33,16 @@ pub fn render_terminal_panel(
     let settings = crate::services::storage::load_settings().unwrap_or_default();
     let terminal_settings = settings.terminal.clone();
 
-    // 获取终端状态和错误信息
-    let terminal_entity = tab.terminal.clone();
-    let pty_channel = tab.pty_channel.clone();
-    let pty_error = tab.pty_error.clone();
+    // 获取当前激活的终端实例
+    let active_terminal_id = tab.active_terminal_id.clone();
+    let active_instance = active_terminal_id
+        .as_ref()
+        .and_then(|id| tab.terminals.iter().find(|t| &t.id == id));
+
+    // 获取终端状态和错误信息（从当前激活的终端实例）
+    let terminal_entity = active_instance.and_then(|inst| inst.terminal.clone());
+    let pty_channel = active_instance.and_then(|inst| inst.pty_channel.clone());
+    let pty_error = active_instance.and_then(|inst| inst.pty_error.clone());
 
     // 创建终端显示区域的基础 div
     // 使用 key_context("Terminal") 建立终端专用键盘上下文，用于支持自定义快捷键
@@ -348,19 +355,172 @@ pub fn render_terminal_panel(
     }
 
     // 创建终端顶部工具栏区域（15px 高度）
+    let tab_id_for_toolbar = tab.id.clone();
+    let terminals_for_toolbar = tab.terminals.clone();
+    let active_id_for_toolbar = tab.active_terminal_id.clone();
+    let session_state_for_toolbar = session_state.clone();
+
+    let primary_color = cx.theme().primary;
+    let text_color = cx.theme().foreground;
+    let muted_color = cx.theme().muted_foreground;
+
     let terminal_toolbar = div()
         .id("terminal-toolbar")
-        .h(px(15.))
+        .h(px(20.))
         .w_full()
         .flex_shrink_0()
         .border_b_1()
-        .border_color(border_color);
+        .border_color(border_color)
+        .flex()
+        .items_center()
+        .gap_0()
+        // 终端标签列表
+        .children(
+            terminals_for_toolbar
+                .iter()
+                .enumerate()
+                .map(|(idx, term_inst)| {
+                    let term_id = term_inst.id.clone();
+                    let term_label = term_inst.label.clone();
+                    let is_active = active_id_for_toolbar.as_ref() == Some(&term_id);
+                    let tab_id_for_click = tab_id_for_toolbar.clone();
+                    let session_for_click = session_state_for_toolbar.clone();
+                    let term_id_for_click = term_id.clone();
+
+                    // 检查是否可以关闭（有多个终端时才可关闭）
+                    let can_close = terminals_for_toolbar.len() > 1;
+                    let term_id_for_close = term_id.clone();
+                    let tab_id_for_close = tab_id_for_toolbar.clone();
+                    let session_for_close = session_state_for_toolbar.clone();
+
+                    // 是否显示左侧分隔符（除了第一个标签）
+                    let show_separator = idx > 0;
+
+                    div()
+                        .h_full()
+                        .flex()
+                        .items_center()
+                        // 左侧分隔符
+                        .when(show_separator, |s| {
+                            s.child(div().w(px(1.)).h(px(12.)).bg(border_color.opacity(0.5)))
+                        })
+                        // 标签按钮
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("terminal-tab-{}", term_id)))
+                                .flex_1()
+                                .h_full()
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .gap_1()
+                                .cursor_pointer()
+                                .when(is_active, |s| s.bg(border_color))
+                                .hover(|s| s.bg(border_color.opacity(0.5)))
+                                // 点击切换终端
+                                .on_click(move |_, _window, cx| {
+                                    session_for_click.update(cx, |state, cx| {
+                                        state.activate_terminal_instance(
+                                            &tab_id_for_click,
+                                            &term_id_for_click,
+                                        );
+                                        cx.notify();
+                                    });
+                                })
+                                // 标签文本
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(if is_active {
+                                            text_color
+                                        } else {
+                                            muted_color
+                                        })
+                                        .child(term_label),
+                                )
+                                // 关闭按钮（仅当有多个终端时显示）
+                                .when(can_close && is_active, move |s| {
+                                    s.child(
+                                        div()
+                                            .id(SharedString::from(format!(
+                                                "close-terminal-{}",
+                                                term_id_for_close.clone()
+                                            )))
+                                            .size(px(12.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded(px(2.))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(Hsla::from(rgb(0xef4444)).opacity(0.3)))
+                                            .on_click({
+                                                let term_id = term_id_for_close.clone();
+                                                let tab_id = tab_id_for_close.clone();
+                                                let session = session_for_close.clone();
+                                                move |_, _window, cx| {
+                                                    session.update(cx, |state, cx| {
+                                                        state.close_terminal_instance(
+                                                            &tab_id, &term_id,
+                                                        );
+                                                        cx.notify();
+                                                    });
+                                                    cx.stop_propagation();
+                                                }
+                                            })
+                                            .child(
+                                                svg()
+                                                    .path(icons::X)
+                                                    .size(px(8.))
+                                                    .text_color(muted_color),
+                                            ),
+                                    )
+                                }),
+                        )
+                }),
+        )
+        // 添加按钮（带左侧分隔符）
+        .child({
+            let tab_id_for_add = tab_id_for_toolbar.clone();
+            let session_for_add = session_state_for_toolbar.clone();
+
+            div()
+                .h_full()
+                .flex()
+                .items_center()
+                // 左侧分隔符
+                .child(div().w(px(1.)).h(px(12.)).bg(border_color.opacity(0.5)))
+                // 添加按钮
+                .child(
+                    div()
+                        .id("add-terminal-btn")
+                        .h_full()
+                        .px_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(primary_color.opacity(0.2)))
+                        .on_click(move |_, _window, cx| {
+                            session_for_add.update(cx, |state, cx| {
+                                state.add_terminal_instance(&tab_id_for_add);
+                                cx.notify();
+                            });
+                        })
+                        .child(
+                            svg()
+                                .path(icons::PLUS)
+                                .size(px(10.))
+                                .text_color(muted_color),
+                        ),
+                )
+        });
 
     div()
         .size_full()
         .flex()
         .flex_col()
-        // 终端顶部工具栏区域（15px 高度）
+        // 终端顶部工具栏区域
         .child(terminal_toolbar)
         // 终端显示区域（占据剩余空间）
         .child(terminal_display)

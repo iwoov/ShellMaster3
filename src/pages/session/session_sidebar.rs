@@ -363,10 +363,15 @@ fn render_command_node(
     let edit_label = crate::i18n::t(&lang, "snippets.context_menu.edit_in_box");
 
     // 获取 PTY channel 用于执行命令
-    let pty_channel = session_state
+    let pty_channel: Option<Arc<crate::ssh::session::TerminalChannel>> = session_state
         .read(cx)
         .active_tab()
-        .and_then(|tab| tab.pty_channel.clone());
+        .and_then(|tab| {
+            tab.active_terminal_id
+                .as_ref()
+                .and_then(|id| tab.terminals.iter().find(|t| &t.id == id))
+        })
+        .and_then(|inst| inst.pty_channel.clone());
 
     div()
         .id(SharedString::from(format!("cmd-{}", command_id)))

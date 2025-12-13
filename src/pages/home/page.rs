@@ -407,8 +407,16 @@ impl HomePage {
                         state.ensure_command_input_created(window, cx);
                     });
 
+                    // 检查当前激活的终端是否已初始化
+                    let needs_init = tab
+                        .active_terminal_id
+                        .as_ref()
+                        .and_then(|id| tab.terminals.iter().find(|t| &t.id == id))
+                        .map(|inst| !inst.pty_initialized)
+                        .unwrap_or(false);
+
                     // 自动初始化 PTY（在 UI 挂载成功后触发）
-                    if !tab.pty_initialized {
+                    if needs_init {
                         let tab_id = tab.id.clone();
                         let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
                         session_state.update(cx, |state, cx| {

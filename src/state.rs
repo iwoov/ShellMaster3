@@ -18,13 +18,11 @@ pub enum SessionStatus {
     Disconnected,
 }
 
-/// 会话标签
+/// 单个终端实例
 #[derive(Clone)]
-pub struct SessionTab {
+pub struct TerminalInstance {
     pub id: String,
-    pub server_id: String,
-    pub server_label: String,
-    pub status: SessionStatus,
+    pub label: String,
     /// 终端状态
     pub terminal: Option<Entity<crate::terminal::TerminalState>>,
     /// PTY 通道
@@ -35,6 +33,21 @@ pub struct SessionTab {
     pub last_sent_pty_size: Option<(u32, u32)>,
     /// PTY 错误信息
     pub pty_error: Option<String>,
+}
+
+/// 会话标签
+#[derive(Clone)]
+pub struct SessionTab {
+    pub id: String,
+    pub server_id: String,
+    pub server_label: String,
+    pub status: SessionStatus,
+    /// 多终端实例列表
+    pub terminals: Vec<TerminalInstance>,
+    /// 当前激活的终端 ID
+    pub active_terminal_id: Option<String>,
+    /// 终端计数器（用于生成标签）
+    pub terminal_counter: u32,
 }
 
 /// 侧边栏面板类型
@@ -85,16 +98,27 @@ impl SessionState {
     /// 添加新的会话标签（插入到最前面）
     pub fn add_tab(&mut self, server_id: String, server_label: String) -> String {
         let tab_id = uuid::Uuid::new_v4().to_string();
-        let tab = SessionTab {
-            id: tab_id.clone(),
-            server_id,
-            server_label,
-            status: SessionStatus::Connecting,
+
+        // 创建第一个终端实例
+        let first_terminal = TerminalInstance {
+            id: uuid::Uuid::new_v4().to_string(),
+            label: "终端 1".to_string(),
             terminal: None,
             pty_channel: None,
             pty_initialized: false,
             last_sent_pty_size: None,
             pty_error: None,
+        };
+        let first_terminal_id = first_terminal.id.clone();
+
+        let tab = SessionTab {
+            id: tab_id.clone(),
+            server_id,
+            server_label,
+            status: SessionStatus::Connecting,
+            terminals: vec![first_terminal],
+            active_terminal_id: Some(first_terminal_id),
+            terminal_counter: 1,
         };
         // 新标签插入到最前面
         self.tabs.insert(0, tab);
@@ -229,6 +253,7 @@ impl SessionState {
     }
 
     /// 初始化终端（在 UI 挂载并获取尺寸后调用）
+    /// 只初始化当前激活的终端实例
     pub fn initialize_terminal(
         &mut self,
         tab_id: &str,
@@ -243,20 +268,30 @@ impl SessionState {
         // 查找 tab 并检查状态
         let tab_id_owned = tab_id.to_string();
 
-        // 使用闭包来限制可变借用的作用域
-        let should_initialize = {
-            if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
-                !tab.pty_initialized && tab.status == SessionStatus::Connected
-            } else {
-                false
+        // 获取需要初始化的终端实例 ID
+        let terminal_instance_id = {
+            let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) else {
+                return;
+            };
+            if tab.status != SessionStatus::Connected {
+                return;
             }
+            let Some(active_id) = &tab.active_terminal_id else {
+                return;
+            };
+            let Some(instance) = tab.terminals.iter().find(|t| &t.id == active_id) else {
+                return;
+            };
+            if instance.pty_initialized {
+                return;
+            }
+            active_id.clone()
         };
 
-        if !should_initialize {
-            return;
-        }
-
-        info!("[Terminal] Initializing PTY for tab {}", tab_id);
+        info!(
+            "[Terminal] Initializing PTY for tab {} terminal {}",
+            tab_id, terminal_instance_id
+        );
         debug!(
             "[Terminal] Area size: {}x{} pixels",
             area_width, area_height
@@ -288,11 +323,18 @@ impl SessionState {
             t.resize(area_width, area_height, cell_width, line_height);
         });
 
-        // 存储终端状态（现在可以安全地可变借用 tab）
+        // 存储终端状态到对应的终端实例
+        let terminal_instance_id_for_store = terminal_instance_id.clone();
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id_owned) {
-            tab.terminal = Some(terminal_state.clone());
-            tab.pty_initialized = true;
-            tab.last_sent_pty_size = Some((cols, rows));
+            if let Some(instance) = tab
+                .terminals
+                .iter_mut()
+                .find(|t| t.id == terminal_instance_id_for_store)
+            {
+                instance.terminal = Some(terminal_state.clone());
+                instance.pty_initialized = true;
+                instance.last_sent_pty_size = Some((cols, rows));
+            }
         }
 
         // 启动光标闪烁定时器 (500ms 间隔)
@@ -329,6 +371,7 @@ impl SessionState {
         let terminal_for_task = terminal_state.clone();
         let session_state_for_task = cx.entity().clone();
         let session_id = tab_id_owned.clone();
+        let terminal_id_for_task = terminal_instance_id.clone();
         cx.to_async()
             .spawn(async move |async_cx| {
                 // 获取 SSH session
@@ -345,17 +388,27 @@ impl SessionState {
                 match session.open_terminal(pty_request).await {
                     Ok(channel) => {
                         let channel = std::sync::Arc::new(channel);
-                        info!("[Terminal] PTY channel created for {}", session_id);
+                        info!(
+                            "[Terminal] PTY channel created for {} terminal {}",
+                            session_id, terminal_id_for_task
+                        );
 
-                        // 存储 channel 到 tab
+                        // 存储 channel 到终端实例
                         let channel_for_state = channel.clone();
                         let session_id_for_state = session_id.clone();
+                        let terminal_id_for_state = terminal_id_for_task.clone();
                         let _ = async_cx.update(|cx| {
                             session_state_for_task.update(cx, |state, _| {
                                 if let Some(tab) =
                                     state.tabs.iter_mut().find(|t| t.id == session_id_for_state)
                                 {
-                                    tab.pty_channel = Some(channel_for_state);
+                                    if let Some(instance) = tab
+                                        .terminals
+                                        .iter_mut()
+                                        .find(|t| t.id == terminal_id_for_state)
+                                    {
+                                        instance.pty_channel = Some(channel_for_state);
+                                    }
                                 }
                             });
                         });
@@ -365,10 +418,32 @@ impl SessionState {
                             crate::terminal::start_pty_reader(channel, terminal_for_task, cx);
                         });
 
-                        debug!("[Terminal] PTY reader started for {}", session_id);
+                        debug!(
+                            "[Terminal] PTY reader started for {} terminal {}",
+                            session_id, terminal_id_for_task
+                        );
                     }
                     Err(e) => {
                         error!("[Terminal] Failed to open PTY: {:?}", e);
+                        // 记录错误到终端实例
+                        let session_id_for_err = session_id.clone();
+                        let terminal_id_for_err = terminal_id_for_task.clone();
+                        let error_msg = format!("{:?}", e);
+                        let _ = async_cx.update(|cx| {
+                            session_state_for_task.update(cx, |state, _| {
+                                if let Some(tab) =
+                                    state.tabs.iter_mut().find(|t| t.id == session_id_for_err)
+                                {
+                                    if let Some(instance) = tab
+                                        .terminals
+                                        .iter_mut()
+                                        .find(|t| t.id == terminal_id_for_err)
+                                    {
+                                        instance.pty_error = Some(error_msg);
+                                    }
+                                }
+                            });
+                        });
                     }
                 }
             })
@@ -378,6 +453,7 @@ impl SessionState {
     }
 
     /// 将本地终端尺寸与远端 PTY 尺寸同步到给定像素区域（用于窗口/布局变化时的自动 resize）
+    /// 只同步当前激活的终端实例
     pub fn sync_terminal_size(
         &mut self,
         tab_id: &str,
@@ -390,18 +466,30 @@ impl SessionState {
             return;
         }
 
+        // 检查是否需要初始化
         let should_initialize = {
             let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) else {
                 return;
             };
-            tab.status == SessionStatus::Connected && !tab.pty_initialized
+            if tab.status != SessionStatus::Connected {
+                return;
+            }
+            let Some(active_id) = &tab.active_terminal_id else {
+                return;
+            };
+            let Some(instance) = tab.terminals.iter().find(|t| &t.id == active_id) else {
+                return;
+            };
+            !instance.pty_initialized
         };
+
         if should_initialize {
-            // 未初始化时，直接用当前真实区域尺寸初始化（比按窗口常量推算更准确）
+            // 未初始化时，直接用当前真实区域尺寸初始化
             self.initialize_terminal(tab_id, area_width, area_height, window, cx);
             return;
         }
 
+        // 获取当前激活的终端实例信息
         let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
             return;
         };
@@ -410,10 +498,18 @@ impl SessionState {
             return;
         }
 
+        let Some(active_id) = tab.active_terminal_id.clone() else {
+            return;
+        };
+
+        let Some(instance) = tab.terminals.iter_mut().find(|t| t.id == active_id) else {
+            return;
+        };
+
         let (Some(terminal), channel, last_sent) = (
-            tab.terminal.clone(),
-            tab.pty_channel.clone(),
-            tab.last_sent_pty_size,
+            instance.terminal.clone(),
+            instance.pty_channel.clone(),
+            instance.last_sent_pty_size,
         ) else {
             return;
         };
@@ -444,7 +540,7 @@ impl SessionState {
             return;
         }
 
-        tab.last_sent_pty_size = Some((cols, rows));
+        instance.last_sent_pty_size = Some((cols, rows));
         let channel_for_resize = channel.clone();
         cx.to_async()
             .spawn(async move |_async_cx| {
@@ -453,5 +549,98 @@ impl SessionState {
                 }
             })
             .detach();
+    }
+
+    /// 添加新的终端实例到指定会话标签
+    /// 返回新终端实例的 ID
+    pub fn add_terminal_instance(&mut self, tab_id: &str) -> Option<String> {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return None;
+        };
+
+        tab.terminal_counter += 1;
+        let new_instance = TerminalInstance {
+            id: uuid::Uuid::new_v4().to_string(),
+            label: format!("终端 {}", tab.terminal_counter),
+            terminal: None,
+            pty_channel: None,
+            pty_initialized: false,
+            last_sent_pty_size: None,
+            pty_error: None,
+        };
+        let new_id = new_instance.id.clone();
+        tab.terminals.push(new_instance);
+        tab.active_terminal_id = Some(new_id.clone());
+
+        info!(
+            "[Terminal] Added new terminal instance {} to tab {}",
+            new_id, tab_id
+        );
+        Some(new_id)
+    }
+
+    /// 关闭指定的终端实例
+    pub fn close_terminal_instance(&mut self, tab_id: &str, terminal_id: &str) {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return;
+        };
+
+        // 不允许关闭最后一个终端实例
+        if tab.terminals.len() <= 1 {
+            return;
+        }
+
+        if let Some(pos) = tab.terminals.iter().position(|t| t.id == terminal_id) {
+            tab.terminals.remove(pos);
+
+            // 如果关闭的是当前激活的终端，切换到第一个
+            if tab.active_terminal_id.as_deref() == Some(terminal_id) {
+                tab.active_terminal_id = tab.terminals.first().map(|t| t.id.clone());
+            }
+
+            info!(
+                "[Terminal] Closed terminal instance {} from tab {}",
+                terminal_id, tab_id
+            );
+        }
+    }
+
+    /// 激活指定的终端实例
+    pub fn activate_terminal_instance(&mut self, tab_id: &str, terminal_id: &str) {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return;
+        };
+
+        if tab.terminals.iter().any(|t| t.id == terminal_id) {
+            tab.active_terminal_id = Some(terminal_id.to_string());
+            debug!(
+                "[Terminal] Activated terminal instance {} in tab {}",
+                terminal_id, tab_id
+            );
+        }
+    }
+
+    /// 获取当前激活的终端实例
+    pub fn active_terminal_instance(&self, tab_id: &str) -> Option<&TerminalInstance> {
+        let tab = self.tabs.iter().find(|t| t.id == tab_id)?;
+        let active_id = tab.active_terminal_id.as_ref()?;
+        tab.terminals.iter().find(|t| &t.id == active_id)
+    }
+
+    /// 获取指定标签的所有终端实例
+    pub fn get_terminal_instances(&self, tab_id: &str) -> Vec<&TerminalInstance> {
+        self.tabs
+            .iter()
+            .find(|t| t.id == tab_id)
+            .map(|tab| tab.terminals.iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// 获取指定标签的当前激活终端 ID
+    pub fn active_terminal_id(&self, tab_id: &str) -> Option<String> {
+        self.tabs
+            .iter()
+            .find(|t| t.id == tab_id)
+            .and_then(|tab| tab.active_terminal_id.clone())
     }
 }

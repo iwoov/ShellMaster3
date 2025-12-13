@@ -17,6 +17,7 @@ use crate::state::{SessionState, SessionTab};
 use crate::terminal::{
     hex_to_hsla, keystroke_to_escape, render_terminal_view, SendDown, SendEnter, SendEscape,
     SendLeft, SendRight, SendTab, SendUp, TerminalCopy, TerminalPaste, TerminalState,
+    TERMINAL_PADDING_LEFT,
 };
 
 /// 渲染终端面板
@@ -109,9 +110,10 @@ pub fn render_terminal_panel(
                     // 开始选择
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, cx| {
-                            // 获取终端区域在窗口中的偏移，转换为相对坐标
+                            // 获取终端区域在窗口中的偏移，转换为相对坐标（减去 padding）
                             let (origin_x, origin_y) = t.bounds_origin();
-                            let rel_x: f32 = f32::from(event.position.x) - origin_x;
+                            let rel_x: f32 =
+                                f32::from(event.position.x) - origin_x - TERMINAL_PADDING_LEFT;
                             let rel_y: f32 = f32::from(event.position.y) - origin_y;
 
                             t.start_selection(rel_x, rel_y, event.click_count);
@@ -132,9 +134,10 @@ pub fn render_terminal_panel(
 
                 if let Some(terminal) = terminal.clone() {
                     terminal.update(cx, |t, cx| {
-                        // 获取终端区域在窗口中的偏移，转换为相对坐标
+                        // 获取终端区域在窗口中的偏移，转换为相对坐标（减去 padding）
                         let (origin_x, origin_y) = t.bounds_origin();
-                        let rel_x: f32 = f32::from(event.position.x) - origin_x;
+                        let rel_x: f32 =
+                            f32::from(event.position.x) - origin_x - TERMINAL_PADDING_LEFT;
                         let rel_y: f32 = f32::from(event.position.y) - origin_y;
 
                         t.update_selection(rel_x, rel_y);

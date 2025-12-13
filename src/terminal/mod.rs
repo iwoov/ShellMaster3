@@ -37,6 +37,9 @@ actions!(
 /// 终端上下文名称
 pub const TERMINAL_CONTEXT: &str = "Terminal";
 
+/// 终端左侧内边距（像素）
+pub const TERMINAL_PADDING_LEFT: f32 = 8.0;
+
 /// 初始化终端模块
 /// 注册 Terminal 上下文的按键绑定，确保特殊按键（如 Tab）能正确发送到 PTY
 pub fn init(cx: &mut App) {

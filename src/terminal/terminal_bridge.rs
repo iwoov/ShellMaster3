@@ -8,7 +8,7 @@ use tracing::{debug, error, trace, warn};
 
 use crate::models::settings::TerminalSettings;
 use crate::ssh::session::{PtyRequest, TerminalChannel};
-use crate::terminal::TerminalState;
+use crate::terminal::{TerminalState, TERMINAL_PADDING_LEFT};
 
 /// 使用 GPUI text_system 精确计算终端尺寸
 ///
@@ -48,12 +48,14 @@ pub fn calculate_terminal_size(
     // 行高计算
     let line_height = settings.font_size as f32 * settings.line_height;
 
-    let cols = (area_width / cell_width).floor() as u32;
+    // 计算列数时减去左侧 padding 宽度
+    let effective_width = area_width - TERMINAL_PADDING_LEFT;
+    let cols = (effective_width / cell_width).floor() as u32;
     let rows = (area_height / line_height).floor() as u32;
 
     debug!(
-        "[Terminal] Precise size calculation: cell_width={:.2}px, line_height={:.2}px, cols={}, rows={}",
-        cell_width, line_height, cols.max(1), rows.max(1)
+        "[Terminal] Precise size calculation: cell_width={:.2}px, line_height={:.2}px, cols={}, rows={} (with padding={}px)",
+        cell_width, line_height, cols.max(1), rows.max(1), TERMINAL_PADDING_LEFT
     );
 
     (cols.max(1), rows.max(1), cell_width, line_height)

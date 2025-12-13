@@ -10,6 +10,7 @@ use crate::models::settings::{CursorStyle, TerminalSettings};
 use crate::terminal::batched_run::layout_grid;
 use crate::terminal::colors::hex_to_hsla;
 use crate::terminal::state::{EventProxy, TerminalSize};
+use crate::terminal::TERMINAL_PADDING_LEFT;
 
 /// 渲染终端内容（Canvas 方式）
 pub fn render_terminal_view(
@@ -58,7 +59,9 @@ pub fn render_terminal_view(
                 },
                 // Paint 阶段：绘制内容
                 move |bounds, layout, window, cx| {
-                    let origin = bounds.origin;
+                    // 应用左侧 padding 偏移
+                    let origin =
+                        Point::new(bounds.origin.x + px(TERMINAL_PADDING_LEFT), bounds.origin.y);
 
                     // 1. 绘制背景矩形
                     for rect in &layout.background_rects {

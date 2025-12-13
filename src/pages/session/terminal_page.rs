@@ -364,6 +364,12 @@ pub fn render_terminal_panel(
     let text_color = cx.theme().foreground;
     let muted_color = cx.theme().muted_foreground;
 
+    // 加载当前语言设置（用于动态翻译标签）
+    let lang = crate::services::storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or_default();
+    let terminal_label_prefix = crate::i18n::t(&lang, "session.terminal.tab_label");
+
     let terminal_toolbar = div()
         .id("terminal-toolbar")
         .h(px(20.))
@@ -381,7 +387,8 @@ pub fn render_terminal_panel(
                 .enumerate()
                 .map(|(idx, term_inst)| {
                     let term_id = term_inst.id.clone();
-                    let term_label = term_inst.label.clone();
+                    // 动态生成翻译后的标签名
+                    let term_label = format!("{} {}", terminal_label_prefix, term_inst.index);
                     let is_active = active_id_for_toolbar.as_ref() == Some(&term_id);
                     let tab_id_for_click = tab_id_for_toolbar.clone();
                     let session_for_click = session_state_for_toolbar.clone();
@@ -393,126 +400,92 @@ pub fn render_terminal_panel(
                     let tab_id_for_close = tab_id_for_toolbar.clone();
                     let session_for_close = session_state_for_toolbar.clone();
 
-                    // 是否显示左侧分隔符（除了第一个标签）
-                    let show_separator = idx > 0;
-
                     div()
+                        .id(SharedString::from(format!("terminal-tab-{}", term_id)))
                         .h_full()
+                        .px_2()
                         .flex()
                         .items_center()
-                        // 左侧分隔符
-                        .when(show_separator, |s| {
-                            s.child(div().w(px(1.)).h(px(12.)).bg(border_color.opacity(0.5)))
+                        .justify_center()
+                        .gap_1()
+                        .cursor_pointer()
+                        .when(is_active, |s| s.bg(border_color))
+                        .hover(|s| s.bg(border_color.opacity(0.5)))
+                        // 点击切换终端
+                        .on_click(move |_, _window, cx| {
+                            session_for_click.update(cx, |state, cx| {
+                                state.activate_terminal_instance(
+                                    &tab_id_for_click,
+                                    &term_id_for_click,
+                                );
+                                cx.notify();
+                            });
                         })
-                        // 标签按钮
+                        // 标签文本
                         .child(
                             div()
-                                .id(SharedString::from(format!("terminal-tab-{}", term_id)))
-                                .flex_1()
-                                .h_full()
-                                .px_2()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .gap_1()
-                                .cursor_pointer()
-                                .when(is_active, |s| s.bg(border_color))
-                                .hover(|s| s.bg(border_color.opacity(0.5)))
-                                // 点击切换终端
-                                .on_click(move |_, _window, cx| {
-                                    session_for_click.update(cx, |state, cx| {
-                                        state.activate_terminal_instance(
-                                            &tab_id_for_click,
-                                            &term_id_for_click,
-                                        );
-                                        cx.notify();
-                                    });
-                                })
-                                // 标签文本
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(if is_active {
-                                            text_color
-                                        } else {
-                                            muted_color
-                                        })
-                                        .child(term_label),
-                                )
-                                // 关闭按钮（仅当有多个终端时显示）
-                                .when(can_close && is_active, move |s| {
-                                    s.child(
-                                        div()
-                                            .id(SharedString::from(format!(
-                                                "close-terminal-{}",
-                                                term_id_for_close.clone()
-                                            )))
-                                            .size(px(12.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded(px(2.))
-                                            .cursor_pointer()
-                                            .hover(|s| s.bg(Hsla::from(rgb(0xef4444)).opacity(0.3)))
-                                            .on_click({
-                                                let term_id = term_id_for_close.clone();
-                                                let tab_id = tab_id_for_close.clone();
-                                                let session = session_for_close.clone();
-                                                move |_, _window, cx| {
-                                                    session.update(cx, |state, cx| {
-                                                        state.close_terminal_instance(
-                                                            &tab_id, &term_id,
-                                                        );
-                                                        cx.notify();
-                                                    });
-                                                    cx.stop_propagation();
-                                                }
-                                            })
-                                            .child(
-                                                svg()
-                                                    .path(icons::X)
-                                                    .size(px(8.))
-                                                    .text_color(muted_color),
-                                            ),
-                                    )
-                                }),
+                                .text_xs()
+                                .text_color(if is_active { text_color } else { muted_color })
+                                .child(term_label),
                         )
+                        .when(can_close && is_active, move |s| {
+                            s.child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "close-terminal-{}",
+                                        term_id_for_close.clone()
+                                    )))
+                                    .size(px(12.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(2.))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(Hsla::from(rgb(0xef4444)).opacity(0.3)))
+                                    .on_click({
+                                        let term_id = term_id_for_close.clone();
+                                        let tab_id = tab_id_for_close.clone();
+                                        let session = session_for_close.clone();
+                                        move |_, _window, cx| {
+                                            session.update(cx, |state, cx| {
+                                                state.close_terminal_instance(&tab_id, &term_id);
+                                                cx.notify();
+                                            });
+                                            cx.stop_propagation();
+                                        }
+                                    })
+                                    .child(
+                                        svg().path(icons::X).size(px(8.)).text_color(muted_color),
+                                    ),
+                            )
+                        })
                 }),
         )
-        // 添加按钮（带左侧分隔符）
+        // 添加按钮
         .child({
             let tab_id_for_add = tab_id_for_toolbar.clone();
             let session_for_add = session_state_for_toolbar.clone();
 
             div()
+                .id("add-terminal-btn")
                 .h_full()
+                .px_1()
                 .flex()
                 .items_center()
-                // 左侧分隔符
-                .child(div().w(px(1.)).h(px(12.)).bg(border_color.opacity(0.5)))
-                // 添加按钮
+                .justify_center()
+                .cursor_pointer()
+                .hover(|s| s.bg(primary_color.opacity(0.2)))
+                .on_click(move |_, _window, cx| {
+                    session_for_add.update(cx, |state, cx| {
+                        state.add_terminal_instance(&tab_id_for_add);
+                        cx.notify();
+                    });
+                })
                 .child(
-                    div()
-                        .id("add-terminal-btn")
-                        .h_full()
-                        .px_1()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(primary_color.opacity(0.2)))
-                        .on_click(move |_, _window, cx| {
-                            session_for_add.update(cx, |state, cx| {
-                                state.add_terminal_instance(&tab_id_for_add);
-                                cx.notify();
-                            });
-                        })
-                        .child(
-                            svg()
-                                .path(icons::PLUS)
-                                .size(px(10.))
-                                .text_color(muted_color),
-                        ),
+                    svg()
+                        .path(icons::PLUS)
+                        .size(px(10.))
+                        .text_color(muted_color),
                 )
         });
 

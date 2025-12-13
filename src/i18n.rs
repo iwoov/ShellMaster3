@@ -251,6 +251,7 @@ fn zh_cn(key: &'static str) -> &'static str {
         // 终端输入
         "session.terminal.simulated" => "模拟终端区域",
         "session.terminal.command_placeholder" => "输入命令...",
+        "session.terminal.tab_label" => "终端",
 
         // Snippets 快捷命令
         "snippets.add_group" => "新建组",
@@ -528,6 +529,7 @@ fn en_us(key: &'static str) -> &'static str {
         // Terminal Input
         "session.terminal.simulated" => "Simulated Terminal",
         "session.terminal.command_placeholder" => "Enter command...",
+        "session.terminal.tab_label" => "Terminal",
 
         // Snippets
         "snippets.add_group" => "New Group",

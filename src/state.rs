@@ -22,7 +22,8 @@ pub enum SessionStatus {
 #[derive(Clone)]
 pub struct TerminalInstance {
     pub id: String,
-    pub label: String,
+    /// 终端编号（用于生成翻译后的标签，如 "Terminal 1"）
+    pub index: u32,
     /// 终端状态
     pub terminal: Option<Entity<crate::terminal::TerminalState>>,
     /// PTY 通道
@@ -102,7 +103,7 @@ impl SessionState {
         // 创建第一个终端实例
         let first_terminal = TerminalInstance {
             id: uuid::Uuid::new_v4().to_string(),
-            label: "终端 1".to_string(),
+            index: 1,
             terminal: None,
             pty_channel: None,
             pty_initialized: false,
@@ -202,23 +203,31 @@ impl SessionState {
         self.snippets_config = crate::services::storage::load_snippets().ok();
     }
 
-    /// 确保命令输入框已创建
+    /// 确保命令输入框已创建，并更新占位符为当前语言
     pub fn ensure_command_input_created(
         &mut self,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.command_input.is_none() {
-            let lang = crate::services::storage::load_settings()
-                .map(|s| s.theme.language)
-                .unwrap_or(crate::models::settings::Language::Chinese);
-            let placeholder = crate::i18n::t(&lang, "session.terminal.command_placeholder");
+        let lang = crate::services::storage::load_settings()
+            .map(|s| s.theme.language)
+            .unwrap_or(crate::models::settings::Language::Chinese);
+        let placeholder = crate::i18n::t(&lang, "session.terminal.command_placeholder");
 
+        if self.command_input.is_none() {
+            // 首次创建
             self.command_input = Some(cx.new(|cx| {
                 InputState::new(window, cx)
                     .placeholder(placeholder)
                     .auto_grow(1, 20) // 1-20 行自动增长，支持多行输入
             }));
+        } else {
+            // 更新占位符（语言可能已变化）
+            if let Some(input) = &self.command_input {
+                input.update(cx, |state, cx| {
+                    state.set_placeholder(placeholder, window, cx);
+                });
+            }
         }
     }
 
@@ -561,7 +570,7 @@ impl SessionState {
         tab.terminal_counter += 1;
         let new_instance = TerminalInstance {
             id: uuid::Uuid::new_v4().to_string(),
-            label: format!("终端 {}", tab.terminal_counter),
+            index: tab.terminal_counter,
             terminal: None,
             pty_channel: None,
             pty_initialized: false,

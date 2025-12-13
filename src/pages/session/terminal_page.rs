@@ -347,11 +347,22 @@ pub fn render_terminal_panel(
         terminal_display = terminal_display.vertical_scrollbar(&scroll_handle);
     }
 
+    // 创建终端顶部工具栏区域（15px 高度）
+    let terminal_toolbar = div()
+        .id("terminal-toolbar")
+        .h(px(15.))
+        .w_full()
+        .flex_shrink_0()
+        .border_b_1()
+        .border_color(border_color);
+
     div()
         .size_full()
         .flex()
         .flex_col()
-        // 终端显示区域（上方，占据大部分空间）
+        // 终端顶部工具栏区域（15px 高度）
+        .child(terminal_toolbar)
+        // 终端显示区域（占据剩余空间）
         .child(terminal_display)
         // 命令输入区域（下方）
         .child(render_command_input(

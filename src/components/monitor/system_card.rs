@@ -6,8 +6,14 @@ use gpui_component::{ActiveTheme, StyledExt};
 use crate::constants::icons;
 use crate::models::monitor::MonitorState;
 
+use super::detail_dialog::{render_detail_button, DetailDialogState, DetailDialogType};
+
 /// 渲染系统信息区块（无卡片边框）
-pub fn render_system_card(state: &MonitorState, cx: &App) -> impl IntoElement {
+pub fn render_system_card(
+    state: &MonitorState,
+    dialog_state: Entity<DetailDialogState>,
+    cx: &App,
+) -> impl IntoElement {
     let title_color = hsla(210.0 / 360.0, 1.0, 0.5, 1.0); // 蓝色标题
     let label_color = cx.theme().foreground;
     let muted_color = cx.theme().muted_foreground;
@@ -40,7 +46,7 @@ pub fn render_system_card(state: &MonitorState, cx: &App) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap_2()
-        // 标题行：系统信息 + info 图标
+        // 标题行：系统信息 + 详情按钮
         .child(
             div()
                 .flex()
@@ -53,12 +59,12 @@ pub fn render_system_card(state: &MonitorState, cx: &App) -> impl IntoElement {
                         .text_color(title_color)
                         .child(crate::i18n::t(&lang, "monitor.system_info")),
                 )
-                .child(
-                    svg()
-                        .path(icons::INFO)
-                        .size(px(16.))
-                        .text_color(muted_color),
-                ),
+                // 详情按钮
+                .child(render_detail_button(
+                    dialog_state,
+                    DetailDialogType::SystemInfo,
+                    cx,
+                )),
         )
         // 内容区域
         .child(

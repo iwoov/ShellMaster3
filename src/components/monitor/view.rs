@@ -4,13 +4,18 @@ use gpui::*;
 
 use crate::models::monitor::MonitorState;
 
+use super::detail_dialog::DetailDialogState;
 use super::disk_card::render_disk_card;
 use super::load_card::render_load_card;
 use super::network_card::render_network_card;
 use super::system_card::render_system_card;
 
-/// 渲染监控主视图
-pub fn render_monitor_view(state: &MonitorState, cx: &App) -> impl IntoElement {
+/// 渲染监控主视图（不包含detail dialog overlay，由上层组件渲染）
+pub fn render_monitor_view(
+    state: &MonitorState,
+    dialog_state: Entity<DetailDialogState>,
+    cx: &App,
+) -> impl IntoElement {
     let bg_color = crate::theme::sidebar_color(cx);
 
     div()
@@ -23,11 +28,11 @@ pub fn render_monitor_view(state: &MonitorState, cx: &App) -> impl IntoElement {
         .flex_col()
         .gap_3()
         // 系统信息卡片
-        .child(render_system_card(state, cx))
+        .child(render_system_card(state, dialog_state.clone(), cx))
         // 系统负载卡片
-        .child(render_load_card(state, cx))
+        .child(render_load_card(state, dialog_state.clone(), cx))
         // 网络状态卡片
-        .child(render_network_card(state, cx))
+        .child(render_network_card(state, dialog_state.clone(), cx))
         // 磁盘状态卡片
-        .child(render_disk_card(state, cx))
+        .child(render_disk_card(state, dialog_state, cx))
 }

@@ -1,5 +1,6 @@
 // 全局 AppState
 
+use crate::components::monitor::DetailDialogState;
 use crate::models::SnippetsConfig;
 use std::collections::HashSet;
 
@@ -77,6 +78,8 @@ pub struct SessionState {
     pub command_input: Option<Entity<InputState>>,
     /// 终端焦点句柄（用于键盘事件处理）
     pub terminal_focus_handle: Option<FocusHandle>,
+    /// Monitor 详情弹窗状态
+    pub monitor_detail_dialog: Option<Entity<DetailDialogState>>,
 }
 
 impl Default for SessionState {
@@ -91,6 +94,7 @@ impl Default for SessionState {
             snippets_config: None,
             command_input: None,
             terminal_focus_handle: None,
+            monitor_detail_dialog: None,
         }
     }
 }
@@ -201,6 +205,17 @@ impl SessionState {
     /// 刷新快捷命令配置
     pub fn refresh_snippets_config(&mut self) {
         self.snippets_config = crate::services::storage::load_snippets().ok();
+    }
+
+    /// 确保 Monitor 详情弹窗状态已创建
+    pub fn ensure_monitor_detail_dialog(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> Entity<DetailDialogState> {
+        if self.monitor_detail_dialog.is_none() {
+            self.monitor_detail_dialog = Some(cx.new(|_| DetailDialogState::default()));
+        }
+        self.monitor_detail_dialog.clone().unwrap()
     }
 
     /// 确保命令输入框已创建，并更新占位符为当前语言

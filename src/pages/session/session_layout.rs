@@ -9,6 +9,8 @@ use super::monitor_panel::render_monitor_panel;
 use super::session_sidebar::render_session_sidebar;
 use super::sftp_panel::render_sftp_panel;
 use super::terminal_page::render_terminal_panel;
+use crate::components::monitor::render_detail_dialog;
+use crate::models::monitor::MonitorState;
 use crate::state::{SessionState, SessionTab, SidebarPanel};
 
 /// 渲染 Session 主布局
@@ -22,12 +24,16 @@ pub fn render_session_layout(
     let command_input = session_state.read(cx).command_input.clone();
     let terminal_focus_handle = session_state.read(cx).get_terminal_focus_handle();
 
+    // 获取 Monitor 详情弹窗状态
+    let monitor_detail_dialog = session_state.read(cx).monitor_detail_dialog.clone();
+    let monitor_detail_dialog_for_panel = monitor_detail_dialog.clone();
+
     // 上方区域：Monitor | Terminal （水平分隔）
     let top_area = h_resizable("session-top-h")
         .child(
             resizable_panel()
                 .size(px(219.)) // 219px + 1px 分隔条 = 220px，与 home 按钮区域对齐
-                .child(render_monitor_panel(cx)),
+                .child(render_monitor_panel(monitor_detail_dialog_for_panel, cx)),
         )
         .child(resizable_panel().child(render_terminal_panel(
             tab,
@@ -136,8 +142,12 @@ pub fn render_session_layout(
         .child(snippets_button)
         .child(transfer_button);
 
+    // Mock monitor state for dialog content
+    let monitor_state = MonitorState::with_mock_data();
+
     // 主布局：使用简单的 flex 容器
-    if sidebar_collapsed {
+    // 包装在 relative 容器中以支持 dialog overlay
+    let main_content = if sidebar_collapsed {
         // 折叠时：直接使用 h_resizable 填满左侧 + 小侧栏在右侧
         div()
             .size_full()
@@ -166,5 +176,16 @@ pub fn render_session_layout(
                     ),
             )
             .child(mini_sidebar)
+    };
+
+    // 返回带有 dialog overlay 的容器
+    if let Some(dialog_state) = monitor_detail_dialog {
+        div()
+            .relative()
+            .size_full()
+            .child(main_content)
+            .child(render_detail_dialog(dialog_state, &monitor_state, cx))
+    } else {
+        div().size_full().child(main_content)
     }
 }

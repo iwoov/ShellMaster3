@@ -44,4 +44,5 @@ pub mod icons {
     pub const HARD_DRIVE: &str = "icons/hard-drive.svg";
     pub const NETWORK: &str = "icons/network.svg";
     pub const INFO: &str = "icons/info.svg";
+    pub const EXPAND: &str = "icons/expand.svg";
 }

@@ -367,11 +367,13 @@ fn render_server_card(
         .hover(move |s| s.border_color(colors.primary).shadow_md())
         // 双击连接服务器
         .on_double_click(move |_, _, cx| {
-            session_for_connect.update(cx, |state, _| {
+            session_for_connect.update(cx, |state, cx| {
                 state.add_tab(
                     server_id_for_connect.clone(),
                     server_label_for_connect.clone(),
                 );
+                // 确保 Monitor 详情弹窗状态已创建
+                state.ensure_monitor_detail_dialog(cx);
             });
         })
         .flex()
@@ -671,11 +673,13 @@ fn render_server_row(
         .hover(move |s| s.bg(colors.header_bg))
         // 双击连接服务器
         .on_double_click(move |_, _, cx| {
-            session_for_connect.update(cx, |state, _| {
+            session_for_connect.update(cx, |state, cx| {
                 state.add_tab(
                     server_id_for_connect.clone(),
                     server_label_for_connect.clone(),
                 );
+                // 确保 Monitor 详情弹窗状态已创建
+                state.ensure_monitor_detail_dialog(cx);
             });
         })
         .child(

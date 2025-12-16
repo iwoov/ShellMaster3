@@ -6,8 +6,14 @@ use gpui_component::{ActiveTheme, StyledExt};
 use crate::constants::icons;
 use crate::models::monitor::MonitorState;
 
+use super::detail_dialog::{render_detail_button, DetailDialogState, DetailDialogType};
+
 /// 渲染系统负载区块（无卡片边框）
-pub fn render_load_card(state: &MonitorState, cx: &App) -> impl IntoElement {
+pub fn render_load_card(
+    state: &MonitorState,
+    dialog_state: Entity<DetailDialogState>,
+    cx: &App,
+) -> impl IntoElement {
     let title_color = hsla(210.0 / 360.0, 1.0, 0.5, 1.0); // 蓝色标题
     let green_color = hsla(145.0 / 360.0, 0.63, 0.42, 1.0); // 绿色进度条
     let border_color = cx.theme().border;
@@ -49,13 +55,25 @@ pub fn render_load_card(state: &MonitorState, cx: &App) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap_2()
-        // 标题
+        // 标题行
         .child(
             div()
-                .text_sm()
-                .font_medium()
-                .text_color(title_color)
-                .child(crate::i18n::t(&lang, "monitor.load")),
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_medium()
+                        .text_color(title_color)
+                        .child(crate::i18n::t(&lang, "monitor.load")),
+                )
+                // 详情按钮
+                .child(render_detail_button(
+                    dialog_state,
+                    DetailDialogType::LoadInfo,
+                    cx,
+                )),
         )
         // 内容区域
         .child(

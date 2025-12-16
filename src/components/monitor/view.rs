@@ -25,10 +25,10 @@ pub fn render_monitor_view(
         .bg(bg_color)
         .overflow_y_scroll()
         .px_1()
-        .py_3()
+        .py_2()
         .flex()
         .flex_col()
-        .gap_3()
+        .gap_0()
         // 系统信息卡片
         .child(render_system_card(state, dialog_state.clone(), cx))
         // 系统负载卡片

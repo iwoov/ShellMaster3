@@ -40,7 +40,7 @@ pub fn render_network_card(
 
     div()
         .w_full()
-        .py_3()
+        .py_2()
         .border_b_1()
         .border_color(border_color)
         .flex()

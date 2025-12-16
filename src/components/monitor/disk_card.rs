@@ -32,7 +32,7 @@ pub fn render_disk_card(
 
     div()
         .w_full()
-        .pt_3()
+        .pt_2()
         // 最后一个区块不需要底边框
         .flex()
         .flex_col()

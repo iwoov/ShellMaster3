@@ -40,7 +40,7 @@ pub fn render_system_card(
 
     div()
         .w_full()
-        .pb_3()
+        .pb_2()
         .border_b_1()
         .border_color(border_color)
         .flex()

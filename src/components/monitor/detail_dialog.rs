@@ -13,7 +13,6 @@ pub enum DetailDialogType {
     SystemInfo,
     LoadInfo,
     NetworkInfo,
-    DiskInfo,
 }
 
 /// Detail dialog state
@@ -103,7 +102,6 @@ pub fn render_detail_dialog(
         DetailDialogType::SystemInfo => crate::i18n::t(&lang, "monitor.system_info").to_string(),
         DetailDialogType::LoadInfo => crate::i18n::t(&lang, "monitor.load").to_string(),
         DetailDialogType::NetworkInfo => crate::i18n::t(&lang, "monitor.network").to_string(),
-        DetailDialogType::DiskInfo => crate::i18n::t(&lang, "monitor.disk").to_string(),
         DetailDialogType::None => String::new(),
     };
 
@@ -190,9 +188,6 @@ pub fn render_detail_dialog(
                             DetailDialogType::NetworkInfo => {
                                 render_network_detail(monitor_state, cx).into_any_element()
                             }
-                            DetailDialogType::DiskInfo => {
-                                render_disk_detail(monitor_state, cx).into_any_element()
-                            }
                             DetailDialogType::None => div().into_any_element(),
                         }),
                 ),
@@ -200,9 +195,11 @@ pub fn render_detail_dialog(
         .into_any_element()
 }
 
-/// Render system info detail
+/// Render system info detail(System)
+/// 基础信息: ip_address, hostname, os_version, uptime
+/// CPU: cpu_info, cpu_cores, physical_cores, architecture
+/// 内存: memory_total, swap_total
 fn render_system_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
-    let label_color = cx.theme().foreground;
     let value_color = cx.theme().muted_foreground;
 
     let lang = crate::services::storage::load_settings()
@@ -214,33 +211,34 @@ fn render_system_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
             .flex()
             .flex_col()
             .gap_3()
-            // Host section
+            // 基础信息
             .child(render_detail_section(
-                "主机信息",
+                "基础信息",
                 vec![
+                    ("主机地址", info.host.address.clone()),
                     ("主机名", info.host.hostname.clone()),
                     ("操作系统", info.host.os.clone()),
                     ("运行时间", format_uptime(info.host.uptime_seconds)),
                 ],
                 cx,
             ))
-            // CPU section
+            // CPU
             .child(render_detail_section(
-                "CPU 信息",
+                "CPU",
                 vec![
                     ("型号", info.cpu.model.clone()),
-                    ("物理核心", info.cpu.cores_physical.to_string()),
-                    ("逻辑核心", info.cpu.cores_logical.to_string()),
+                    ("逻辑核心数", info.cpu.cores_logical.to_string()),
+                    ("物理核心数", info.cpu.cores_physical.to_string()),
                     ("架构", info.cpu.architecture.clone()),
                 ],
                 cx,
             ))
-            // Memory section
+            // 内存
             .child(render_detail_section(
-                "内存信息",
+                "内存",
                 vec![
                     ("总内存", format_bytes(info.memory.total_bytes)),
-                    ("Swap 总计", format_bytes(info.memory.swap_total_bytes)),
+                    ("Swap总计", format_bytes(info.memory.swap_total_bytes)),
                 ],
                 cx,
             ))
@@ -252,7 +250,10 @@ fn render_system_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
     }
 }
 
-/// Render load info detail
+/// Render load info detail(Process)
+/// CPU 占用最高的进程: name, usage, pid
+/// 内存占用最高的进程: name, usage, pid
+/// 内存详情: Buffers, Cached, Swap使用情况
 fn render_load_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
     let value_color = cx.theme().muted_foreground;
 
@@ -261,49 +262,47 @@ fn render_load_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
         .unwrap_or_default();
 
     if let Some(load) = state.current_load() {
-        let total_mem = state
+        let swap_total = state
             .system_info
             .as_ref()
-            .map(|s| s.memory.total_bytes)
-            .unwrap_or(1);
+            .map(|s| s.memory.swap_total_bytes)
+            .unwrap_or(0);
+        let swap_usage_str = if swap_total > 0 {
+            format!(
+                "{}/{}",
+                format_bytes(load.memory.swap_used_bytes),
+                format_bytes(swap_total)
+            )
+        } else {
+            "0 B / 0 B".to_string()
+        };
 
         div()
             .flex()
             .flex_col()
             .gap_3()
-            // CPU section
-            .child(render_detail_section(
-                "CPU 负载",
-                vec![
-                    ("使用率", format!("{:.1}%", load.cpu.usage_percent)),
-                    ("1分钟负载", format!("{:.2}", load.cpu.load_average[0])),
-                    ("5分钟负载", format!("{:.2}", load.cpu.load_average[1])),
-                    ("15分钟负载", format!("{:.2}", load.cpu.load_average[2])),
-                ],
-                cx,
-            ))
-            // Memory section
-            .child(render_detail_section(
-                "内存使用",
-                vec![
-                    ("已使用", format_bytes(load.memory.used_bytes)),
-                    ("可用", format_bytes(load.memory.available_bytes)),
-                    ("Buffers", format_bytes(load.memory.buffers_bytes)),
-                    ("Cached", format_bytes(load.memory.cached_bytes)),
-                    ("Swap 已使用", format_bytes(load.memory.swap_used_bytes)),
-                ],
-                cx,
-            ))
             // Top CPU processes
             .child(render_process_table(
-                "Top CPU 进程",
+                "CPU 占用最高的进程",
                 &load.top_cpu_processes,
+                true, // is_cpu
                 cx,
             ))
             // Top Memory processes
             .child(render_process_table(
-                "Top 内存进程",
+                "内存占用最高的进程",
                 &load.top_memory_processes,
+                false, // is_memory
+                cx,
+            ))
+            // Memory details
+            .child(render_detail_section(
+                "内存详情",
+                vec![
+                    ("Buffers", format_bytes(load.memory.buffers_bytes)),
+                    ("Cached", format_bytes(load.memory.cached_bytes)),
+                    ("Swap使用情况", swap_usage_str),
+                ],
                 cx,
             ))
     } else {
@@ -314,7 +313,9 @@ fn render_load_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
     }
 }
 
-/// Render network info detail
+/// Render network info detail(Network)
+/// 全局网络状态: tcp_established
+/// 接口列表: name, ip_address, mac_address, rx_bytes, tx_bytes
 fn render_network_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
     let value_color = cx.theme().muted_foreground;
 
@@ -327,84 +328,21 @@ fn render_network_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
             .flex()
             .flex_col()
             .gap_3()
-            // Global TCP section
+            // Global Network Status
             .child(render_detail_section(
-                "TCP 连接统计",
-                vec![
-                    ("总连接数", network.global.tcp_connections.to_string()),
-                    ("ESTABLISHED", network.global.tcp_established.to_string()),
-                    ("LISTEN", network.global.tcp_listen.to_string()),
-                    ("TIME_WAIT", network.global.tcp_time_wait.to_string()),
-                ],
+                "全局网络状态",
+                vec![("TCP连接数", network.global.tcp_established.to_string())],
                 cx,
             ))
-            // Interfaces
+            // Interface list
             .children(network.interfaces.iter().map(|iface| {
                 render_detail_section(
-                    &format!("网卡: {}", iface.name),
+                    &iface.name,
                     vec![
-                        ("MAC", iface.mac_address.clone()),
-                        ("IP", iface.ip_addresses.join(", ")),
-                        ("状态", if iface.is_up { "UP" } else { "DOWN" }.to_string()),
-                        (
-                            "接收",
-                            format!(
-                                "{} ({} pkts)",
-                                format_bytes(iface.rx_bytes),
-                                iface.rx_packets
-                            ),
-                        ),
-                        (
-                            "发送",
-                            format!(
-                                "{} ({} pkts)",
-                                format_bytes(iface.tx_bytes),
-                                iface.tx_packets
-                            ),
-                        ),
-                        (
-                            "错误",
-                            format!("RX: {} / TX: {}", iface.rx_errors, iface.tx_errors),
-                        ),
-                    ],
-                    cx,
-                )
-            }))
-    } else {
-        div()
-            .text_sm()
-            .text_color(value_color)
-            .child(crate::i18n::t(&lang, "monitor.no_data"))
-    }
-}
-
-/// Render disk info detail
-fn render_disk_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
-    let value_color = cx.theme().muted_foreground;
-
-    let lang = crate::services::storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or_default();
-
-    if let Some(disk) = state.disk_info.as_ref() {
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .children(disk.disks.iter().map(|d| {
-                render_detail_section(
-                    &format!("{} → {}", d.device, d.mount_point),
-                    vec![
-                        ("文件系统", d.fs_type.clone()),
-                        ("总容量", format_bytes(d.total_bytes)),
-                        (
-                            "已使用",
-                            format!("{} ({:.1}%)", format_bytes(d.used_bytes), d.usage_percent),
-                        ),
-                        ("可用", format_bytes(d.available_bytes)),
-                        ("inode 总计", d.inodes_total.to_string()),
-                        ("inode 已用", d.inodes_used.to_string()),
-                        ("inode 可用", d.inodes_available.to_string()),
+                        ("IP地址", iface.ip_addresses.join(", ")),
+                        ("MAC地址", iface.mac_address.clone()),
+                        ("接收字节数", format_bytes(iface.rx_bytes)),
+                        ("发送字节数", format_bytes(iface.tx_bytes)),
                     ],
                     cx,
                 )
@@ -467,10 +405,12 @@ fn render_detail_section(title: &str, items: Vec<(&str, String)>, cx: &App) -> i
         )
 }
 
-/// Render process table
+/// Render process table with simple columns
+/// 进程名 (name), CPU/内存使用率 (usage), PID (pid)
 fn render_process_table(
     title: &str,
     processes: &[crate::models::monitor::ProcessInfo],
+    is_cpu: bool,
     cx: &App,
 ) -> impl IntoElement {
     let section_bg = cx.theme().secondary;
@@ -508,38 +448,24 @@ fn render_process_table(
                 .border_color(cx.theme().border)
                 .child(
                     div()
-                        .w(px(50.))
-                        .text_xs()
-                        .text_color(label_color)
-                        .child("PID"),
-                )
-                .child(
-                    div()
                         .flex_1()
                         .text_xs()
                         .text_color(label_color)
-                        .child("Name"),
-                )
-                .child(
-                    div()
-                        .w(px(50.))
-                        .text_xs()
-                        .text_color(label_color)
-                        .child("CPU%"),
-                )
-                .child(
-                    div()
-                        .w(px(50.))
-                        .text_xs()
-                        .text_color(label_color)
-                        .child("MEM%"),
+                        .child("进程名"),
                 )
                 .child(
                     div()
                         .w(px(60.))
                         .text_xs()
                         .text_color(label_color)
-                        .child("User"),
+                        .child(if is_cpu { "CPU%" } else { "MEM%" }),
+                )
+                .child(
+                    div()
+                        .w(px(50.))
+                        .text_xs()
+                        .text_color(label_color)
+                        .child("PID"),
                 ),
         )
         // Rows
@@ -555,13 +481,6 @@ fn render_process_table(
                         .py_1()
                         .child(
                             div()
-                                .w(px(50.))
-                                .text_xs()
-                                .text_color(value_color)
-                                .child(p.pid.to_string()),
-                        )
-                        .child(
-                            div()
                                 .flex_1()
                                 .text_xs()
                                 .text_color(value_color)
@@ -570,24 +489,24 @@ fn render_process_table(
                         )
                         .child(
                             div()
-                                .w(px(50.))
-                                .text_xs()
-                                .text_color(value_color)
-                                .child(format!("{:.1}", p.cpu_percent)),
-                        )
-                        .child(
-                            div()
-                                .w(px(50.))
-                                .text_xs()
-                                .text_color(value_color)
-                                .child(format!("{:.1}", p.memory_percent)),
-                        )
-                        .child(
-                            div()
                                 .w(px(60.))
                                 .text_xs()
-                                .text_color(label_color)
-                                .child(p.user.clone()),
+                                .text_color(value_color)
+                                .child(format!(
+                                    "{:.1}%",
+                                    if is_cpu {
+                                        p.cpu_percent
+                                    } else {
+                                        p.memory_percent
+                                    }
+                                )),
+                        )
+                        .child(
+                            div()
+                                .w(px(50.))
+                                .text_xs()
+                                .text_color(value_color)
+                                .child(p.pid.to_string()),
                         )
                 })),
         )

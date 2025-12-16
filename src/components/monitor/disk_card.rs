@@ -39,23 +39,13 @@ pub fn render_disk_card(
         .gap_2()
         // 标题行
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_medium()
-                        .text_color(title_color)
-                        .child(crate::i18n::t(&lang, "monitor.disk")),
-                )
-                // 详情按钮
-                .child(render_detail_button(
-                    dialog_state,
-                    DetailDialogType::DiskInfo,
-                    cx,
-                )),
+            div().flex().items_center().gap_2().child(
+                div()
+                    .text_sm()
+                    .font_medium()
+                    .text_color(title_color)
+                    .child(crate::i18n::t(&lang, "monitor.disk")),
+            ), // 详情按钮 - 磁盘无需弹窗
         )
         // 内容区域
         .child(

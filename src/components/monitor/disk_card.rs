@@ -41,7 +41,7 @@ pub fn render_disk_card(
         .child(
             div().flex().items_center().gap_2().child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .font_medium()
                     .text_color(title_color)
                     .child(crate::i18n::t(&lang, "monitor.disk")),
@@ -57,8 +57,8 @@ pub fn render_disk_card(
                 .children(disks.into_iter().map(|disk| {
                     div()
                         .w_full()
-                        .px_3()
-                        .py_2()
+                        .px_1()
+                        .py_1()
                         .bg(cx.theme().secondary)
                         .rounded(px(6.))
                         .flex()
@@ -66,13 +66,13 @@ pub fn render_disk_card(
                         .justify_between()
                         .child(
                             div()
-                                .text_sm()
+                                .text_xs()
                                 .text_color(foreground)
                                 .child(disk.device.clone()),
                         )
                         .child(
                             div()
-                                .text_sm()
+                                .text_xs()
                                 .text_color(muted_color)
                                 .child(disk.mount_point.clone()),
                         )

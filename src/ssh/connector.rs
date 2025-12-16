@@ -270,6 +270,10 @@ pub fn start_ssh_connection(
                     let _ = async_cx.update(|cx| {
                         session_state_for_result.update(cx, |state, cx| {
                             state.update_tab_status(&tab_id_clone, SessionStatus::Connected);
+
+                            // 启动 Monitor 服务（收集服务器监控数据）
+                            state.start_monitor_service(tab_id_clone.clone(), cx);
+
                             cx.notify();
                         });
                     });

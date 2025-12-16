@@ -63,7 +63,7 @@ pub fn render_load_card(
                 .gap_2()
                 .child(
                     div()
-                        .text_sm()
+                        .text_xs()
                         .font_medium()
                         .text_color(title_color)
                         .child(crate::i18n::t(&lang, "monitor.load")),
@@ -79,8 +79,8 @@ pub fn render_load_card(
         .child(
             div()
                 .w_full()
-                .px_3()
-                .py_2()
+                .px_1()
+                .py_1()
                 .bg(cx.theme().secondary)
                 .rounded(px(6.))
                 .flex()

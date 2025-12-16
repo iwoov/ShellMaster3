@@ -10,7 +10,6 @@ use super::session_sidebar::render_session_sidebar;
 use super::sftp_panel::render_sftp_panel;
 use super::terminal_page::render_terminal_panel;
 use crate::components::monitor::render_detail_dialog;
-use crate::models::monitor::MonitorState;
 use crate::state::{SessionState, SessionTab, SidebarPanel};
 
 /// 渲染 Session 主布局
@@ -33,7 +32,11 @@ pub fn render_session_layout(
         .child(
             resizable_panel()
                 .size(px(219.)) // 219px + 1px 分隔条 = 220px，与 home 按钮区域对齐
-                .child(render_monitor_panel(monitor_detail_dialog_for_panel, cx)),
+                .child(render_monitor_panel(
+                    &tab.monitor_state,
+                    monitor_detail_dialog_for_panel,
+                    cx,
+                )),
         )
         .child(resizable_panel().child(render_terminal_panel(
             tab,
@@ -43,9 +46,9 @@ pub fn render_session_layout(
             cx,
         )));
 
-    // 左侧区域：上方区域 | SFTP （垂直分隔，约 60% : 40%）
+    // 左侧区域：上方区域 | SFTP （垂直分隔）
     let left_area = v_resizable("session-left-v")
-        .child(resizable_panel().child(top_area)) // 上方 ~60%
+        .child(resizable_panel().child(top_area))
         .child(
             resizable_panel()
                 .size(px(300.))
@@ -142,9 +145,6 @@ pub fn render_session_layout(
         .child(snippets_button)
         .child(transfer_button);
 
-    // Mock monitor state for dialog content
-    let monitor_state = MonitorState::with_mock_data();
-
     // 主布局：使用简单的 flex 容器
     // 包装在 relative 容器中以支持 dialog overlay
     let main_content = if sidebar_collapsed {
@@ -184,7 +184,7 @@ pub fn render_session_layout(
             .relative()
             .size_full()
             .child(main_content)
-            .child(render_detail_dialog(dialog_state, &monitor_state, cx))
+            .child(render_detail_dialog(dialog_state, &tab.monitor_state, cx))
     } else {
         div().size_full().child(main_content)
     }

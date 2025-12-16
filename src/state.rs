@@ -1,8 +1,11 @@
 // 全局 AppState
 
 use crate::components::monitor::DetailDialogState;
+use crate::models::monitor::MonitorState;
 use crate::models::SnippetsConfig;
-use std::collections::HashSet;
+use crate::services::monitor::{MonitorEvent, MonitorService, MonitorSettings};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use gpui::prelude::*;
 use gpui::{Entity, FocusHandle};
@@ -50,6 +53,8 @@ pub struct SessionTab {
     pub active_terminal_id: Option<String>,
     /// 终端计数器（用于生成标签）
     pub terminal_counter: u32,
+    /// Monitor 监控状态
+    pub monitor_state: MonitorState,
 }
 
 /// 侧边栏面板类型
@@ -80,6 +85,8 @@ pub struct SessionState {
     pub terminal_focus_handle: Option<FocusHandle>,
     /// Monitor 详情弹窗状态
     pub monitor_detail_dialog: Option<Entity<DetailDialogState>>,
+    /// Monitor 服务实例（按 tab_id 存储）
+    pub monitor_services: Arc<Mutex<HashMap<String, MonitorService>>>,
 }
 
 impl Default for SessionState {
@@ -95,6 +102,7 @@ impl Default for SessionState {
             command_input: None,
             terminal_focus_handle: None,
             monitor_detail_dialog: None,
+            monitor_services: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -124,6 +132,7 @@ impl SessionState {
             terminals: vec![first_terminal],
             active_terminal_id: Some(first_terminal_id),
             terminal_counter: 1,
+            monitor_state: MonitorState::empty(),
         };
         // 新标签插入到最前面
         self.tabs.insert(0, tab);
@@ -648,5 +657,98 @@ impl SessionState {
             .iter()
             .find(|t| t.id == tab_id)
             .and_then(|tab| tab.active_terminal_id.clone())
+    }
+
+    /// 启动 Monitor 服务
+    /// 在 SSH 连接成功后调用，开始收集服务器监控数据
+    pub fn start_monitor_service(&self, tab_id: String, cx: &mut gpui::Context<Self>) {
+        let session_state = cx.entity().clone();
+
+        // 获取 SSH manager 和 session
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        let Some(session) = ssh_manager.get_session(&tab_id) else {
+            error!("[Monitor] No SSH session found for tab {}", tab_id);
+            return;
+        };
+
+        info!("[Monitor] Starting monitor service for tab {}", tab_id);
+
+        // 创建 MonitorService 并获取事件接收器
+        // 使用 SSH manager 的 tokio 运行时来启动异步任务
+        let (service, mut event_rx) = MonitorService::new(
+            tab_id.clone(),
+            session,
+            MonitorSettings::default(),
+            ssh_manager.runtime(),
+        );
+
+        // 将 service 存入 HashMap 以保持其生命周期
+        if let Ok(mut services) = self.monitor_services.lock() {
+            services.insert(tab_id.clone(), service);
+        }
+
+        // 在 SSH 运行时中启动 Monitor 事件处理任务
+        let tab_id_for_task = tab_id.clone();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                info!("[Monitor] Event loop started for tab {}", tab_id_for_task);
+
+                while let Some(event) = event_rx.recv().await {
+                    let tab_id_clone = tab_id_for_task.clone();
+
+                    let result = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
+                            {
+                                match event.clone() {
+                                    MonitorEvent::SystemInfo(info) => {
+                                        debug!(
+                                            "[Monitor] Received SystemInfo for tab {}",
+                                            tab_id_clone
+                                        );
+                                        tab.monitor_state.update_system_info(info);
+                                    }
+                                    MonitorEvent::LoadInfo(info) => {
+                                        debug!(
+                                            "[Monitor] Received LoadInfo for tab {}",
+                                            tab_id_clone
+                                        );
+                                        tab.monitor_state.update_load_info(info);
+                                    }
+                                    MonitorEvent::NetworkInfo(info) => {
+                                        debug!(
+                                            "[Monitor] Received NetworkInfo for tab {}",
+                                            tab_id_clone
+                                        );
+                                        tab.monitor_state.update_network_info(info);
+                                    }
+                                    MonitorEvent::DiskInfo(info) => {
+                                        debug!(
+                                            "[Monitor] Received DiskInfo for tab {}",
+                                            tab_id_clone
+                                        );
+                                        tab.monitor_state.update_disk_info(info);
+                                    }
+                                    MonitorEvent::Error(msg) => {
+                                        error!("[Monitor] Error for tab {}: {}", tab_id_clone, msg);
+                                    }
+                                }
+                                cx.notify();
+                            }
+                        });
+                    });
+
+                    if result.is_err() {
+                        info!(
+                            "[Monitor] Session state no longer available for tab {}",
+                            tab_id_for_task
+                        );
+                        break;
+                    }
+                }
+
+                info!("[Monitor] Event loop ended for tab {}", tab_id_for_task);
+            })
+            .detach();
     }
 }

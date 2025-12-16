@@ -54,7 +54,7 @@ pub fn render_system_card(
                 .gap_2()
                 .child(
                     div()
-                        .text_sm()
+                        .text_xs()
                         .font_medium()
                         .text_color(title_color)
                         .child(crate::i18n::t(&lang, "monitor.system_info")),
@@ -70,8 +70,8 @@ pub fn render_system_card(
         .child(
             div()
                 .w_full()
-                .px_3()
-                .py_2()
+                .px_1()
+                .py_1()
                 .bg(cx.theme().secondary)
                 .rounded(px(6.))
                 .flex()
@@ -90,13 +90,13 @@ pub fn render_system_card(
                                 .gap_1()
                                 .child(
                                     div()
-                                        .text_sm()
+                                        .text_xs()
                                         .text_color(label_color)
                                         .child(crate::i18n::t(&lang, "monitor.host_address")),
                                 )
                                 .child(
                                     div()
-                                        .text_sm()
+                                        .text_xs()
                                         .text_color(label_color)
                                         .child(host_address.clone()),
                                 ),
@@ -130,11 +130,11 @@ pub fn render_system_card(
                         .gap_1()
                         .child(
                             div()
-                                .text_sm()
+                                .text_xs()
                                 .text_color(label_color)
                                 .child(crate::i18n::t(&lang, "monitor.os")),
                         )
-                        .child(div().text_sm().text_color(muted_color).child(os_info)),
+                        .child(div().text_xs().text_color(muted_color).child(os_info)),
                 )
                 // 运行时间行
                 .child(
@@ -144,11 +144,11 @@ pub fn render_system_card(
                         .gap_1()
                         .child(
                             div()
-                                .text_sm()
+                                .text_xs()
                                 .text_color(label_color)
                                 .child(crate::i18n::t(&lang, "monitor.uptime")),
                         )
-                        .child(div().text_sm().text_color(label_color).child(uptime_text)),
+                        .child(div().text_xs().text_color(label_color).child(uptime_text)),
                 ),
         )
 }

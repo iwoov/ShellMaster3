@@ -19,7 +19,10 @@ pub fn render_monitor_panel(
     if let Some(dialog_state) = detail_dialog_state {
         div()
             .size_full()
+            .min_h(px(0.))
             .bg(bg_color)
+            .flex()
+            .flex_col()
             .child(render_monitor_view(state, dialog_state, cx))
     } else {
         // 没有 dialog state 时的降级渲染（不应该发生）

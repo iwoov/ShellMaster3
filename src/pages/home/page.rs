@@ -503,7 +503,7 @@ impl HomePage {
                     .child(render_session_titlebar(session_state, cx)),
             )
             // 第二行：会话内容区域
-            .child(div().flex_1().w_full().child(content))
+            .child(div().flex_1().w_full().min_h(px(0.)).child(content))
     }
 }
 

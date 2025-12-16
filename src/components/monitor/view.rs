@@ -20,7 +20,8 @@ pub fn render_monitor_view(
 
     div()
         .id("monitor-view-scroll")
-        .size_full()
+        .flex_1()
+        .min_h(px(0.))
         .bg(bg_color)
         .overflow_y_scroll()
         .px_1()

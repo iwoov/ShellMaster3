@@ -282,6 +282,7 @@ impl HomePage {
                 div()
                     .flex_1()
                     .w_full()
+                    .overflow_hidden() // 防止内容溢出，确保设置按钮可见
                     .flex()
                     // Sidebar
                     .child(render_sidebar(
@@ -296,6 +297,7 @@ impl HomePage {
                         div()
                             .flex_1()
                             .h_full()
+                            .overflow_hidden()
                             .child(self.render_content(selected_menu, cx)),
                     ),
             )

@@ -106,9 +106,11 @@ pub fn render_sidebar(
             ),
         )
         .child(
-            // 历史记录内容
+            // 历史记录内容 - 使用滚动容器确保设置按钮可见
             div()
+                .id("sidebar-history-scroll")
                 .flex_1()
+                .overflow_y_scroll()
                 .p_2()
                 .flex()
                 .flex_col()

@@ -2,6 +2,7 @@
 
 pub mod connection;
 pub mod known_hosts;
+pub mod monitor;
 pub mod server;
 pub mod session;
 pub mod settings;

@@ -255,6 +255,17 @@ fn zh_cn(key: &'static str) -> &'static str {
         "session.terminal.command_placeholder" => "输入命令...",
         "session.terminal.tab_label" => "终端",
 
+        // Monitor 面板详细
+        "monitor.system_info" => "系统信息",
+        "monitor.host_address" => "主机地址:",
+        "monitor.os" => "操作系统:",
+        "monitor.uptime" => "运行时间:",
+        "monitor.load" => "系统负载",
+        "monitor.network" => "网络状态",
+        "monitor.network_interface" => "网络接口",
+        "monitor.no_interfaces" => "暂无可用网络接口",
+        "monitor.disk" => "磁盘状态",
+
         // Snippets 快捷命令
         "snippets.add_group" => "新建组",
         "snippets.add_command" => "新建命令",
@@ -536,6 +547,17 @@ fn en_us(key: &'static str) -> &'static str {
         "session.terminal.simulated" => "Simulated Terminal",
         "session.terminal.command_placeholder" => "Enter command...",
         "session.terminal.tab_label" => "Terminal",
+
+        // Monitor Panel Detail
+        "monitor.system_info" => "System Info",
+        "monitor.host_address" => "Host:",
+        "monitor.os" => "OS:",
+        "monitor.uptime" => "Uptime:",
+        "monitor.load" => "System Load",
+        "monitor.network" => "Network Status",
+        "monitor.network_interface" => "Network Interface",
+        "monitor.no_interfaces" => "No available network interfaces",
+        "monitor.disk" => "Disk Status",
 
         // Snippets
         "snippets.add_group" => "New Group",

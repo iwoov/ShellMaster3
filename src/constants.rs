@@ -38,4 +38,10 @@ pub mod icons {
     pub const TRANSFER: &str = "icons/transfer.svg";
     pub const FINGERPRINT: &str = "icons/fingerprint.svg";
     pub const SEND: &str = "icons/send.svg";
+    // Monitor 图标
+    pub const CPU: &str = "icons/cpu.svg";
+    pub const MEMORY: &str = "icons/memory.svg";
+    pub const HARD_DRIVE: &str = "icons/hard-drive.svg";
+    pub const NETWORK: &str = "icons/network.svg";
+    pub const INFO: &str = "icons/info.svg";
 }

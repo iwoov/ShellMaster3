@@ -664,8 +664,7 @@ fn render_server_row(
         .id(SharedString::from(format!("row-{}", server_id)))
         .px_4()
         .py_3()
-        .border_b_1()
-        .border_color(colors.border)
+        // 不给行添加底边框，由容器边框和表头边框处理分隔
         .flex()
         .items_center()
         .cursor_pointer()

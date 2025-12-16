@@ -391,9 +391,9 @@ impl MonitorState {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        for i in 0..10 {
+        for i in 0..30 {
             state.speed_history.push_back(NetworkSpeedSnapshot {
-                timestamp: now - (10 - i) * 2, // 每2秒一个数据点
+                timestamp: now - (30 - i) * 2, // 每2秒一个数据点
                 rx_speed: 0.0,
                 tx_speed: 0.0,
             });
@@ -469,8 +469,8 @@ impl MonitorState {
                         tx_speed,
                     });
 
-                    // 限制网速历史数量（30秒 / 2秒 = 15条）
-                    const MAX_SPEED_HISTORY: usize = 15;
+                    // 限制网速历史数量（60秒 / 2秒 = 30条）
+                    const MAX_SPEED_HISTORY: usize = 30;
                     while self.speed_history.len() > MAX_SPEED_HISTORY {
                         self.speed_history.pop_front();
                     }

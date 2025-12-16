@@ -1,6 +1,5 @@
 // 网络状态区块组件
 
-use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::{ActiveTheme, StyledExt};
 
@@ -114,31 +113,82 @@ pub fn render_network_card(
                         ),
                 ),
         )
-        // 图表区域（网速图表 - 始终显示）
+        // 速率数据显示
         .child(
             div()
                 .w_full()
-                .h(px(120.)) // 图表高度
                 .bg(chart_bg)
                 .rounded(px(6.))
+                .p_2()
                 .flex()
-                .items_center()
-                .justify_center()
-                // 图表占位 - 后续集成实际图表
-                .child(render_network_chart(state, cx)),
+                .flex_col()
+                .gap_2()
+                // 历史趋势图
+                .child(render_simple_chart(state, cx))
+                // 实时数值
+                .child(render_network_speed(state, cx)),
         )
 }
 
-/// 网速数据点结构（用于 Chart）
-#[derive(Clone)]
-struct SpeedPoint {
-    time_offset: i64, // 相对于最新数据点的时间偏移（秒，负数表示更早）
-    rx_speed: f64,
-    tx_speed: f64,
+/// 渲染简易柱状图（模拟历史趋势）
+fn render_simple_chart(state: &MonitorState, cx: &App) -> impl IntoElement {
+    let chart_line_color_tx = hsla(145.0 / 360.0, 0.6, 0.5, 0.8); // 绿色 TX
+    let chart_line_color_rx = hsla(210.0 / 360.0, 0.8, 0.6, 0.8); // 蓝色 RX
+
+    // 计算最大速度用于归一化
+    let max_speed = state
+        .speed_history
+        .iter()
+        .flat_map(|s| [s.rx_speed, s.tx_speed])
+        .fold(0.0_f64, f64::max)
+        .max(1024.0); // 至少 1KB/s 以避免除以0或过分放大微小波动
+
+    let container_height = 100.0_f32;
+
+    div()
+        .w_full()
+        .h(px(container_height)) // 固定高度
+        .overflow_hidden() // 防止超出
+        .flex()
+        .items_end()
+        .justify_end() // 靠右对齐，紧凑排列
+        .gap(px(1.))
+        .children(state.speed_history.iter().map(|s| {
+            let rx_px = (s.rx_speed as f32 / max_speed as f32 * container_height)
+                .clamp(0.0, container_height);
+            let tx_px = (s.tx_speed as f32 / max_speed as f32 * container_height)
+                .clamp(0.0, container_height);
+
+            div()
+                .h_full()
+                .flex()
+                .items_end()
+                .justify_center()
+                .gap(px(1.))
+                // RX Bar
+                .child(
+                    div()
+                        .w(px(3.)) // 固定宽度 3px 让柱子变细
+                        // 最小高度 2px 以便可见
+                        .h(px(rx_px))
+                        .min_h(px(2.))
+                        .bg(chart_line_color_rx)
+                        .rounded(px(1.)),
+                )
+                // TX Bar
+                .child(
+                    div()
+                        .w(px(3.))
+                        .h(px(tx_px))
+                        .min_h(px(2.))
+                        .bg(chart_line_color_tx)
+                        .rounded(px(1.)),
+                )
+        }))
 }
 
-/// 渲染网速图表和速率显示
-fn render_network_chart(state: &MonitorState, cx: &App) -> impl IntoElement {
+/// 渲染网速数值显示
+fn render_network_speed(state: &MonitorState, cx: &App) -> impl IntoElement {
     let muted_color = cx.theme().muted_foreground;
     let chart_line_color_tx = hsla(145.0 / 360.0, 0.6, 0.5, 0.8); // 绿色 TX
     let chart_line_color_rx = hsla(210.0 / 360.0, 0.8, 0.6, 0.8); // 蓝色 RX
@@ -148,96 +198,34 @@ fn render_network_chart(state: &MonitorState, cx: &App) -> impl IntoElement {
     let rx_speed_str = MonitorState::format_speed(rx_speed);
     let tx_speed_str = MonitorState::format_speed(tx_speed);
 
-    // 获取最新时间戳
-    let latest_timestamp = state.speed_history.back().map(|s| s.timestamp).unwrap_or(0);
-
-    // 获取速度历史并转换为 Chart 需要的数据格式
-    let chart_data: Vec<SpeedPoint> = state
-        .speed_history
-        .iter()
-        .map(|s| SpeedPoint {
-            time_offset: s.timestamp as i64 - latest_timestamp as i64,
-            rx_speed: s.rx_speed,
-            tx_speed: s.tx_speed,
-        })
-        .collect();
-
-    // 计算最大速度
-    let max_speed = state
-        .speed_history
-        .iter()
-        .flat_map(|s| [s.rx_speed, s.tx_speed])
-        .fold(0.0_f64, f64::max);
-    let _max_speed_str = MonitorState::format_speed(max_speed);
-
-    let has_data = !chart_data.is_empty() && chart_data.len() >= 2;
-
     div()
-        .size_full()
-        .p_1()
+        .w_full()
         .flex()
-        .flex_col()
-        .gap_1()
-        // 图表区域
+        .justify_between()
         .child(
             div()
-                .flex_1()
-                .w_full()
-                .when(has_data, |s| {
-                    s.child(
-                        gpui_component::chart::AreaChart::new(chart_data)
-                            .x(|d| format!("{}s", d.time_offset))
-                            .y(|d| d.rx_speed) // RX
-                            .y(|d| d.tx_speed) // TX
-                            .stroke(chart_line_color_rx)
-                            .stroke(chart_line_color_tx)
-                            .fill(chart_line_color_rx.opacity(0.3))
-                            .fill(chart_line_color_tx.opacity(0.3))
-                            .linear()
-                            .linear()
-                            .tick_margin(5),
-                    )
-                })
-                .when(!has_data, |s| {
-                    s.flex().items_center().justify_center().child(
-                        div()
-                            .text_xs()
-                            .text_color(muted_color)
-                            .child("Collecting data..."),
-                    )
-                }),
-        )
-        // 底部：速率数值显示
-        .child(
-            div()
-                .w_full()
                 .flex()
-                .justify_between()
+                .items_center()
+                .gap_1()
+                .child(div().text_xs().text_color(chart_line_color_rx).child("↓"))
                 .child(
                     div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(div().text_xs().text_color(chart_line_color_rx).child("↓"))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(muted_color)
-                                .child(format!("RX: {}", rx_speed_str)),
-                        ),
-                )
+                        .text_xs()
+                        .text_color(muted_color)
+                        .child(format!("RX: {}", rx_speed_str)),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(div().text_xs().text_color(chart_line_color_tx).child("↑"))
                 .child(
                     div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(div().text_xs().text_color(chart_line_color_tx).child("↑"))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(muted_color)
-                                .child(format!("TX: {}", tx_speed_str)),
-                        ),
+                        .text_xs()
+                        .text_color(muted_color)
+                        .child(format!("TX: {}", tx_speed_str)),
                 ),
         )
 }

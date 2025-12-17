@@ -1,9 +1,12 @@
 // 网络状态区块组件
 
 use gpui::*;
+use gpui_component::button::Button;
+use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::{ActiveTheme, StyledExt};
 
 use crate::models::monitor::MonitorState;
+use crate::state::SessionState;
 
 use super::detail_dialog::{render_detail_button, DetailDialogState, DetailDialogType};
 
@@ -11,11 +14,12 @@ use super::detail_dialog::{render_detail_button, DetailDialogState, DetailDialog
 pub fn render_network_card(
     state: &MonitorState,
     dialog_state: Entity<DetailDialogState>,
+    session_state: Entity<SessionState>,
+    tab_id: String,
     cx: &App,
 ) -> impl IntoElement {
     let title_color = hsla(210.0 / 360.0, 1.0, 0.5, 1.0); // 蓝色标题
     let label_color = cx.theme().foreground;
-    let muted_color = cx.theme().muted_foreground;
     let border_color = cx.theme().border;
     let chart_bg = cx.theme().secondary;
 
@@ -31,9 +35,10 @@ pub fn render_network_card(
         .unwrap_or_default();
 
     let has_interfaces = !interfaces.is_empty();
+    let selected_index = state.selected_interface_index;
     // 下拉框显示的是网卡名称，无数据时显示占位符
     let selected_interface_name = interfaces
-        .get(state.selected_interface_index)
+        .get(selected_index)
         .cloned()
         .unwrap_or_else(|| "--".to_string());
 
@@ -78,40 +83,20 @@ pub fn render_network_card(
                         .text_color(label_color)
                         .child(crate::i18n::t(&lang, "monitor.network_interface")),
                 )
-                // 右侧下拉框（显示网卡名称）
-                .child(
-                    div()
-                        .w(px(140.)) // 固定宽度
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().background)
-                        .rounded(px(4.))
-                        .border_1()
-                        .border_color(border_color)
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .cursor_pointer()
-                        .hover(|s| s.border_color(cx.theme().primary))
-                        .child(
-                            div()
-                                .text_xs()
-                                .overflow_hidden()
-                                .text_color(if has_interfaces {
-                                    cx.theme().foreground
-                                } else {
-                                    muted_color
-                                })
-                                .child(selected_interface_name),
-                        )
-                        // 下拉箭头
-                        .child(
-                            svg()
-                                .path(crate::constants::icons::CHEVRON_DOWN)
-                                .size(px(12.))
-                                .text_color(muted_color),
-                        ),
-                ),
+                // 右侧下拉框
+                .child(if has_interfaces {
+                    render_interface_dropdown(
+                        selected_interface_name,
+                        interfaces,
+                        session_state,
+                        tab_id,
+                        cx,
+                    )
+                    .into_any_element()
+                } else {
+                    // 无接口时显示静态占位符
+                    render_static_dropdown("--", cx).into_any_element()
+                }),
         )
         // 速率数据显示
         .child(
@@ -127,6 +112,89 @@ pub fn render_network_card(
                 .child(render_simple_chart(state, cx))
                 // 实时数值
                 .child(render_network_speed(state, cx)),
+        )
+}
+
+/// 渲染网络接口下拉选择器
+fn render_interface_dropdown(
+    selected_name: String,
+    interfaces: Vec<String>,
+    session_state: Entity<SessionState>,
+    tab_id: String,
+    cx: &App,
+) -> impl IntoElement {
+    use gpui::Corner;
+
+    let muted_color = cx.theme().muted_foreground;
+
+    Button::new("network-interface-dropdown")
+        .w(px(140.))
+        .h(px(28.))
+        .outline()
+        .justify_start()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .w(px(120.))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().foreground)
+                        .overflow_hidden()
+                        .child(selected_name),
+                )
+                .child(
+                    svg()
+                        .path(crate::constants::icons::CHEVRON_DOWN)
+                        .size(px(12.))
+                        .text_color(muted_color),
+                ),
+        )
+        .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
+            let mut menu = menu.min_w(px(140.));
+            for (idx, iface_name) in interfaces.iter().enumerate() {
+                let name: SharedString = iface_name.clone().into();
+                let session_for_click = session_state.clone();
+                let tab_id_for_click = tab_id.clone();
+                menu = menu.item(PopupMenuItem::new(name).on_click(move |_, _, cx| {
+                    session_for_click.update(cx, |state, _| {
+                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_click)
+                        {
+                            tab.monitor_state.selected_interface_index = idx;
+                            // 清空速度历史以便重新计算新接口的速度
+                            tab.monitor_state.speed_history.clear();
+                        }
+                    });
+                }));
+            }
+            menu
+        })
+}
+
+/// 渲染静态下拉框（无接口时使用）
+fn render_static_dropdown(text: &'static str, cx: &App) -> impl IntoElement {
+    let border_color = cx.theme().border;
+    let muted_color = cx.theme().muted_foreground;
+
+    div()
+        .w(px(140.))
+        .px_2()
+        .py_1()
+        .bg(cx.theme().background)
+        .rounded(px(4.))
+        .border_1()
+        .border_color(border_color)
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(div().text_xs().text_color(muted_color).child(text))
+        .child(
+            svg()
+                .path(crate::constants::icons::CHEVRON_DOWN)
+                .size(px(12.))
+                .text_color(muted_color),
         )
 }
 

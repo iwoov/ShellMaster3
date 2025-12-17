@@ -27,6 +27,9 @@ pub fn render_session_layout(
     let monitor_detail_dialog = session_state.read(cx).monitor_detail_dialog.clone();
     let monitor_detail_dialog_for_panel = monitor_detail_dialog.clone();
 
+    // 获取 tab_id 用于网络接口选择
+    let tab_id = tab.id.clone();
+
     // 上方区域：Monitor | Terminal （水平分隔）
     let top_area = h_resizable("session-top-h")
         .child(
@@ -35,6 +38,8 @@ pub fn render_session_layout(
                 .child(render_monitor_panel(
                     &tab.monitor_state,
                     monitor_detail_dialog_for_panel,
+                    session_state.clone(),
+                    tab_id,
                     cx,
                 )),
         )

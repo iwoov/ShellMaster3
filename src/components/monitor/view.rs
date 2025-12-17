@@ -3,6 +3,7 @@
 use gpui::*;
 
 use crate::models::monitor::MonitorState;
+use crate::state::SessionState;
 
 use super::detail_dialog::DetailDialogState;
 use super::disk_card::render_disk_card;
@@ -14,6 +15,8 @@ use super::system_card::render_system_card;
 pub fn render_monitor_view(
     state: &MonitorState,
     dialog_state: Entity<DetailDialogState>,
+    session_state: Entity<SessionState>,
+    tab_id: String,
     cx: &App,
 ) -> impl IntoElement {
     let bg_color = crate::theme::sidebar_color(cx);
@@ -34,7 +37,13 @@ pub fn render_monitor_view(
         // 系统负载卡片
         .child(render_load_card(state, dialog_state.clone(), cx))
         // 网络状态卡片
-        .child(render_network_card(state, dialog_state.clone(), cx))
+        .child(render_network_card(
+            state,
+            dialog_state.clone(),
+            session_state,
+            tab_id,
+            cx,
+        ))
         // 磁盘状态卡片
         .child(render_disk_card(state, dialog_state, cx))
 }

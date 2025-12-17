@@ -237,6 +237,10 @@ impl MonitorService {
                     .as_str()
                     .unwrap_or("unknown")
                     .to_string(),
+                kernel: parsed["host"]["kernel"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string(),
                 uptime_seconds: parsed["host"]["uptime_seconds"].as_u64().unwrap_or(0),
             },
             cpu: CpuInfo {
@@ -487,6 +491,7 @@ cat <<EOF
   "host": {
     "hostname": "$hostname",
     "os": "$os",
+    "kernel": "$kernel",
     "uptime_seconds": $uptime_seconds
   },
   "cpu": {

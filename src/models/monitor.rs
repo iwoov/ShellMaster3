@@ -24,6 +24,8 @@ pub struct HostInfo {
     pub hostname: String,
     /// 操作系统信息
     pub os: String,
+    /// 内核版本
+    pub kernel: String,
     /// 运行时间（秒）
     pub uptime_seconds: u64,
 }
@@ -317,6 +319,7 @@ impl MonitorState {
                     address: "110.42.98.184".to_string(),
                     hostname: "mock-server".to_string(),
                     os: "Ubuntu 22.04 LTS".to_string(),
+                    kernel: "5.15.0-86-generic".to_string(),
                     uptime_seconds: 3600 * 24 * 5, // 5 days
                 },
                 cpu: CpuInfo {

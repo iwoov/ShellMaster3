@@ -218,6 +218,7 @@ fn render_system_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
                     ("主机地址", info.host.address.clone()),
                     ("主机名", info.host.hostname.clone()),
                     ("操作系统", info.host.os.clone()),
+                    ("内核版本", info.host.kernel.clone()),
                     ("运行时间", format_uptime(info.host.uptime_seconds)),
                 ],
                 cx,

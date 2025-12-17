@@ -11,12 +11,18 @@ pub fn keystroke_to_escape(keystroke: &Keystroke, modifiers: &Modifiers) -> Opti
 
     // 检查 Alt/Meta 组合键 (发送 ESC 前缀)
     if modifiers.alt {
+        // 对于 Alt 组合键，优先使用 key_char
+        if let Some(ref key_char) = keystroke.key_char {
+            let mut bytes = vec![0x1b]; // ESC prefix
+            bytes.extend_from_slice(key_char.as_bytes());
+            return Some(bytes);
+        }
         return alt_key_to_bytes(&keystroke.key);
     }
 
-    // 普通按键
+    // 普通按键：首先检查特殊按键
     match keystroke.key.as_str() {
-        // 特殊按键
+        // 特殊按键（这些不会有 key_char，需要特殊处理）
         "enter" => Some(vec![0x0d]),     // CR
         "backspace" => Some(vec![0x7f]), // DEL
         "tab" => Some(vec![0x09]),
@@ -51,14 +57,19 @@ pub fn keystroke_to_escape(keystroke: &Keystroke, modifiers: &Modifiers) -> Opti
         "f11" => Some(vec![0x1b, b'[', b'2', b'3', b'~']),
         "f12" => Some(vec![0x1b, b'[', b'2', b'4', b'~']),
 
-        // 单个字符
-        key if key.len() == 1 => {
-            let bytes = key.as_bytes();
-            Some(bytes.to_vec())
+        // 对于其他按键，优先使用 key_char（这是实际输入的字符，已经应用了 Shift 等修饰键）
+        _ => {
+            if let Some(ref key_char) = keystroke.key_char {
+                // key_char 包含实际字符（例如 Shift+Z 会得到 "Z"）
+                Some(key_char.as_bytes().to_vec())
+            } else if keystroke.key.len() == 1 {
+                // 回退：使用 key（但这是逻辑键名，不包含 Shift 状态）
+                Some(keystroke.key.as_bytes().to_vec())
+            } else {
+                // 未知按键
+                None
+            }
         }
-
-        // 未知按键
-        _ => None,
     }
 }
 

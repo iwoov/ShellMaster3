@@ -120,27 +120,77 @@ impl MonitorService {
     ) {
         info!("[Monitor] Starting polling loop for session {}", session_id);
 
-        // 首先获取静态系统信息
-        match Self::fetch_system_info(&session, &session_id).await {
-            Ok(info) => {
-                let _ = data_tx.send(MonitorEvent::SystemInfo(info));
+        // ========================================================================
+        // 初次启动：并行获取所有数据
+        // ========================================================================
+        {
+            let (system_result, load_result, network_result, disk_result) = tokio::join!(
+                Self::fetch_system_info(&session, &session_id),
+                Self::fetch_load_info(&session),
+                Self::fetch_network_info(&session),
+                Self::fetch_disk_info(&session)
+            );
+
+            // 发送系统信息
+            match system_result {
+                Ok(info) => {
+                    let _ = data_tx.send(MonitorEvent::SystemInfo(info));
+                }
+                Err(e) => {
+                    warn!("[Monitor] Failed to fetch system info: {}", e);
+                    let _ = data_tx.send(MonitorEvent::Error(format!(
+                        "Failed to fetch system info: {}",
+                        e
+                    )));
+                }
             }
-            Err(e) => {
-                warn!("[Monitor] Failed to fetch system info: {}", e);
-                let _ = data_tx.send(MonitorEvent::Error(format!(
-                    "Failed to fetch system info: {}",
-                    e
-                )));
+
+            // 发送负载信息
+            match load_result {
+                Ok(info) => {
+                    let _ = data_tx.send(MonitorEvent::LoadInfo(info));
+                }
+                Err(e) => {
+                    debug!("[Monitor] Failed to fetch initial load info: {}", e);
+                }
             }
+
+            // 发送网络信息
+            match network_result {
+                Ok(info) => {
+                    let _ = data_tx.send(MonitorEvent::NetworkInfo(info));
+                }
+                Err(e) => {
+                    debug!("[Monitor] Failed to fetch initial network info: {}", e);
+                }
+            }
+
+            // 发送磁盘信息
+            match disk_result {
+                Ok(info) => {
+                    let _ = data_tx.send(MonitorEvent::DiskInfo(info));
+                }
+                Err(e) => {
+                    debug!("[Monitor] Failed to fetch initial disk info: {}", e);
+                }
+            }
+
+            info!(
+                "[Monitor] Initial data fetched in parallel for session {}",
+                session_id
+            );
         }
 
+        // ========================================================================
+        // 轮询循环
+        // ========================================================================
         let load_interval = Duration::from_millis(settings.load_interval_ms);
         let disk_interval = Duration::from_millis(settings.disk_interval_ms);
 
         let mut load_ticker = tokio::time::interval(load_interval);
         let mut disk_ticker = tokio::time::interval(disk_interval);
 
-        // 跳过第一个即时触发
+        // 跳过第一个即时触发（因为初始数据已经获取过了）
         load_ticker.tick().await;
         disk_ticker.tick().await;
 
@@ -158,8 +208,14 @@ impl MonitorService {
                         break;
                     }
 
-                    // 获取负载信息
-                    match Self::fetch_load_info(&session).await {
+                    // 并行获取负载和网络信息
+                    let (load_result, network_result) = tokio::join!(
+                        Self::fetch_load_info(&session),
+                        Self::fetch_network_info(&session)
+                    );
+
+                    // 发送负载信息
+                    match load_result {
                         Ok(info) => {
                             let _ = data_tx.send(MonitorEvent::LoadInfo(info));
                         }
@@ -168,8 +224,8 @@ impl MonitorService {
                         }
                     }
 
-                    // 获取网络信息
-                    match Self::fetch_network_info(&session).await {
+                    // 发送网络信息
+                    match network_result {
                         Ok(info) => {
                             let _ = data_tx.send(MonitorEvent::NetworkInfo(info));
                         }

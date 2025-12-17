@@ -213,33 +213,66 @@ fn render_system_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
             .gap_3()
             // 基础信息
             .child(render_detail_section(
-                "基础信息",
+                crate::i18n::t(&lang, "monitor.detail.basic_info"),
                 vec![
-                    ("主机地址", info.host.address.clone()),
-                    ("主机名", info.host.hostname.clone()),
-                    ("操作系统", info.host.os.clone()),
-                    ("内核版本", info.host.kernel.clone()),
-                    ("运行时间", format_uptime(info.host.uptime_seconds)),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.host_address"),
+                        info.host.address.clone(),
+                    ),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.hostname"),
+                        info.host.hostname.clone(),
+                    ),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.os"),
+                        info.host.os.clone(),
+                    ),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.kernel"),
+                        info.host.kernel.clone(),
+                    ),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.uptime"),
+                        format_uptime(info.host.uptime_seconds, &lang),
+                    ),
                 ],
                 cx,
             ))
             // CPU
             .child(render_detail_section(
-                "CPU",
+                crate::i18n::t(&lang, "monitor.detail.cpu"),
                 vec![
-                    ("型号", info.cpu.model.clone()),
-                    ("逻辑核心数", info.cpu.cores_logical.to_string()),
-                    ("物理核心数", info.cpu.cores_physical.to_string()),
-                    ("架构", info.cpu.architecture.clone()),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.cpu_model"),
+                        info.cpu.model.clone(),
+                    ),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.cores_logical"),
+                        info.cpu.cores_logical.to_string(),
+                    ),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.cores_physical"),
+                        info.cpu.cores_physical.to_string(),
+                    ),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.architecture"),
+                        info.cpu.architecture.clone(),
+                    ),
                 ],
                 cx,
             ))
             // 内存
             .child(render_detail_section(
-                "内存",
+                crate::i18n::t(&lang, "monitor.detail.memory"),
                 vec![
-                    ("总内存", format_bytes(info.memory.total_bytes)),
-                    ("Swap总计", format_bytes(info.memory.swap_total_bytes)),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.memory_total"),
+                        format_bytes(info.memory.total_bytes),
+                    ),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.swap_total"),
+                        format_bytes(info.memory.swap_total_bytes),
+                    ),
                 ],
                 cx,
             ))
@@ -284,25 +317,30 @@ fn render_load_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
             .gap_3()
             // Top CPU processes
             .child(render_process_table(
-                "CPU 占用最高的进程",
+                crate::i18n::t(&lang, "monitor.detail.top_cpu_processes"),
                 &load.top_cpu_processes,
                 true, // is_cpu
+                &lang,
                 cx,
             ))
             // Top Memory processes
             .child(render_process_table(
-                "内存占用最高的进程",
+                crate::i18n::t(&lang, "monitor.detail.top_mem_processes"),
                 &load.top_memory_processes,
                 false, // is_memory
+                &lang,
                 cx,
             ))
             // Memory details
             .child(render_detail_section(
-                "内存详情",
+                crate::i18n::t(&lang, "monitor.detail.memory_detail"),
                 vec![
                     ("Buffers", format_bytes(load.memory.buffers_bytes)),
                     ("Cached", format_bytes(load.memory.cached_bytes)),
-                    ("Swap使用情况", swap_usage_str),
+                    (
+                        crate::i18n::t(&lang, "monitor.detail.swap_usage"),
+                        swap_usage_str,
+                    ),
                 ],
                 cx,
             ))
@@ -331,8 +369,11 @@ fn render_network_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
             .gap_3()
             // Global Network Status
             .child(render_detail_section(
-                "全局网络状态",
-                vec![("TCP连接数", network.global.tcp_established.to_string())],
+                crate::i18n::t(&lang, "monitor.detail.global_network"),
+                vec![(
+                    crate::i18n::t(&lang, "monitor.detail.tcp_connections"),
+                    network.global.tcp_established.to_string(),
+                )],
                 cx,
             ))
             // Interface list
@@ -340,10 +381,22 @@ fn render_network_detail(state: &MonitorState, cx: &App) -> impl IntoElement {
                 render_detail_section(
                     &iface.name,
                     vec![
-                        ("IP地址", iface.ip_addresses.join(", ")),
-                        ("MAC地址", iface.mac_address.clone()),
-                        ("接收字节数", format_bytes(iface.rx_bytes)),
-                        ("发送字节数", format_bytes(iface.tx_bytes)),
+                        (
+                            crate::i18n::t(&lang, "monitor.detail.ip_address"),
+                            iface.ip_addresses.join(", "),
+                        ),
+                        (
+                            crate::i18n::t(&lang, "monitor.detail.mac_address"),
+                            iface.mac_address.clone(),
+                        ),
+                        (
+                            crate::i18n::t(&lang, "monitor.detail.rx_bytes"),
+                            format_bytes(iface.rx_bytes),
+                        ),
+                        (
+                            crate::i18n::t(&lang, "monitor.detail.tx_bytes"),
+                            format_bytes(iface.tx_bytes),
+                        ),
                     ],
                     cx,
                 )
@@ -412,6 +465,7 @@ fn render_process_table(
     title: &str,
     processes: &[crate::models::monitor::ProcessInfo],
     is_cpu: bool,
+    lang: &crate::models::settings::Language,
     cx: &App,
 ) -> impl IntoElement {
     let section_bg = cx.theme().secondary;
@@ -452,7 +506,7 @@ fn render_process_table(
                         .flex_1()
                         .text_xs()
                         .text_color(label_color)
-                        .child("进程名"),
+                        .child(crate::i18n::t(lang, "monitor.detail.process_name")),
                 )
                 .child(
                     div()
@@ -534,16 +588,23 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 /// Format uptime seconds to readable string
-fn format_uptime(seconds: u64) -> String {
+fn format_uptime(seconds: u64, lang: &crate::models::settings::Language) -> String {
     let days = seconds / 86400;
     let hours = (seconds % 86400) / 3600;
     let mins = (seconds % 3600) / 60;
 
+    let day_unit = crate::i18n::t(lang, "monitor.detail.uptime_days");
+    let hour_unit = crate::i18n::t(lang, "monitor.detail.uptime_hours");
+    let min_unit = crate::i18n::t(lang, "monitor.detail.uptime_minutes");
+
     if days > 0 {
-        format!("{}天 {}小时 {}分钟", days, hours, mins)
+        format!(
+            "{}{} {}{} {}{}",
+            days, day_unit, hours, hour_unit, mins, min_unit
+        )
     } else if hours > 0 {
-        format!("{}小时 {}分钟", hours, mins)
+        format!("{}{} {}{}", hours, hour_unit, mins, min_unit)
     } else {
-        format!("{}分钟", mins)
+        format!("{}{}", mins, min_unit)
     }
 }

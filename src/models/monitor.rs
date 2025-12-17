@@ -210,9 +210,9 @@ pub struct MonitorState {
     pub enabled: bool,
     /// 静态系统信息
     pub system_info: Option<SystemInfo>,
-    /// 负载历史（最近5分钟）
+    /// 负载历史（最近1分钟）
     pub load_history: VecDeque<LoadInfo>,
-    /// 网络历史（最近5分钟）
+    /// 网络历史（最近1分钟）
     pub network_history: VecDeque<NetworkInfo>,
     /// 最新磁盘信息
     pub disk_info: Option<DiskInfo>,
@@ -372,8 +372,8 @@ impl MonitorState {
     // 创建和更新方法
     // ========================================================================
 
-    /// 历史记录最大条目数（5分钟，每2秒一条 = 150条）
-    const MAX_HISTORY_SIZE: usize = 150;
+    /// 历史记录最大条目数（1分钟，每2秒一条 = 30条）
+    const MAX_HISTORY_SIZE: usize = 30;
 
     /// 创建初始化的空状态（用于真实数据，显示占位符）
     pub fn empty() -> Self {

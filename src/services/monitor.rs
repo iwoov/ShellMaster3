@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::models::monitor::{
     CpuInfo, CpuLoadInfo, DiskDeviceInfo, DiskInfo, HostInfo, LoadInfo, MemoryLoadInfo,
@@ -218,7 +218,7 @@ impl MonitorService {
         }
 
         let json_str = output.stdout_string();
-        info!("[Monitor] System info raw JSON: {}", json_str);
+        trace!("[Monitor] System info raw JSON: {}", json_str);
 
         let parsed: serde_json::Value =
             serde_json::from_str(&json_str).map_err(|e| format!("JSON parse error: {}", e))?;
@@ -274,7 +274,7 @@ impl MonitorService {
         }
 
         let json_str = output.stdout_string();
-        info!("[Monitor] Load info raw JSON: {}", json_str);
+        trace!("[Monitor] Load info raw JSON: {}", json_str);
 
         let parsed: serde_json::Value =
             serde_json::from_str(&json_str).map_err(|e| format!("JSON parse error: {}", e))?;
@@ -341,7 +341,7 @@ impl MonitorService {
         }
 
         let json_str = output.stdout_string();
-        info!("[Monitor] Network info raw JSON: {}", json_str);
+        trace!("[Monitor] Network info raw JSON: {}", json_str);
 
         let parsed: serde_json::Value =
             serde_json::from_str(&json_str).map_err(|e| format!("JSON parse error: {}", e))?;
@@ -401,7 +401,7 @@ impl MonitorService {
         }
 
         let json_str = output.stdout_string();
-        info!("[Monitor] Disk info raw JSON: {}", json_str);
+        trace!("[Monitor] Disk info raw JSON: {}", json_str);
 
         let parsed: serde_json::Value =
             serde_json::from_str(&json_str).map_err(|e| format!("JSON parse error: {}", e))?;

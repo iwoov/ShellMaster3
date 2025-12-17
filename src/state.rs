@@ -152,6 +152,18 @@ impl SessionState {
             if self.active_tab_id.as_deref() == Some(tab_id) {
                 self.active_tab_id = self.tabs.first().map(|t| t.id.clone());
             }
+
+            // 停止并移除 MonitorService（Drop 会自动调用 stop）
+            if let Ok(mut services) = self.monitor_services.lock() {
+                if services.remove(tab_id).is_some() {
+                    info!("[Monitor] Service removed for closed tab {}", tab_id);
+                }
+            }
+
+            // 关闭 SSH 会话
+            let ssh_manager = crate::ssh::manager::SshManager::global();
+            ssh_manager.close_session(tab_id);
+            info!("[Session] SSH session closed for tab {}", tab_id);
         }
     }
 

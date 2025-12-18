@@ -751,13 +751,11 @@ fn render_command_input(
                     div()
                         .id("send-command-btn")
                         .size(px(24.))
-                        .rounded(px(4.))
-                        .bg(primary)
                         .flex()
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(move |s| s.bg(primary.opacity(0.8)))
+                        .hover(move |s| s.bg(primary.opacity(0.1)))
                         .on_click(move |_, window, cx| {
                             // 获取输入框和 PTY channel
                             let Some(input) = input_for_click.clone() else {
@@ -797,12 +795,7 @@ fn render_command_input(
                                 state.set_value(String::new(), window, cx);
                             });
                         })
-                        .child(
-                            svg()
-                                .path(icons::SEND)
-                                .size(px(14.))
-                                .text_color(gpui::white()),
-                        ),
+                        .child(svg().path(icons::SEND).size(px(14.)).text_color(primary)),
                 ),
         )
 }

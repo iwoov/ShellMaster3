@@ -40,5 +40,12 @@ pub fn render_sftp_panel(sftp_state: Option<&SftpState>, cx: &App) -> impl IntoE
         .flex()
         .flex_col()
         .child(toolbar)
-        .child(content_area)
+        // 用 div 包装 content_area 以应用 flex_1 和 min_h，确保滚动正常工作
+        .child(
+            div()
+                .flex_1()
+                .min_h(px(0.))
+                .overflow_hidden()
+                .child(content_area),
+        )
 }

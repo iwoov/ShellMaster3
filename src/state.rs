@@ -1,6 +1,7 @@
 // 全局 AppState
 
 use crate::components::monitor::DetailDialogState;
+use crate::components::sftp::FileListView;
 use crate::models::monitor::MonitorState;
 use crate::models::sftp::SftpState;
 use crate::models::SnippetsConfig;
@@ -93,6 +94,8 @@ pub struct SessionState {
     pub monitor_services: Arc<Mutex<HashMap<String, MonitorService>>>,
     /// SFTP 服务实例（按 tab_id 存储）
     pub sftp_services: Arc<Mutex<HashMap<String, SftpService>>>,
+    /// SFTP 文件列表视图（按 tab_id 存储）
+    pub sftp_file_list_views: HashMap<String, Entity<FileListView>>,
 }
 
 impl Default for SessionState {
@@ -110,6 +113,7 @@ impl Default for SessionState {
             monitor_detail_dialog: None,
             monitor_services: Arc::new(Mutex::new(HashMap::new())),
             sftp_services: Arc::new(Mutex::new(HashMap::new())),
+            sftp_file_list_views: HashMap::new(),
         }
     }
 }
@@ -166,6 +170,11 @@ impl SessionState {
                 if services.remove(tab_id).is_some() {
                     info!("[Monitor] Service removed for closed tab {}", tab_id);
                 }
+            }
+
+            // 移除 SFTP 文件列表视图
+            if self.sftp_file_list_views.remove(tab_id).is_some() {
+                info!("[SFTP] FileListView removed for closed tab {}", tab_id);
             }
 
             // 关闭 SSH 会话
@@ -245,6 +254,52 @@ impl SessionState {
             self.monitor_detail_dialog = Some(cx.new(|_| DetailDialogState::default()));
         }
         self.monitor_detail_dialog.clone().unwrap()
+    }
+
+    /// 确保 SFTP 文件列表视图已创建
+    pub fn ensure_sftp_file_list_view(
+        &mut self,
+        tab_id: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Entity<FileListView> {
+        if !self.sftp_file_list_views.contains_key(tab_id) {
+            let view = cx.new(|cx| FileListView::new(window, cx));
+
+            // 订阅 TableEvent 以处理双击事件
+            let tab_id_for_event = tab_id.to_string();
+            let view_for_event = view.clone();
+            cx.subscribe_in(
+                &view,
+                window,
+                move |this, _emitter, event: &gpui_component::table::TableEvent, _window, cx| {
+                    use gpui_component::table::TableEvent;
+                    match event {
+                        TableEvent::DoubleClickedRow(row_ix) => {
+                            // 获取文件路径并触发打开事件
+                            if let Some(path) = view_for_event.read(cx).get_file_path(*row_ix, cx) {
+                                let tab_id = tab_id_for_event.clone();
+                                // 直接在 this 上操作，避免嵌套 update
+                                this.sftp_open(&tab_id, path, cx);
+                            }
+                        }
+                        TableEvent::SelectRow(_row_ix) => {
+                            // TODO: 处理选择事件
+                        }
+                        _ => {}
+                    }
+                },
+            )
+            .detach();
+
+            self.sftp_file_list_views.insert(tab_id.to_string(), view);
+        }
+        self.sftp_file_list_views.get(tab_id).unwrap().clone()
+    }
+
+    /// 获取 SFTP 文件列表视图（如果存在）
+    pub fn get_sftp_file_list_view(&self, tab_id: &str) -> Option<Entity<FileListView>> {
+        self.sftp_file_list_views.get(tab_id).cloned()
     }
 
     /// 确保命令输入框已创建，并更新占位符为当前语言

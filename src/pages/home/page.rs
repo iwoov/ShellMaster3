@@ -409,6 +409,21 @@ impl HomePage {
                         state.ensure_command_input_created(window, cx);
                     });
 
+                    // 确保 SFTP 文件列表视图已创建并同步数据
+                    let tab_id_for_sftp = tab.id.clone();
+                    session_state.update(cx, |state, cx| {
+                        let view = state.ensure_sftp_file_list_view(&tab_id_for_sftp, window, cx);
+                        // 同步 SFTP 状态到 FileListView
+                        let sftp_state = state
+                            .tabs
+                            .iter()
+                            .find(|t| t.id == tab_id_for_sftp)
+                            .and_then(|t| t.sftp_state.as_ref());
+                        view.update(cx, |v, cx| {
+                            v.sync_from_sftp_state(sftp_state, cx);
+                        });
+                    });
+
                     // 检查当前激活的终端是否已初始化
                     let needs_init = tab
                         .active_terminal_id

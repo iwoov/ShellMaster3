@@ -57,7 +57,7 @@ pub fn render_session_layout(
         .child(
             resizable_panel()
                 .size(px(300.))
-                .child(render_sftp_panel(cx)),
+                .child(render_sftp_panel(tab.sftp_state.as_ref(), cx)),
         ); // SFTP ~40%
 
     // 获取主题颜色

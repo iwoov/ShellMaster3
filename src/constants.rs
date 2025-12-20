@@ -45,4 +45,19 @@ pub mod icons {
     pub const NETWORK: &str = "icons/network.svg";
     pub const INFO: &str = "icons/info.svg";
     pub const EXPAND: &str = "icons/expand.svg";
+    // SFTP 图标
+    pub const ARROW_LEFT: &str = "icons/arrow-left.svg";
+    pub const ARROW_RIGHT: &str = "icons/arrow-right.svg";
+    pub const ARROW_UP: &str = "icons/arrow-up.svg";
+    pub const FOLDER_PLUS: &str = "icons/folder-plus.svg";
+    pub const EYE: &str = "icons/eye.svg";
+    pub const EYE_OFF: &str = "icons/eye-off.svg";
+    pub const SEARCH: &str = "icons/search.svg";
+    // 文件类型图标
+    pub const FILE: &str = "icons/file.svg";
+    pub const FILE_TEXT: &str = "icons/file-text.svg";
+    pub const FILE_CODE: &str = "icons/file-code.svg";
+    pub const FILE_JSON: &str = "icons/file-json.svg";
+    pub const IMAGE: &str = "icons/image.svg";
+    pub const ARCHIVE: &str = "icons/archive.svg";
 }

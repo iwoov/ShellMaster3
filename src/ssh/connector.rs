@@ -274,6 +274,9 @@ pub fn start_ssh_connection(
                             // 启动 Monitor 服务（收集服务器监控数据）
                             state.start_monitor_service(tab_id_clone.clone(), cx);
 
+                            // 启动 SFTP 服务（初始化 SFTP 子系统并加载用户主目录）
+                            state.start_sftp_service(tab_id_clone.clone(), cx);
+
                             cx.notify();
                         });
                     });

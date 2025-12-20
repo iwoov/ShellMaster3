@@ -1,49 +1,44 @@
-// SFTP 面板组件 - 包含文件夹树和文件列表
+// SFTP 面板组件 - 包含导航工具栏、文件夹树和文件列表
 
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::ActiveTheme;
+
+use crate::components::sftp::{render_file_list, render_folder_tree, render_sftp_toolbar};
+use crate::models::sftp::SftpState;
 
 /// 渲染 SFTP 面板
-/// 左侧为文件夹树，右侧为文件列表，通过可拖动分隔条划分
-pub fn render_sftp_panel(cx: &App) -> impl IntoElement {
-    let muted_foreground = cx.theme().muted_foreground;
-    let bg_color = crate::theme::sidebar_color(cx);
+/// 布局结构：
+/// ┌─────────────────────────────────────────────────────────────────┐
+/// │ [←][→][↑][🏠] │     /home/user/path/to/folder      │ [🔄][📁][👁] │
+/// ├─────────────────┬───────────────────────────────────────────────┤
+/// │                 │                                               │
+/// │    文件夹树      │              文件列表                         │
+/// │                 │                                               │
+/// └─────────────────┴───────────────────────────────────────────────┘
+pub fn render_sftp_panel(sftp_state: Option<&SftpState>, cx: &App) -> impl IntoElement {
+    // === 顶部工具栏 ===
+    let toolbar = render_sftp_toolbar(sftp_state, cx);
 
-    // 左侧：文件夹树（初始宽度 219px，与上方 Monitor 面板对齐）
-    let folder_tree = div()
-        .size_full()
-        .bg(bg_color)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .text_sm()
-                .text_color(muted_foreground)
-                .child("文件夹树"),
-        );
+    // === 左侧内容区：文件夹树 ===
+    let folder_tree = render_folder_tree(sftp_state, cx);
 
-    // 右侧：文件列表
-    let file_list = div()
-        .size_full()
-        .bg(bg_color)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .text_sm()
-                .text_color(muted_foreground)
-                .child("文件列表"),
-        );
+    // === 右侧内容区：文件列表 ===
+    let file_list = render_file_list(sftp_state, cx);
 
-    // 使用水平可调整大小布局
-    h_resizable("sftp-panel-h")
+    // === 下方内容区：使用水平可调整大小布局分隔文件夹树和文件列表 ===
+    let content_area = h_resizable("sftp-panel-h")
         .child(
             resizable_panel()
-                .size(px(229.)) // 文件夹树初始宽度 230px
+                .size(px(229.)) // 文件夹树初始宽度，与 Monitor 面板对齐
                 .child(folder_tree),
         )
-        .child(resizable_panel().child(file_list))
+        .child(resizable_panel().child(file_list));
+
+    // === 整体布局：工具栏 + 内容区 ===
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .child(toolbar)
+        .child(content_area)
 }

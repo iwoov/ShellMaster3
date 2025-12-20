@@ -30,3 +30,5 @@ alacritty_terminal = "0.25"
 tracing = "0.1.43"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# SFTP
+russh-sftp = "2.1"

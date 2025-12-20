@@ -2,8 +2,10 @@
 
 use crate::components::monitor::DetailDialogState;
 use crate::models::monitor::MonitorState;
+use crate::models::sftp::SftpState;
 use crate::models::SnippetsConfig;
 use crate::services::monitor::{MonitorEvent, MonitorService, MonitorSettings};
+use crate::services::sftp::SftpService;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -55,6 +57,8 @@ pub struct SessionTab {
     pub terminal_counter: u32,
     /// Monitor 监控状态
     pub monitor_state: MonitorState,
+    /// SFTP 状态（懒加载）
+    pub sftp_state: Option<SftpState>,
 }
 
 /// 侧边栏面板类型
@@ -87,6 +91,8 @@ pub struct SessionState {
     pub monitor_detail_dialog: Option<Entity<DetailDialogState>>,
     /// Monitor 服务实例（按 tab_id 存储）
     pub monitor_services: Arc<Mutex<HashMap<String, MonitorService>>>,
+    /// SFTP 服务实例（按 tab_id 存储）
+    pub sftp_services: Arc<Mutex<HashMap<String, SftpService>>>,
 }
 
 impl Default for SessionState {
@@ -103,6 +109,7 @@ impl Default for SessionState {
             terminal_focus_handle: None,
             monitor_detail_dialog: None,
             monitor_services: Arc::new(Mutex::new(HashMap::new())),
+            sftp_services: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -133,6 +140,7 @@ impl SessionState {
             active_terminal_id: Some(first_terminal_id),
             terminal_counter: 1,
             monitor_state: MonitorState::empty(),
+            sftp_state: None,
         };
         // 新标签插入到最前面
         self.tabs.insert(0, tab);
@@ -763,4 +771,216 @@ impl SessionState {
             })
             .detach();
     }
+
+    /// 启动 SFTP 服务
+    /// 在 SSH 连接成功后调用，初始化 SFTP 子系统并加载用户主目录
+    pub fn start_sftp_service(&mut self, tab_id: String, cx: &mut gpui::Context<Self>) {
+        let session_state = cx.entity().clone();
+
+        // 获取 SSH manager 和 session
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        let Some(session) = ssh_manager.get_session(&tab_id) else {
+            error!("[SFTP] No SSH session found for tab {}", tab_id);
+            return;
+        };
+
+        info!("[SFTP] Starting SFTP service for tab {}", tab_id);
+
+        // 直接初始化空的 SftpState（不需要嵌套 update）
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            let mut sftp_state = SftpState::default();
+            sftp_state.show_hidden = true; // 默认显示隐藏文件
+            tab.sftp_state = Some(sftp_state);
+        }
+
+        // 创建 channel 用于从 tokio 运行时发送结果到 GPUI
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SftpInitResult>();
+
+        // 在 SSH 运行时中启动 SFTP 初始化任务
+        let tab_id_for_tokio = tab_id.clone();
+        let sftp_services = self.sftp_services.clone();
+        ssh_manager.runtime().spawn(async move {
+            // 获取 SFTP 子系统（在 tokio 运行时中）
+            let sftp_result = SftpService::new(tab_id_for_tokio.clone(), &session).await;
+
+            match sftp_result {
+                Ok(service) => {
+                    info!(
+                        "[SFTP] SFTP service initialized for tab {}",
+                        tab_id_for_tokio
+                    );
+
+                    // 获取用户主目录
+                    let home_dir = match service.get_home_dir().await {
+                        Ok(home) => {
+                            info!("[SFTP] Home directory: {}", home);
+                            home
+                        }
+                        Err(e) => {
+                            error!("[SFTP] Failed to get home directory: {:?}", e);
+                            "/".to_string()
+                        }
+                    };
+
+                    // 计算路径层级（如 /home/wuyun -> ["/", "/home", "/home/wuyun"]）
+                    let path_hierarchy = get_path_hierarchy(&home_dir);
+                    info!("[SFTP] Path hierarchy: {:?}", path_hierarchy);
+
+                    // 加载所有路径层级的目录内容
+                    let mut dir_caches: Vec<(String, Vec<crate::models::sftp::FileEntry>)> =
+                        Vec::new();
+                    for path in &path_hierarchy {
+                        match service.read_dir(path).await {
+                            Ok(entries) => {
+                                info!("[SFTP] Loaded {} entries from {}", entries.len(), path);
+                                dir_caches.push((path.clone(), entries));
+                            }
+                            Err(e) => {
+                                error!("[SFTP] Failed to read directory {}: {:?}", path, e);
+                            }
+                        }
+                    }
+
+                    // 并发读取 /etc/passwd 和 /etc/group
+                    let (passwd_result, group_result) = tokio::join!(
+                        service.read_file("/etc/passwd"),
+                        service.read_file("/etc/group")
+                    );
+
+                    let passwd_content = match passwd_result {
+                        Ok(content) => {
+                            info!("[SFTP] Loaded /etc/passwd ({} bytes)", content.len());
+                            Some(content)
+                        }
+                        Err(e) => {
+                            error!("[SFTP] Failed to read /etc/passwd: {}", e);
+                            None
+                        }
+                    };
+
+                    let group_content = match group_result {
+                        Ok(content) => {
+                            info!("[SFTP] Loaded /etc/group ({} bytes)", content.len());
+                            Some(content)
+                        }
+                        Err(e) => {
+                            error!("[SFTP] Failed to read /etc/group: {}", e);
+                            None
+                        }
+                    };
+
+                    // 存储 service
+                    if let Ok(mut services) = sftp_services.lock() {
+                        services.insert(tab_id_for_tokio.clone(), service);
+                    }
+
+                    // 发送成功结果
+                    let _ = tx.send(SftpInitResult::Success {
+                        home_dir,
+                        path_hierarchy,
+                        dir_caches,
+                        passwd_content,
+                        group_content,
+                    });
+                }
+                Err(e) => {
+                    error!("[SFTP] Failed to initialize SFTP service: {:?}", e);
+                    let _ = tx.send(SftpInitResult::Error(format!("SFTP 初始化失败: {}", e)));
+                }
+            }
+        });
+
+        // 在 GPUI 异步上下文中等待结果并更新 UI
+        let tab_id_for_ui = tab_id.clone();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                if let Some(result) = rx.recv().await {
+                    let tab_id_clone = tab_id_for_ui.clone();
+                    let _ = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
+                            {
+                                if let Some(sftp_state) = &mut tab.sftp_state {
+                                    match result {
+                                        SftpInitResult::Success {
+                                            home_dir,
+                                            path_hierarchy: _,
+                                            dir_caches,
+                                            passwd_content,
+                                            group_content,
+                                        } => {
+                                            sftp_state.set_home_dir(home_dir.clone());
+                                            sftp_state.navigate_to(home_dir.clone());
+
+                                            // 解析用户/组信息
+                                            if let Some(passwd) = passwd_content {
+                                                sftp_state.parse_passwd(&passwd);
+                                            }
+                                            if let Some(group) = group_content {
+                                                sftp_state.parse_group(&group);
+                                            }
+
+                                            // 缓存所有层级目录
+                                            for (path, entries) in dir_caches {
+                                                sftp_state
+                                                    .update_cache(path.clone(), entries.clone());
+                                                // 如果是 home 目录，更新文件列表
+                                                if path == home_dir {
+                                                    sftp_state.update_file_list(entries);
+                                                }
+                                            }
+
+                                            // 自动展开路径层级到 home 目录
+                                            sftp_state.expand_to_path(&home_dir);
+
+                                            sftp_state.set_loading(false);
+                                        }
+                                        SftpInitResult::Error(msg) => {
+                                            sftp_state.set_error(msg);
+                                            sftp_state.set_loading(false);
+                                        }
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        });
+                    });
+                }
+
+                info!("[SFTP] Initialization task ended for tab {}", tab_id_for_ui);
+            })
+            .detach();
+    }
+}
+
+/// SFTP 初始化结果
+enum SftpInitResult {
+    Success {
+        home_dir: String,
+        path_hierarchy: Vec<String>,
+        dir_caches: Vec<(String, Vec<crate::models::sftp::FileEntry>)>,
+        passwd_content: Option<String>,
+        group_content: Option<String>,
+    },
+    Error(String),
+}
+
+/// 计算路径层级列表（如 /home/wuyun -> ["/", "/home", "/home/wuyun"]）
+fn get_path_hierarchy(path: &str) -> Vec<String> {
+    let mut hierarchy = Vec::new();
+    hierarchy.push("/".to_string());
+
+    if path == "/" {
+        return hierarchy;
+    }
+
+    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut current = String::new();
+    for part in parts {
+        current.push('/');
+        current.push_str(part);
+        hierarchy.push(current.clone());
+    }
+
+    hierarchy
 }

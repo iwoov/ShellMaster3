@@ -2,4 +2,10 @@
 
 pub mod editor;
 pub mod file_list;
+pub mod folder_tree;
+pub mod toolbar;
 pub mod view;
+
+pub use file_list::render_file_list;
+pub use folder_tree::render_folder_tree;
+pub use toolbar::render_sftp_toolbar;

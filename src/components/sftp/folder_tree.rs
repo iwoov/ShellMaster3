@@ -2,6 +2,7 @@
 // 层级展示目录结构，支持懒加载和展开/折叠
 
 use gpui::*;
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::ActiveTheme;
 
 use crate::constants::icons;
@@ -238,7 +239,7 @@ where
                 .flex_1()
                 .min_h(px(0.))
                 .bg(bg_color)
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .child(div().flex().flex_col().children(items))
                 .into_any_element()
         }

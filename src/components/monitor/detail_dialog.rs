@@ -1,6 +1,7 @@
 // Monitor detail dialog components
 
 use gpui::*;
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::{ActiveTheme, StyledExt};
 
 use crate::constants::icons;
@@ -136,6 +137,10 @@ pub fn render_detail_dialog(
                 .on_mouse_down(MouseButton::Left, |_, _, cx| {
                     cx.stop_propagation();
                 })
+                // 阻止滚动事件穿透到底层内容
+                .on_scroll_wheel(|_, _, cx| {
+                    cx.stop_propagation();
+                })
                 // Header
                 .child(
                     div()
@@ -176,7 +181,8 @@ pub fn render_detail_dialog(
                     div()
                         .id("detail-dialog-content-scroll")
                         .flex_1()
-                        .overflow_y_scroll()
+                        .min_h(px(0.))
+                        .overflow_y_scrollbar()
                         .p_4()
                         .child(match dialog_type {
                             DetailDialogType::SystemInfo => {

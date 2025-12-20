@@ -2,6 +2,7 @@
 // 表格形式展示当前目录内容
 
 use gpui::*;
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::{ActiveTheme, InteractiveElementExt};
 
 use crate::constants::icons;
@@ -270,7 +271,7 @@ where
                             .id("sftp-file-list-scroll")
                             .flex_1()
                             .min_h(px(0.))
-                            .overflow_y_scroll()
+                            .overflow_y_scrollbar()
                             .children(rows),
                     )
                     .into_any_element()

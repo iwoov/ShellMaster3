@@ -1,6 +1,7 @@
 // 系统监控主视图
 
 use gpui::*;
+use gpui_component::scroll::ScrollableElement;
 
 use crate::models::monitor::MonitorState;
 use crate::state::SessionState;
@@ -26,7 +27,7 @@ pub fn render_monitor_view(
         .flex_1()
         .min_h(px(0.))
         .bg(bg_color)
-        .overflow_y_scroll()
+        .overflow_y_scrollbar()
         .px_1()
         .py_2()
         .flex()

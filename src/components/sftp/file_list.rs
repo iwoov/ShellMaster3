@@ -5,6 +5,7 @@ use gpui::*;
 use gpui_component::{ActiveTheme, InteractiveElementExt};
 
 use crate::constants::icons;
+use crate::i18n::t;
 use crate::models::sftp::{FileEntry, FileType, SftpState};
 
 /// 表头高度
@@ -43,6 +44,9 @@ fn get_file_icon(entry: &FileEntry) -> &'static str {
 fn render_header(cx: &App) -> impl IntoElement {
     let border_color = cx.theme().border;
     let muted = cx.theme().muted_foreground;
+    let lang = crate::services::storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or_default();
 
     div()
         .w_full()
@@ -60,7 +64,7 @@ fn render_header(cx: &App) -> impl IntoElement {
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
-                .child("名称"),
+                .child(t(&lang, "sftp.header.name")),
         )
         // 权限列
         .child(
@@ -69,7 +73,7 @@ fn render_header(cx: &App) -> impl IntoElement {
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
-                .child("权限"),
+                .child(t(&lang, "sftp.header.permissions")),
         )
         // 用户/组列
         .child(
@@ -78,7 +82,7 @@ fn render_header(cx: &App) -> impl IntoElement {
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
-                .child("用户/组"),
+                .child(t(&lang, "sftp.header.owner")),
         )
         // 大小列
         .child(
@@ -87,7 +91,7 @@ fn render_header(cx: &App) -> impl IntoElement {
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
-                .child("大小"),
+                .child(t(&lang, "sftp.header.size")),
         )
         // 修改时间列
         .child(
@@ -96,7 +100,7 @@ fn render_header(cx: &App) -> impl IntoElement {
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
-                .child("修改时间"),
+                .child(t(&lang, "sftp.header.modified")),
         )
 }
 

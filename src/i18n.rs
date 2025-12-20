@@ -250,6 +250,12 @@ fn zh_cn(key: &'static str) -> &'static str {
         "session.sftp.local" => "本地",
         "session.sftp.remote" => "远程",
         "session.sftp.placeholder" => "文件列表加载中...",
+        // SFTP 文件列表表头
+        "sftp.header.name" => "名称",
+        "sftp.header.permissions" => "权限",
+        "sftp.header.owner" => "用户/组",
+        "sftp.header.size" => "大小",
+        "sftp.header.modified" => "修改时间",
         // 终端输入
         "session.terminal.simulated" => "模拟终端区域",
         "session.terminal.command_placeholder" => "输入命令...",
@@ -574,6 +580,12 @@ fn en_us(key: &'static str) -> &'static str {
         "session.sftp.local" => "Local",
         "session.sftp.remote" => "Remote",
         "session.sftp.placeholder" => "Loading file list...",
+        // SFTP File List Header
+        "sftp.header.name" => "Name",
+        "sftp.header.permissions" => "Permissions",
+        "sftp.header.owner" => "User/Group",
+        "sftp.header.size" => "Size",
+        "sftp.header.modified" => "Modified",
         // Terminal Input
         "session.terminal.simulated" => "Simulated Terminal",
         "session.terminal.command_placeholder" => "Enter command...",

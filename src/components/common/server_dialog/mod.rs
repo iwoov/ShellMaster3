@@ -5,7 +5,7 @@ pub mod panels;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::input::InputState;
-
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::ActiveTheme;
 
 use crate::components::common::icon::render_icon;
@@ -605,6 +605,10 @@ fn render_dialog_content(state: Entity<ServerDialogState>, cx: &App) -> impl Int
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             cx.stop_propagation();
         })
+        // 阻止滚动事件穿透到底层内容
+        .on_scroll_wheel(|_, _, cx| {
+            cx.stop_propagation();
+        })
         .child(render_left_menu(state_for_section, cx))
         .child(render_right_content(state, state_for_cancel, cx))
         // 下拉菜单覆盖层 - 在对话框内容最后渲染，确保在最顶层
@@ -742,10 +746,8 @@ fn render_right_content(
             div()
                 .id("form-scroll")
                 .flex_1()
-                .overflow_scroll()
-                .p_4()
-                .flex_1()
-                .overflow_scroll()
+                .min_h(px(0.))
+                .overflow_y_scrollbar()
                 .p_4()
                 .child(match state.read(cx).current_section {
                     DialogSection::BasicInfo => {

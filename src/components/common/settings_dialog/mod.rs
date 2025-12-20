@@ -5,6 +5,7 @@ pub mod panels;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::input::InputState;
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::ActiveTheme;
 
 use crate::components::common::icon::render_icon;
@@ -503,6 +504,10 @@ fn render_dialog_content(state: Entity<SettingsDialogState>, cx: &App) -> impl I
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             cx.stop_propagation();
         })
+        // 阻止滚动事件穿透到底层内容
+        .on_scroll_wheel(|_, _, cx| {
+            cx.stop_propagation();
+        })
         .child(render_left_nav(state_for_nav, cx))
         .child(render_right_content(
             state,
@@ -626,7 +631,8 @@ fn render_right_content(
             div()
                 .id("settings-form-scroll")
                 .flex_1()
-                .overflow_scroll()
+                .min_h(px(0.))
+                .overflow_y_scrollbar()
                 .p_6()
                 .child(render_section_content(state_for_panel, cx)),
         )

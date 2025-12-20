@@ -10,6 +10,7 @@ use crate::ssh::session::SshSession;
 
 /// SFTP 服务
 /// 封装 russh-sftp 客户端，提供文件操作接口
+#[derive(Clone)]
 pub struct SftpService {
     /// 会话 ID
     session_id: String,

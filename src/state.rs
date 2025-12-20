@@ -1076,6 +1076,324 @@ impl SessionState {
             })
             .detach();
     }
+
+    // ========================================================================
+    // SFTP 事件处理方法
+    // ========================================================================
+
+    /// 切换 SFTP 目录展开状态
+    /// 如果目录未缓存，会从 SftpService 加载
+    pub fn sftp_toggle_expand(&mut self, tab_id: &str, path: String, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Toggle expand: {} for tab {}", path, tab_id);
+
+        // 获取当前展开状态和缓存状态
+        let (is_expanded, needs_load) = {
+            let tab = self.tabs.iter().find(|t| t.id == tab_id);
+            match tab.and_then(|t| t.sftp_state.as_ref()) {
+                Some(state) => (state.is_expanded(&path), !state.is_cache_valid(&path)),
+                None => return,
+            }
+        };
+
+        // 切换展开状态
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            if let Some(ref mut sftp_state) = tab.sftp_state {
+                sftp_state.toggle_expand(&path);
+            }
+        }
+        cx.notify();
+
+        // 如果展开且需要加载，启动异步加载
+        if !is_expanded && needs_load {
+            self.sftp_load_directory(tab_id, path, cx);
+        }
+    }
+
+    /// 导航到指定 SFTP 目录
+    pub fn sftp_navigate_to(&mut self, tab_id: &str, path: String, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Navigate to: {} for tab {}", path, tab_id);
+
+        // 检查是否需要加载
+        let needs_load = {
+            let tab = self.tabs.iter().find(|t| t.id == tab_id);
+            match tab.and_then(|t| t.sftp_state.as_ref()) {
+                Some(state) => !state.is_cache_valid(&path),
+                None => return,
+            }
+        };
+
+        // 更新当前路径和历史
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            if let Some(ref mut sftp_state) = tab.sftp_state {
+                sftp_state.navigate_to(path.clone());
+                sftp_state.expand_to_path(&path);
+
+                // 如果有缓存，立即更新文件列表
+                if let Some(entries) = sftp_state.get_cached_entries(&path) {
+                    sftp_state.update_file_list(entries.clone());
+                }
+            }
+        }
+        cx.notify();
+
+        // 如果需要加载，启动异步加载
+        if needs_load {
+            self.sftp_load_directory(tab_id, path, cx);
+        }
+    }
+
+    /// SFTP 后退导航
+    pub fn sftp_go_back(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Go back for tab {}", tab_id);
+
+        let new_path = {
+            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                if let Some(ref mut sftp_state) = tab.sftp_state {
+                    if sftp_state.go_back() {
+                        Some(sftp_state.current_path.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(path) = new_path {
+            self.sftp_navigate_to(tab_id, path, cx);
+        }
+    }
+
+    /// SFTP 前进导航
+    pub fn sftp_go_forward(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Go forward for tab {}", tab_id);
+
+        let new_path = {
+            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                if let Some(ref mut sftp_state) = tab.sftp_state {
+                    if sftp_state.go_forward() {
+                        Some(sftp_state.current_path.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(path) = new_path {
+            self.sftp_navigate_to(tab_id, path, cx);
+        }
+    }
+
+    /// SFTP 上级目录导航
+    pub fn sftp_go_up(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Go up for tab {}", tab_id);
+
+        let new_path = {
+            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                if let Some(ref mut sftp_state) = tab.sftp_state {
+                    if sftp_state.go_up() {
+                        Some(sftp_state.current_path.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(path) = new_path {
+            self.sftp_navigate_to(tab_id, path, cx);
+        }
+    }
+
+    /// SFTP 返回主目录
+    pub fn sftp_go_home(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Go home for tab {}", tab_id);
+
+        let home_path = {
+            if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
+                tab.sftp_state.as_ref().map(|s| s.home_dir.clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(path) = home_path {
+            self.sftp_navigate_to(tab_id, path, cx);
+        }
+    }
+
+    /// SFTP 刷新当前目录
+    pub fn sftp_refresh(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Refresh for tab {}", tab_id);
+
+        let current_path = {
+            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                if let Some(ref mut sftp_state) = tab.sftp_state {
+                    sftp_state.refresh();
+                    Some(sftp_state.current_path.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(path) = current_path {
+            self.sftp_load_directory(tab_id, path, cx);
+        }
+    }
+
+    /// 切换显示/隐藏隐藏文件
+    pub fn sftp_toggle_hidden(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Toggle hidden for tab {}", tab_id);
+
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            if let Some(ref mut sftp_state) = tab.sftp_state {
+                sftp_state.toggle_show_hidden();
+            }
+        }
+        cx.notify();
+    }
+
+    /// 打开文件或目录
+    pub fn sftp_open(&mut self, tab_id: &str, path: String, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Open: {} for tab {}", path, tab_id);
+
+        // 检查是否为目录
+        let is_dir = {
+            let tab = self.tabs.iter().find(|t| t.id == tab_id);
+            match tab.and_then(|t| t.sftp_state.as_ref()) {
+                Some(state) => state
+                    .file_list
+                    .iter()
+                    .find(|e| e.path == path)
+                    .map(|e| e.is_dir())
+                    .unwrap_or(false),
+                None => return,
+            }
+        };
+
+        if is_dir {
+            // 导航到目录
+            self.sftp_navigate_to(tab_id, path, cx);
+        } else {
+            // TODO: 打开文件（编辑器或下载）
+            info!("[SFTP] Opening file: {} (not implemented)", path);
+        }
+    }
+
+    /// 从 SftpService 加载目录内容
+    fn sftp_load_directory(&mut self, tab_id: &str, path: String, cx: &mut gpui::Context<Self>) {
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+        let path_clone = path.clone();
+
+        // 设置加载状态
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            if let Some(ref mut sftp_state) = tab.sftp_state {
+                sftp_state.set_loading(true);
+            }
+        }
+        cx.notify();
+
+        // 创建 channel 用于从 tokio 运行时发送结果到 GPUI
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<
+            Result<Vec<crate::models::sftp::FileEntry>, String>,
+        >();
+
+        // 在 SSH 运行时中执行异步加载
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+
+        // 尝试获取 SFTP 服务（在 spawn 之前，避免 MutexGuard 跨 await）
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    return;
+                }
+            };
+            match guard.get(&tab_id_owned) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    return;
+                }
+            }
+        };
+
+        ssh_manager.runtime().spawn(async move {
+            let result = match service.read_dir(&path_clone).await {
+                Ok(entries) => Ok(entries),
+                Err(e) => Err(e),
+            };
+
+            // 发送结果到 GPUI 上下文
+            let _ = tx.send(result);
+        });
+
+        // 在 GPUI 异步上下文中接收结果并更新状态
+        let tab_id_for_ui = tab_id.to_string();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                if let Some(result) = rx.recv().await {
+                    let tab_id_clone = tab_id_for_ui.clone();
+                    let path_for_update = path.clone();
+                    let _ = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
+                            {
+                                if let Some(ref mut sftp_state) = tab.sftp_state {
+                                    sftp_state.set_loading(false);
+
+                                    match result {
+                                        Ok(entries) => {
+                                            info!(
+                                                "[SFTP] Loaded {} entries from {}",
+                                                entries.len(),
+                                                path_for_update
+                                            );
+                                            sftp_state.update_cache(
+                                                path_for_update.clone(),
+                                                entries.clone(),
+                                            );
+
+                                            // 如果是当前目录，更新文件列表
+                                            if sftp_state.current_path == path_for_update {
+                                                sftp_state.update_file_list(entries);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "[SFTP] Failed to load directory {}: {}",
+                                                path_for_update, e
+                                            );
+                                            sftp_state.set_error(e);
+                                        }
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        });
+                    });
+                }
+            })
+            .detach();
+    }
 }
 
 /// SFTP 初始化结果

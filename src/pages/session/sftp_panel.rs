@@ -3,8 +3,12 @@
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 
-use crate::components::sftp::{render_file_list, render_folder_tree, render_sftp_toolbar};
+use crate::components::sftp::{
+    render_file_list, render_folder_tree, render_sftp_toolbar, FileListEvent, FolderTreeEvent,
+    SftpToolbarEvent,
+};
 use crate::models::sftp::SftpState;
+use crate::state::SessionState;
 
 /// 渲染 SFTP 面板
 /// 布局结构：
@@ -15,15 +19,74 @@ use crate::models::sftp::SftpState;
 /// │    文件夹树      │              文件列表                         │
 /// │                 │                                               │
 /// └─────────────────┴───────────────────────────────────────────────┘
-pub fn render_sftp_panel(sftp_state: Option<&SftpState>, cx: &App) -> impl IntoElement {
+pub fn render_sftp_panel(
+    sftp_state: Option<&SftpState>,
+    session_state: Entity<SessionState>,
+    tab_id: String,
+    cx: &App,
+) -> impl IntoElement {
+    // === 创建事件处理闭包 (同步版本，直接在 on_mouse_down/on_double_click 中调用) ===
+    let session_for_toolbar = session_state.clone();
+    let tab_id_for_toolbar = tab_id.clone();
+
+    let on_toolbar_event = move |event: SftpToolbarEvent, cx: &mut App| {
+        session_for_toolbar.update(cx, |state, cx| match event {
+            SftpToolbarEvent::GoBack => state.sftp_go_back(&tab_id_for_toolbar, cx),
+            SftpToolbarEvent::GoForward => state.sftp_go_forward(&tab_id_for_toolbar, cx),
+            SftpToolbarEvent::GoUp => state.sftp_go_up(&tab_id_for_toolbar, cx),
+            SftpToolbarEvent::GoHome => state.sftp_go_home(&tab_id_for_toolbar, cx),
+            SftpToolbarEvent::Refresh => state.sftp_refresh(&tab_id_for_toolbar, cx),
+            SftpToolbarEvent::ToggleHidden => state.sftp_toggle_hidden(&tab_id_for_toolbar, cx),
+            SftpToolbarEvent::NavigateTo(path) => {
+                state.sftp_navigate_to(&tab_id_for_toolbar, path, cx)
+            }
+            SftpToolbarEvent::NewFolder => {
+                // TODO: 实现新建文件夹
+            }
+            SftpToolbarEvent::Upload => {
+                // TODO: 实现上传
+            }
+            SftpToolbarEvent::Download => {
+                // TODO: 实现下载
+            }
+        });
+    };
+
+    let session_for_tree = session_state.clone();
+    let tab_id_for_tree = tab_id.clone();
+
+    let on_folder_tree_event = move |event: FolderTreeEvent, cx: &mut App| {
+        session_for_tree.update(cx, |state, cx| match event {
+            FolderTreeEvent::ToggleExpand(path) => {
+                state.sftp_toggle_expand(&tab_id_for_tree, path, cx)
+            }
+            FolderTreeEvent::SelectDir(path) => state.sftp_navigate_to(&tab_id_for_tree, path, cx),
+        });
+    };
+
+    let session_for_file = session_state.clone();
+    let tab_id_for_file = tab_id.clone();
+
+    let on_file_list_event = move |event: FileListEvent, cx: &mut App| {
+        session_for_file.update(cx, |state, cx| match event {
+            FileListEvent::Open(path) => state.sftp_open(&tab_id_for_file, path, cx),
+            FileListEvent::Select(_path) => {
+                // TODO: 实现选择文件
+            }
+            FileListEvent::ContextMenu(_path) => {
+                // TODO: 实现右键菜单
+            }
+        });
+    };
+
     // === 顶部工具栏 ===
-    let toolbar = render_sftp_toolbar(sftp_state, cx);
+    let toolbar = render_sftp_toolbar(sftp_state, on_toolbar_event, cx);
 
     // === 左侧内容区：文件夹树 ===
-    let folder_tree = render_folder_tree(sftp_state, cx);
+    let folder_tree = render_folder_tree(sftp_state, on_folder_tree_event, cx);
 
     // === 右侧内容区：文件列表 ===
-    let file_list = render_file_list(sftp_state, cx);
+    let file_list = render_file_list(sftp_state, on_file_list_event, cx);
 
     // === 下方内容区：使用水平可调整大小布局分隔文件夹树和文件列表 ===
     let content_area = h_resizable("sftp-panel-h")

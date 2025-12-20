@@ -2,7 +2,7 @@
 // 表格形式展示当前目录内容
 
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_component::{ActiveTheme, InteractiveElementExt};
 
 use crate::constants::icons;
 use crate::models::sftp::{FileEntry, FileType, SftpState};
@@ -125,7 +125,10 @@ fn format_modified_time(entry: &FileEntry) -> String {
 }
 
 /// 渲染文件行
-fn render_file_row(entry: &FileEntry, state: &SftpState, cx: &App) -> AnyElement {
+fn render_file_row<F>(entry: &FileEntry, state: &SftpState, on_open: F, cx: &App) -> AnyElement
+where
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
     let foreground = cx.theme().foreground;
     let muted = cx.theme().muted_foreground;
     let hover_bg = cx.theme().list_active_border;
@@ -141,6 +144,7 @@ fn render_file_row(entry: &FileEntry, state: &SftpState, cx: &App) -> AnyElement
     let owner = state.format_owner(entry.uid, entry.gid);
 
     div()
+        .id(SharedString::from(format!("sftp-file-row-{}", entry.path)))
         .w_full()
         .h(px(ROW_HEIGHT))
         .flex()
@@ -149,6 +153,7 @@ fn render_file_row(entry: &FileEntry, state: &SftpState, cx: &App) -> AnyElement
         .px_2()
         .cursor_pointer()
         .hover(|s| s.bg(hover_bg))
+        .on_double_click(on_open)
         // 名称列
         .child(
             div()
@@ -207,7 +212,10 @@ fn render_file_row(entry: &FileEntry, state: &SftpState, cx: &App) -> AnyElement
 }
 
 /// 渲染文件列表
-pub fn render_file_list(state: Option<&SftpState>, cx: &App) -> impl IntoElement {
+pub fn render_file_list<F>(state: Option<&SftpState>, on_event: F, cx: &App) -> impl IntoElement
+where
+    F: Fn(FileListEvent, &mut App) + Clone + 'static,
+{
     let bg_color = crate::theme::sidebar_color(cx);
     let muted_foreground = cx.theme().muted_foreground;
 
@@ -216,7 +224,18 @@ pub fn render_file_list(state: Option<&SftpState>, cx: &App) -> impl IntoElement
             let rows: Vec<AnyElement> = s
                 .file_list
                 .iter()
-                .map(|entry| render_file_row(entry, s, cx))
+                .map(|entry| {
+                    let entry_path = entry.path.clone();
+                    let on_open = on_event.clone();
+                    render_file_row(
+                        entry,
+                        s,
+                        move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                            on_open(FileListEvent::Open(entry_path.clone()), cx);
+                        },
+                        cx,
+                    )
+                })
                 .collect();
 
             if rows.is_empty() {

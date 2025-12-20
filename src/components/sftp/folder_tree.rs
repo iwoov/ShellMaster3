@@ -22,13 +22,19 @@ pub enum FolderTreeEvent {
 }
 
 /// 渲染单个树节点
-fn render_tree_item(
+fn render_tree_item<F1, F2>(
     entry: &FileEntry,
     depth: usize,
     is_expanded: bool,
     is_selected: bool,
+    on_toggle: F1,
+    on_select: F2,
     cx: &App,
-) -> AnyElement {
+) -> AnyElement
+where
+    F1: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    F2: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+{
     let foreground = cx.theme().foreground;
     let muted = cx.theme().muted_foreground;
     let selected_bg = cx.theme().list_active;
@@ -36,7 +42,7 @@ fn render_tree_item(
 
     let indent = px(INDENT_WIDTH * depth as f32);
 
-    // 展开/折叠图标
+    // 展开/折叠图标 - 可点击切换
     let expand_icon = if entry.is_dir() {
         let icon = if is_expanded {
             icons::CHEVRON_DOWN
@@ -44,13 +50,24 @@ fn render_tree_item(
             icons::CHEVRON_RIGHT
         };
         div()
+            .id(SharedString::from(format!(
+                "sftp-tree-expand-{}",
+                entry.path
+            )))
             .size(px(14.))
             .flex()
             .items_center()
             .justify_center()
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, on_toggle)
             .child(svg().path(icon).size(px(10.)).text_color(muted))
     } else {
-        div().size(px(14.))
+        div()
+            .id(SharedString::from(format!(
+                "sftp-tree-expand-empty-{}",
+                entry.path
+            )))
+            .size(px(14.))
     };
 
     // 文件夹图标
@@ -64,6 +81,7 @@ fn render_tree_item(
         .text_color(muted);
 
     let mut el = div()
+        .id(SharedString::from(format!("sftp-tree-item-{}", entry.path)))
         .w_full()
         .h(px(ITEM_HEIGHT))
         .flex()
@@ -73,6 +91,7 @@ fn render_tree_item(
         .gap_1()
         .cursor_pointer()
         .hover(|s| s.bg(hover_bg))
+        .on_mouse_down(MouseButton::Left, on_select)
         .child(expand_icon)
         .child(folder_icon)
         .child(
@@ -92,14 +111,16 @@ fn render_tree_item(
     el.into_any_element()
 }
 
-/// 递归渲染目录树（收集到 Vec 中）
-fn collect_tree_items(
+fn collect_tree_items<F>(
     path: &str,
     depth: usize,
     state: &SftpState,
+    on_event: &F,
     cx: &App,
     items: &mut Vec<AnyElement>,
-) {
+) where
+    F: Fn(FolderTreeEvent, &mut App) + Clone + 'static,
+{
     // 获取该路径下的缓存目录
     let entries = match state.dir_cache.get(path) {
         Some(cached) => &cached.entries,
@@ -113,17 +134,38 @@ fn collect_tree_items(
         let is_expanded = state.is_expanded(&entry.path);
         let is_selected = state.current_path == entry.path;
 
-        items.push(render_tree_item(entry, depth, is_expanded, is_selected, cx));
+        let entry_path = entry.path.clone();
+        let on_toggle = on_event.clone();
+        let toggle_path = entry_path.clone();
+
+        let on_select = on_event.clone();
+        let select_path = entry_path.clone();
+
+        items.push(render_tree_item(
+            entry,
+            depth,
+            is_expanded,
+            is_selected,
+            move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_toggle(FolderTreeEvent::ToggleExpand(toggle_path.clone()), cx);
+            },
+            move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_select(FolderTreeEvent::SelectDir(select_path.clone()), cx);
+            },
+            cx,
+        ));
 
         // 如果展开了，递归渲染子目录
         if is_expanded {
-            collect_tree_items(&entry.path, depth + 1, state, cx, items);
+            collect_tree_items(&entry.path, depth + 1, state, on_event, cx, items);
         }
     }
 }
 
-/// 渲染文件夹树
-pub fn render_folder_tree(state: Option<&SftpState>, cx: &App) -> impl IntoElement {
+pub fn render_folder_tree<F>(state: Option<&SftpState>, on_event: F, cx: &App) -> impl IntoElement
+where
+    F: Fn(FolderTreeEvent, &mut App) + Clone + 'static,
+{
     let bg_color = crate::theme::sidebar_color(cx);
     let muted_foreground = cx.theme().muted_foreground;
 
@@ -133,8 +175,12 @@ pub fn render_folder_tree(state: Option<&SftpState>, cx: &App) -> impl IntoEleme
 
             // 根目录
             let is_root_expanded = s.is_expanded("/");
+            let on_root_toggle = on_event.clone();
+            let on_root_select = on_event.clone();
+
             items.push(
                 div()
+                    .id("sftp-tree-root")
                     .w_full()
                     .h(px(ITEM_HEIGHT))
                     .flex()
@@ -143,12 +189,20 @@ pub fn render_folder_tree(state: Option<&SftpState>, cx: &App) -> impl IntoEleme
                     .gap_1()
                     .cursor_pointer()
                     .hover(|el| el.bg(cx.theme().list_active_border))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        on_root_select(FolderTreeEvent::SelectDir("/".to_string()), cx);
+                    })
                     .child(
                         div()
+                            .id("sftp-tree-root-expand")
                             .size(px(14.))
                             .flex()
                             .items_center()
                             .justify_center()
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                on_root_toggle(FolderTreeEvent::ToggleExpand("/".to_string()), cx);
+                            })
                             .child(
                                 svg()
                                     .path(if is_root_expanded {
@@ -176,7 +230,7 @@ pub fn render_folder_tree(state: Option<&SftpState>, cx: &App) -> impl IntoEleme
 
             // 递归收集（如果根目录展开）
             if is_root_expanded {
-                collect_tree_items("/", 1, s, cx, &mut items);
+                collect_tree_items("/", 1, s, &on_event, cx, &mut items);
             }
 
             div()

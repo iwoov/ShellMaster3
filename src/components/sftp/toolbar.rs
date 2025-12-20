@@ -30,7 +30,16 @@ pub enum SftpToolbarEvent {
 }
 
 /// 渲染工具栏按钮
-fn toolbar_button(icon_path: &'static str, enabled: bool, cx: &App) -> impl IntoElement {
+fn toolbar_button<F>(
+    id: impl Into<ElementId>,
+    icon_path: &'static str,
+    enabled: bool,
+    on_click: Option<F>,
+    cx: &App,
+) -> impl IntoElement
+where
+    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+{
     let icon_color = if enabled {
         cx.theme().foreground
     } else {
@@ -39,6 +48,7 @@ fn toolbar_button(icon_path: &'static str, enabled: bool, cx: &App) -> impl Into
     let hover_bg = cx.theme().list_active;
 
     let mut el = div()
+        .id(id)
         .size(px(BUTTON_SIZE))
         .flex()
         .items_center()
@@ -53,13 +63,19 @@ fn toolbar_button(icon_path: &'static str, enabled: bool, cx: &App) -> impl Into
 
     if enabled {
         el = el.cursor_pointer().hover(|s| s.bg(hover_bg));
+        if let Some(handler) = on_click {
+            el = el.on_mouse_down(MouseButton::Left, handler);
+        }
     }
 
     el
 }
 
 /// 渲染 SFTP 工具栏
-pub fn render_sftp_toolbar(state: Option<&SftpState>, cx: &App) -> impl IntoElement {
+pub fn render_sftp_toolbar<F>(state: Option<&SftpState>, on_event: F, cx: &App) -> impl IntoElement
+where
+    F: Fn(SftpToolbarEvent, &mut App) + Clone + 'static,
+{
     let bg_color = crate::theme::sidebar_color(cx);
     let border_color = cx.theme().border;
     let input_bg = cx.theme().background;
@@ -78,15 +94,52 @@ pub fn render_sftp_toolbar(state: Option<&SftpState>, cx: &App) -> impl IntoElem
     };
 
     // === 导航按钮组 ===
+    let on_back = on_event.clone();
+    let on_forward = on_event.clone();
+    let on_up = on_event.clone();
+    let on_home = on_event.clone();
+
     let nav_buttons = div()
         .flex()
         .items_center()
         .gap_0p5()
         .flex_shrink_0()
-        .child(toolbar_button(icons::ARROW_LEFT, can_back, cx))
-        .child(toolbar_button(icons::ARROW_RIGHT, can_forward, cx))
-        .child(toolbar_button(icons::ARROW_UP, can_up, cx))
-        .child(toolbar_button(icons::HOME, true, cx));
+        .child(toolbar_button(
+            "sftp-btn-back",
+            icons::ARROW_LEFT,
+            can_back,
+            Some(move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_back(SftpToolbarEvent::GoBack, cx);
+            }),
+            cx,
+        ))
+        .child(toolbar_button(
+            "sftp-btn-forward",
+            icons::ARROW_RIGHT,
+            can_forward,
+            Some(move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_forward(SftpToolbarEvent::GoForward, cx);
+            }),
+            cx,
+        ))
+        .child(toolbar_button(
+            "sftp-btn-up",
+            icons::ARROW_UP,
+            can_up,
+            Some(move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_up(SftpToolbarEvent::GoUp, cx);
+            }),
+            cx,
+        ))
+        .child(toolbar_button(
+            "sftp-btn-home",
+            icons::HOME,
+            true,
+            Some(move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_home(SftpToolbarEvent::GoHome, cx);
+            }),
+            cx,
+        ));
 
     // === 地址栏 ===
     let path_bar = div()
@@ -117,17 +170,63 @@ pub fn render_sftp_toolbar(state: Option<&SftpState>, cx: &App) -> impl IntoElem
         icons::EYE
     };
 
+    let on_refresh = on_event.clone();
+    let on_new_folder = on_event.clone();
+    let on_toggle_hidden = on_event.clone();
+    let on_upload = on_event.clone();
+    let on_download = on_event.clone();
+
     let action_buttons = div()
         .flex()
         .items_center()
         .gap_0p5()
         .flex_shrink_0()
-        .child(toolbar_button(icons::REFRESH, true, cx))
-        .child(toolbar_button(icons::FOLDER_PLUS, true, cx))
-        .child(toolbar_button(hidden_icon, true, cx))
+        .child(toolbar_button(
+            "sftp-btn-refresh",
+            icons::REFRESH,
+            true,
+            Some(move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_refresh(SftpToolbarEvent::Refresh, cx);
+            }),
+            cx,
+        ))
+        .child(toolbar_button(
+            "sftp-btn-new-folder",
+            icons::FOLDER_PLUS,
+            true,
+            Some(move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_new_folder(SftpToolbarEvent::NewFolder, cx);
+            }),
+            cx,
+        ))
+        .child(toolbar_button(
+            "sftp-btn-toggle-hidden",
+            hidden_icon,
+            true,
+            Some(move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_toggle_hidden(SftpToolbarEvent::ToggleHidden, cx);
+            }),
+            cx,
+        ))
         .child(div().w(px(1.)).h(px(16.)).mx_1().bg(border_color))
-        .child(toolbar_button(icons::UPLOAD, true, cx))
-        .child(toolbar_button(icons::DOWNLOAD, true, cx));
+        .child(toolbar_button(
+            "sftp-btn-upload",
+            icons::UPLOAD,
+            true,
+            Some(move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_upload(SftpToolbarEvent::Upload, cx);
+            }),
+            cx,
+        ))
+        .child(toolbar_button(
+            "sftp-btn-download",
+            icons::DOWNLOAD,
+            true,
+            Some(move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                on_download(SftpToolbarEvent::Download, cx);
+            }),
+            cx,
+        ));
 
     // === 工具栏布局 ===
     div()

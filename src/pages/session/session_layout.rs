@@ -52,13 +52,16 @@ pub fn render_session_layout(
         )));
 
     // 左侧区域：上方区域 | SFTP （垂直分隔）
+    let session_state_for_sftp = session_state.clone();
+    let tab_id_for_sftp = tab.id.clone();
     let left_area = v_resizable("session-left-v")
         .child(resizable_panel().child(top_area))
-        .child(
-            resizable_panel()
-                .size(px(300.))
-                .child(render_sftp_panel(tab.sftp_state.as_ref(), cx)),
-        ); // SFTP ~40%
+        .child(resizable_panel().size(px(300.)).child(render_sftp_panel(
+            tab.sftp_state.as_ref(),
+            session_state_for_sftp,
+            tab_id_for_sftp,
+            cx,
+        ))); // SFTP ~40%
 
     // 获取主题颜色
     let border_color = cx.theme().border;

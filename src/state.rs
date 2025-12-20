@@ -810,141 +810,196 @@ impl SessionState {
                         tab_id_for_tokio
                     );
 
-                    // ============================================================
-                    // 第一阶段：并行获取主目录、/etc/passwd、/etc/group
-                    // ============================================================
-                    let (home_result, passwd_result, group_result) = tokio::join!(
-                        service.get_home_dir(),
-                        service.read_file("/etc/passwd"),
-                        service.read_file("/etc/group")
-                    );
-
-                    let home_dir = match home_result {
-                        Ok(home) => {
-                            info!("[SFTP] Home directory: {}", home);
-                            home
-                        }
-                        Err(e) => {
-                            error!("[SFTP] Failed to get home directory: {:?}", e);
-                            "/".to_string()
-                        }
-                    };
-
-                    let passwd_content = match passwd_result {
-                        Ok(content) => {
-                            info!("[SFTP] Loaded /etc/passwd ({} bytes)", content.len());
-                            Some(content)
-                        }
-                        Err(e) => {
-                            error!("[SFTP] Failed to read /etc/passwd: {}", e);
-                            None
-                        }
-                    };
-
-                    let group_content = match group_result {
-                        Ok(content) => {
-                            info!("[SFTP] Loaded /etc/group ({} bytes)", content.len());
-                            Some(content)
-                        }
-                        Err(e) => {
-                            error!("[SFTP] Failed to read /etc/group: {}", e);
-                            None
-                        }
-                    };
-
-                    // ============================================================
-                    // 第二阶段：并行读取所有路径层级的目录内容
-                    // ============================================================
-                    let path_hierarchy = get_path_hierarchy(&home_dir);
-                    info!("[SFTP] Path hierarchy: {:?}", path_hierarchy);
-
-                    // 创建并行读取任务
+                    // 获取共享的 SFTP session
                     let sftp = service.sftp();
-                    let read_futures: Vec<_> = path_hierarchy
-                        .iter()
-                        .map(|path| {
-                            let path = path.clone();
-                            let sftp = sftp.clone();
-                            async move {
-                                let result = sftp.read_dir(&path).await;
-                                (path, result)
-                            }
-                        })
-                        .collect();
 
-                    // 并行执行所有目录读取
-                    let dir_results = futures::future::join_all(read_futures).await;
+                    // ============================================================
+                    // 任务1：关键路径 - 获取主目录并立即加载目录
+                    // ============================================================
+                    let tx_dir = tx.clone();
+                    let sftp_for_dir = sftp.clone();
+                    let tab_id_for_dir = tab_id_for_tokio.clone();
+                    let sftp_services_clone = sftp_services.clone();
 
-                    // 收集成功的结果
-                    let mut dir_caches: Vec<(String, Vec<crate::models::sftp::FileEntry>)> =
-                        Vec::new();
-                    for (path, result) in dir_results {
-                        match result {
-                            Ok(entries) => {
-                                // ReadDir 是迭代器，先收集成 Vec
-                                let entries: Vec<_> = entries.collect();
-                                // 转换为我们的 FileEntry 类型
-                                let file_entries: Vec<crate::models::sftp::FileEntry> = entries
-                                    .into_iter()
-                                    .filter_map(|entry| {
-                                        let name = entry.file_name();
-                                        if name == "." || name == ".." {
-                                            return None;
-                                        }
-                                        let full_path = if path == "/" {
-                                            format!("/{}", name)
-                                        } else {
-                                            format!("{}/{}", path.trim_end_matches('/'), name)
-                                        };
-                                        let attrs = entry.metadata();
-                                        let file_type = if attrs.is_dir() {
-                                            crate::models::sftp::FileType::Directory
-                                        } else if attrs.is_symlink() {
-                                            crate::models::sftp::FileType::Symlink
-                                        } else {
-                                            crate::models::sftp::FileType::File
-                                        };
-                                        let mut file_entry = crate::models::sftp::FileEntry::new(
-                                            name.to_string(),
-                                            full_path,
-                                            file_type,
-                                        );
-                                        file_entry.size = attrs.size.unwrap_or(0);
-                                        file_entry.permissions =
-                                            attrs.permissions.map(|p| p as u32).unwrap_or(0);
-                                        file_entry.uid = attrs.uid;
-                                        file_entry.gid = attrs.gid;
-                                        if let Some(mtime) = attrs.mtime {
-                                            file_entry.modified = Some(
-                                                std::time::UNIX_EPOCH
-                                                    + std::time::Duration::from_secs(mtime as u64),
-                                            );
-                                        }
-                                        Some(file_entry)
-                                    })
-                                    .collect();
-                                info!("[SFTP] Loaded {} entries from {}", file_entries.len(), path);
-                                dir_caches.push((path, file_entries));
+                    let dir_task = async move {
+                        // 1. 获取主目录（关键路径起点）
+                        let home_dir = match sftp_for_dir.canonicalize(".").await {
+                            Ok(home) => {
+                                info!("[SFTP] Home directory: {}", home);
+                                home
                             }
                             Err(e) => {
-                                error!("[SFTP] Failed to read directory {}: {:?}", path, e);
+                                error!("[SFTP] Failed to get home directory: {:?}", e);
+                                "/".to_string()
+                            }
+                        };
+
+                        // 2. 计算路径层级
+                        let path_hierarchy = get_path_hierarchy(&home_dir);
+                        info!("[SFTP] Path hierarchy: {:?}", path_hierarchy);
+
+                        // 3. 并行读取所有目录
+                        let read_futures: Vec<_> = path_hierarchy
+                            .iter()
+                            .map(|path| {
+                                let path = path.clone();
+                                let sftp = sftp_for_dir.clone();
+                                async move {
+                                    let result = sftp.read_dir(&path).await;
+                                    (path, result)
+                                }
+                            })
+                            .collect();
+
+                        let dir_results = futures::future::join_all(read_futures).await;
+
+                        // 4. 收集结果
+                        let mut dir_caches: Vec<(String, Vec<crate::models::sftp::FileEntry>)> =
+                            Vec::new();
+                        for (path, result) in dir_results {
+                            match result {
+                                Ok(entries) => {
+                                    let entries: Vec<_> = entries.collect();
+                                    let file_entries: Vec<crate::models::sftp::FileEntry> = entries
+                                        .into_iter()
+                                        .filter_map(|entry| {
+                                            let name = entry.file_name();
+                                            if name == "." || name == ".." {
+                                                return None;
+                                            }
+                                            let full_path = if path == "/" {
+                                                format!("/{}", name)
+                                            } else {
+                                                format!("{}/{}", path.trim_end_matches('/'), name)
+                                            };
+                                            let attrs = entry.metadata();
+                                            let file_type = if attrs.is_dir() {
+                                                crate::models::sftp::FileType::Directory
+                                            } else if attrs.is_symlink() {
+                                                crate::models::sftp::FileType::Symlink
+                                            } else {
+                                                crate::models::sftp::FileType::File
+                                            };
+                                            let mut file_entry =
+                                                crate::models::sftp::FileEntry::new(
+                                                    name.to_string(),
+                                                    full_path,
+                                                    file_type,
+                                                );
+                                            file_entry.size = attrs.size.unwrap_or(0);
+                                            file_entry.permissions =
+                                                attrs.permissions.map(|p| p as u32).unwrap_or(0);
+                                            file_entry.uid = attrs.uid;
+                                            file_entry.gid = attrs.gid;
+                                            if let Some(mtime) = attrs.mtime {
+                                                file_entry.modified = Some(
+                                                    std::time::UNIX_EPOCH
+                                                        + std::time::Duration::from_secs(
+                                                            mtime as u64,
+                                                        ),
+                                                );
+                                            }
+                                            Some(file_entry)
+                                        })
+                                        .collect();
+                                    info!(
+                                        "[SFTP] Loaded {} entries from {}",
+                                        file_entries.len(),
+                                        path
+                                    );
+                                    dir_caches.push((path, file_entries));
+                                }
+                                Err(e) => {
+                                    error!("[SFTP] Failed to read directory {}: {:?}", path, e);
+                                }
                             }
                         }
-                    }
 
-                    // 存储 service
-                    if let Ok(mut services) = sftp_services.lock() {
-                        services.insert(tab_id_for_tokio.clone(), service);
-                    }
+                        // 5. 立即发送目录数据事件（关键路径完成）
+                        let _ = tx_dir.send(SftpInitResult::DirReady {
+                            home_dir,
+                            path_hierarchy,
+                            dir_caches,
+                        });
 
-                    // 发送成功结果
-                    let _ = tx.send(SftpInitResult::Success {
-                        home_dir,
-                        path_hierarchy,
-                        dir_caches,
-                        passwd_content,
-                        group_content,
-                    });
+                        // 6. 存储 service（在 dir_task 内部完成，避免生命周期问题）
+                        if let Ok(mut services) = sftp_services_clone.lock() {
+                            services.insert(tab_id_for_dir, service);
+                        }
+                    };
+
+                    // ============================================================
+                    // 任务2：非关键路径 - 加载用户/组信息
+                    // ============================================================
+                    let tx_ug = tx.clone();
+                    let sftp_for_ug = sftp.clone();
+
+                    let user_group_task = async move {
+                        // 并行读取 passwd 和 group 文件
+                        use tokio::io::AsyncReadExt;
+
+                        let passwd_future = async {
+                            match sftp_for_ug.open("/etc/passwd").await {
+                                Ok(mut file) => {
+                                    let mut content = String::new();
+                                    match file.read_to_string(&mut content).await {
+                                        Ok(_) => {
+                                            info!(
+                                                "[SFTP] Loaded /etc/passwd ({} bytes)",
+                                                content.len()
+                                            );
+                                            Some(content)
+                                        }
+                                        Err(e) => {
+                                            error!("[SFTP] Failed to read /etc/passwd: {}", e);
+                                            None
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[SFTP] Failed to open /etc/passwd: {}", e);
+                                    None
+                                }
+                            }
+                        };
+
+                        let group_future = async {
+                            match sftp_for_ug.open("/etc/group").await {
+                                Ok(mut file) => {
+                                    let mut content = String::new();
+                                    match file.read_to_string(&mut content).await {
+                                        Ok(_) => {
+                                            info!(
+                                                "[SFTP] Loaded /etc/group ({} bytes)",
+                                                content.len()
+                                            );
+                                            Some(content)
+                                        }
+                                        Err(e) => {
+                                            error!("[SFTP] Failed to read /etc/group: {}", e);
+                                            None
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[SFTP] Failed to open /etc/group: {}", e);
+                                    None
+                                }
+                            }
+                        };
+
+                        let (passwd_content, group_content) =
+                            tokio::join!(passwd_future, group_future);
+
+                        // 发送用户/组信息事件（非关键路径完成）
+                        let _ = tx_ug.send(SftpInitResult::UserGroupReady {
+                            passwd_content,
+                            group_content,
+                        });
+                    };
+
+                    // 两个任务完全并行执行
+                    tokio::join!(dir_task, user_group_task);
                 }
                 Err(e) => {
                     error!("[SFTP] Failed to initialize SFTP service: {:?}", e);
@@ -953,35 +1008,27 @@ impl SessionState {
             }
         });
 
-        // 在 GPUI 异步上下文中等待结果并更新 UI
+        // 在 GPUI 异步上下文中循环接收结果并更新 UI
         let tab_id_for_ui = tab_id.clone();
         cx.to_async()
             .spawn(async move |async_cx| {
-                if let Some(result) = rx.recv().await {
+                // 循环接收，因为现在会收到多个事件（DirReady 和 UserGroupReady）
+                while let Some(result) = rx.recv().await {
                     let tab_id_clone = tab_id_for_ui.clone();
-                    let _ = async_cx.update(|cx| {
+                    let update_result = async_cx.update(|cx| {
                         session_state.update(cx, |state, cx| {
                             if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
                             {
                                 if let Some(sftp_state) = &mut tab.sftp_state {
                                     match result {
-                                        SftpInitResult::Success {
+                                        SftpInitResult::DirReady {
                                             home_dir,
                                             path_hierarchy: _,
                                             dir_caches,
-                                            passwd_content,
-                                            group_content,
                                         } => {
+                                            // 立即更新目录数据（关键路径完成）
                                             sftp_state.set_home_dir(home_dir.clone());
                                             sftp_state.navigate_to(home_dir.clone());
-
-                                            // 解析用户/组信息
-                                            if let Some(passwd) = passwd_content {
-                                                sftp_state.parse_passwd(&passwd);
-                                            }
-                                            if let Some(group) = group_content {
-                                                sftp_state.parse_group(&group);
-                                            }
 
                                             // 缓存所有层级目录
                                             for (path, entries) in dir_caches {
@@ -996,7 +1043,23 @@ impl SessionState {
                                             // 自动展开路径层级到 home 目录
                                             sftp_state.expand_to_path(&home_dir);
 
+                                            // 立即结束加载状态，让用户看到文件列表
                                             sftp_state.set_loading(false);
+                                            info!("[SFTP] DirReady processed, loading set to false");
+                                        }
+                                        SftpInitResult::UserGroupReady {
+                                            passwd_content,
+                                            group_content,
+                                        } => {
+                                            // 后台更新用户/组映射（非关键路径）
+                                            if let Some(passwd) = passwd_content {
+                                                sftp_state.parse_passwd(&passwd);
+                                            }
+                                            if let Some(group) = group_content {
+                                                sftp_state.parse_group(&group);
+                                            }
+                                            info!("[SFTP] UserGroupReady processed, user/group cache updated");
+                                            // 不需要 set_loading(false)，因为 DirReady 已经设置过了
                                         }
                                         SftpInitResult::Error(msg) => {
                                             sftp_state.set_error(msg);
@@ -1008,6 +1071,15 @@ impl SessionState {
                             cx.notify();
                         });
                     });
+
+                    // 如果更新失败（例如会话已关闭），退出循环
+                    if update_result.is_err() {
+                        info!(
+                            "[SFTP] Session state no longer available for tab {}",
+                            tab_id_for_ui
+                        );
+                        break;
+                    }
                 }
 
                 info!("[SFTP] Initialization task ended for tab {}", tab_id_for_ui);
@@ -1018,10 +1090,14 @@ impl SessionState {
 
 /// SFTP 初始化结果
 enum SftpInitResult {
-    Success {
+    /// 目录数据就绪（关键路径，优先处理）
+    DirReady {
         home_dir: String,
         path_hierarchy: Vec<String>,
         dir_caches: Vec<(String, Vec<crate::models::sftp::FileEntry>)>,
+    },
+    /// 用户/组映射就绪（非关键路径，后台处理）
+    UserGroupReady {
         passwd_content: Option<String>,
         group_content: Option<String>,
     },

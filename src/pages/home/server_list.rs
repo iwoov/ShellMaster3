@@ -357,7 +357,7 @@ fn render_server_card(
 
     div()
         .id(SharedString::from(format!("card-{}", server_id)))
-        .w(px(220.))
+        .w(px(230.))
         .bg(colors.bg)
         .rounded_lg()
         .border_1()

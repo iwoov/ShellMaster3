@@ -16,7 +16,7 @@ pub fn render_home_button(session_state: Entity<SessionState>, cx: &App) -> impl
     let session_state_for_click = session_state.clone();
 
     div()
-        .w(px(220.)) // 与 sidebar 宽度相同
+        .w(px(230.)) // 与 sidebar 宽度相同
         .flex_shrink_0() // 防止被压缩
         .h(px(44.)) // 标题栏高度
         .bg(bg)

@@ -78,7 +78,7 @@ pub fn render_sidebar(
     let icon_color = cx.theme().muted_foreground;
 
     div()
-        .w(px(220.))
+        .w(px(230.))
         .h_full()
         .bg(sidebar_bg)
         .border_r_1()

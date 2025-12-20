@@ -34,7 +34,7 @@ pub fn render_session_layout(
     let top_area = h_resizable("session-top-h")
         .child(
             resizable_panel()
-                .size(px(219.)) // 219px + 1px 分隔条 = 220px，与 home 按钮区域对齐
+                .size(px(229.)) // Monitor 面板初始宽度 230px
                 .child(render_monitor_panel(
                     &tab.monitor_state,
                     monitor_detail_dialog_for_panel,

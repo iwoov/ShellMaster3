@@ -425,7 +425,7 @@ impl HomePage {
                             // 根据窗口尺寸计算终端区域
                             // 布局常量（与 session_layout.rs 保持一致）
                             const TITLEBAR_HEIGHT: f32 = 44.0;
-                            const MONITOR_PANEL_WIDTH: f32 = 220.0; // 219px + 1px 分隔条
+                            const MONITOR_PANEL_WIDTH: f32 = 230.0;
                             const SFTP_PANEL_HEIGHT: f32 = 300.0;
                             const SIDEBAR_WIDTH: f32 = 230.0;
                             const MINI_SIDEBAR_WIDTH: f32 = 28.0;

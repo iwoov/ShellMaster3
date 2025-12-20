@@ -1,6 +1,7 @@
 // 服务器列表组件
 
 use gpui::*;
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::{ActiveTheme, InteractiveElementExt};
 use tracing::error;
 
@@ -70,7 +71,8 @@ pub fn render_hosts_content(
             div()
                 .id("server-list-scroll")
                 .flex_1()
-                .overflow_y_scroll() // 垂直滚动
+                .min_h(px(0.)) // 确保 flex-1 在 overflow 布局中正确收缩
+                .overflow_y_scrollbar()
                 .px_6()
                 .pb_6()
                 .child(match view_mode {

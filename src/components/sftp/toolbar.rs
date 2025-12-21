@@ -2,6 +2,7 @@
 // 包含导航按钮（返回、前进、上级、主目录）+ 地址栏 + 操作按钮
 
 use gpui::*;
+use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use gpui_component::ActiveTheme;
 
 use crate::constants::icons;
@@ -79,7 +80,7 @@ where
     let bg_color = crate::theme::sidebar_color(cx);
     let border_color = cx.theme().border;
     let input_bg = cx.theme().background;
-    let muted_foreground = cx.theme().muted_foreground;
+    let _muted_foreground = cx.theme().muted_foreground;
 
     // 获取状态信息
     let (can_back, can_forward, can_up, current_path, show_hidden) = match state {
@@ -141,7 +142,29 @@ where
             cx,
         ));
 
-    // === 地址栏 ===
+    // === 地址栏（面包屑导航） ===
+    let path_segments = parse_path_segments(current_path);
+    let mut breadcrumb = Breadcrumb::new().text_xs();
+
+    for (i, (name, full_path)) in path_segments.iter().enumerate() {
+        let is_last = i == path_segments.len() - 1;
+        let path = full_path.clone();
+        let on_nav = on_event.clone();
+
+        let item = BreadcrumbItem::new(name.clone());
+        let item = if is_last {
+            // 最后一个元素禁用点击
+            item.disabled(true)
+        } else {
+            // 其他元素可点击导航
+            item.on_click(move |_, _, cx| {
+                on_nav(SftpToolbarEvent::NavigateTo(path.clone()), cx);
+            })
+        };
+
+        breadcrumb = breadcrumb.child(item);
+    }
+
     let path_bar = div()
         .flex_1()
         .h(px(22.))
@@ -154,14 +177,7 @@ where
         .flex()
         .items_center()
         .overflow_hidden()
-        .child(
-            div()
-                .text_xs()
-                .text_color(muted_foreground)
-                .overflow_hidden()
-                .text_ellipsis()
-                .child(current_path.to_string()),
-        );
+        .child(breadcrumb);
 
     // === 操作按钮组 ===
     let hidden_icon = if show_hidden {
@@ -243,4 +259,29 @@ where
         .child(nav_buttons)
         .child(path_bar)
         .child(action_buttons)
+}
+
+/// 解析路径为面包屑段
+/// 例如："/home/wuyun" -> [("/", "/"), ("home", "/home"), ("wuyun", "/home/wuyun")]
+fn parse_path_segments(path: &str) -> Vec<(String, String)> {
+    let mut segments = Vec::new();
+
+    if path.is_empty() || !path.starts_with('/') {
+        return segments;
+    }
+
+    // 根目录
+    segments.push(("/".to_string(), "/".to_string()));
+
+    // 其他路径段
+    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut current_path = String::new();
+
+    for part in parts {
+        current_path.push('/');
+        current_path.push_str(part);
+        segments.push((part.to_string(), current_path.clone()));
+    }
+
+    segments
 }

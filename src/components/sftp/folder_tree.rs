@@ -92,8 +92,9 @@ where
 {
     let foreground = cx.theme().foreground;
     let muted = cx.theme().muted_foreground;
-    let selected_bg = cx.theme().list_active;
-    let hover_bg = cx.theme().list_active_border;
+    // 使用 table 的颜色以保持与文件列表一致
+    let selected_bg = cx.theme().table_active;
+    let hover_bg = cx.theme().table_hover;
 
     let indent = px(INDENT_WIDTH * row.depth as f32);
 
@@ -159,18 +160,17 @@ where
     }
 
     if is_selected {
-        el = el.bg(selected_bg);
+        el = el
+            .relative()
+            .bg(selected_bg)
+            .border_1()
+            .border_color(cx.theme().table_active_border);
     }
 
     el.into_any_element()
 }
 
-fn collect_tree_rows(
-    path: &str,
-    depth: usize,
-    state: &SftpState,
-    rows: &mut Vec<FolderTreeRow>,
-) {
+fn collect_tree_rows(path: &str, depth: usize, state: &SftpState, rows: &mut Vec<FolderTreeRow>) {
     // 获取该路径下的缓存目录
     let entries = match state.dir_cache.get(path) {
         Some(cached) => &cached.entries,
@@ -255,7 +255,10 @@ where
             .size_full();
 
             div()
-                .id(SharedString::from(format!("sftp-folder-tree-scroll-{}", tab_id)))
+                .id(SharedString::from(format!(
+                    "sftp-folder-tree-scroll-{}",
+                    tab_id
+                )))
                 .flex_1()
                 .min_h(px(0.))
                 .bg(bg_color)

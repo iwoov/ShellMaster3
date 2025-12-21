@@ -17,9 +17,13 @@ pub struct SftpState {
 
     /// 文件夹树展开的目录集合
     pub expanded_dirs: HashSet<String>,
+    /// 文件夹树展开状态版本号（用于 UI 增量同步）
+    pub expanded_dirs_revision: u64,
 
     /// 目录内容缓存
     pub dir_cache: DirCache,
+    /// 目录缓存版本号（用于文件夹树增量同步）
+    pub dir_cache_revision: u64,
 
     /// 导航历史
     pub history: NavigationHistory,
@@ -80,16 +84,22 @@ impl SftpState {
     /// 更新目录缓存
     pub fn update_cache(&mut self, path: String, entries: Vec<FileEntry>) {
         self.dir_cache.insert(path, CachedDir::new(entries));
+        self.dir_cache_revision = self.dir_cache_revision.wrapping_add(1);
     }
 
     /// 清除指定路径的缓存
     pub fn invalidate_cache(&mut self, path: &str) {
-        self.dir_cache.remove(path);
+        if self.dir_cache.remove(path).is_some() {
+            self.dir_cache_revision = self.dir_cache_revision.wrapping_add(1);
+        }
     }
 
     /// 清除所有缓存
     pub fn clear_cache(&mut self) {
-        self.dir_cache.clear();
+        if !self.dir_cache.is_empty() {
+            self.dir_cache.clear();
+            self.dir_cache_revision = self.dir_cache_revision.wrapping_add(1);
+        }
     }
 
     // ========================================================================
@@ -200,12 +210,16 @@ impl SftpState {
 
     /// 展开目录
     pub fn expand_dir(&mut self, path: &str) {
-        self.expanded_dirs.insert(path.to_string());
+        if self.expanded_dirs.insert(path.to_string()) {
+            self.expanded_dirs_revision = self.expanded_dirs_revision.wrapping_add(1);
+        }
     }
 
     /// 折叠目录
     pub fn collapse_dir(&mut self, path: &str) {
-        self.expanded_dirs.remove(path);
+        if self.expanded_dirs.remove(path) {
+            self.expanded_dirs_revision = self.expanded_dirs_revision.wrapping_add(1);
+        }
     }
 
     /// 切换目录展开状态

@@ -482,7 +482,13 @@ impl HomePage {
                     }
 
                     let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
-                    render_session_layout(&tab, sidebar_collapsed, session_state.clone(), cx)
+                    render_session_layout(
+                        &tab,
+                        sidebar_collapsed,
+                        session_state.clone(),
+                        window,
+                        cx,
+                    )
                         .into_any_element()
                 }
                 SessionStatus::Error(_) | SessionStatus::Disconnected => {

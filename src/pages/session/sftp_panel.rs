@@ -24,7 +24,8 @@ pub fn render_sftp_panel(
     file_list_view: Option<Entity<FileListView>>,
     session_state: Entity<SessionState>,
     tab_id: String,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     // === 创建事件处理闭包 ===
     let session_for_toolbar = session_state.clone();
@@ -69,7 +70,7 @@ pub fn render_sftp_panel(
     let toolbar = render_sftp_toolbar(sftp_state, on_toolbar_event, cx);
 
     // === 左侧内容区：文件夹树 ===
-    let folder_tree = render_folder_tree(sftp_state, on_folder_tree_event, cx);
+    let folder_tree = render_folder_tree(&tab_id, sftp_state, on_folder_tree_event, window, cx);
 
     // === 右侧内容区：文件列表（使用 Table Entity） ===
     let file_list: AnyElement = if let Some(view) = file_list_view {

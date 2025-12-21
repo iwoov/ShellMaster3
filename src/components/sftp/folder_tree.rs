@@ -1,12 +1,14 @@
 // SFTP 文件夹树组件
 // 层级展示目录结构，支持懒加载和展开/折叠
 
+use std::sync::Arc;
+
 use gpui::*;
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::ActiveTheme;
 
 use crate::constants::icons;
-use crate::models::sftp::{FileEntry, SftpState};
+use crate::models::sftp::SftpState;
 
 /// 树节点缩进宽度
 const INDENT_WIDTH: f32 = 16.0;
@@ -22,11 +24,63 @@ pub enum FolderTreeEvent {
     SelectDir(String),
 }
 
-/// 渲染单个树节点
-fn render_tree_item<F1, F2>(
-    entry: &FileEntry,
+#[derive(Clone, Debug)]
+struct FolderTreeRow {
+    path: String,
+    name: String,
     depth: usize,
     is_expanded: bool,
+}
+
+struct FolderTreeViewState {
+    scroll_handle: UniformListScrollHandle,
+    rows: Arc<Vec<FolderTreeRow>>,
+    last_dir_cache_revision: u64,
+    last_expanded_revision: u64,
+}
+
+impl FolderTreeViewState {
+    fn new() -> Self {
+        Self {
+            scroll_handle: UniformListScrollHandle::new(),
+            rows: Arc::new(Vec::new()),
+            last_dir_cache_revision: 0,
+            last_expanded_revision: 0,
+        }
+    }
+
+    fn sync_rows(&mut self, state: &SftpState) {
+        let needs_rebuild = self.last_dir_cache_revision != state.dir_cache_revision
+            || self.last_expanded_revision != state.expanded_dirs_revision
+            || self.rows.is_empty();
+
+        if !needs_rebuild {
+            return;
+        }
+
+        let mut rows = Vec::new();
+        let root_expanded = state.is_expanded("/");
+
+        rows.push(FolderTreeRow {
+            path: "/".to_string(),
+            name: "/".to_string(),
+            depth: 0,
+            is_expanded: root_expanded,
+        });
+
+        if root_expanded {
+            collect_tree_rows("/", 1, state, &mut rows);
+        }
+
+        self.rows = Arc::new(rows);
+        self.last_dir_cache_revision = state.dir_cache_revision;
+        self.last_expanded_revision = state.expanded_dirs_revision;
+    }
+}
+
+/// 渲染单个树节点
+fn render_tree_row<F1, F2>(
+    row: &FolderTreeRow,
     is_selected: bool,
     on_toggle: F1,
     on_select: F2,
@@ -41,20 +95,17 @@ where
     let selected_bg = cx.theme().list_active;
     let hover_bg = cx.theme().list_active_border;
 
-    let indent = px(INDENT_WIDTH * depth as f32);
+    let indent = px(INDENT_WIDTH * row.depth as f32);
 
     // 展开/折叠图标 - 可点击切换
-    let expand_icon = if entry.is_dir() {
-        let icon = if is_expanded {
+    let expand_icon = {
+        let icon = if row.is_expanded {
             icons::CHEVRON_DOWN
         } else {
             icons::CHEVRON_RIGHT
         };
         div()
-            .id(SharedString::from(format!(
-                "sftp-tree-expand-{}",
-                entry.path
-            )))
+            .id(SharedString::from(format!("sftp-tree-expand-{}", row.path)))
             .size(px(14.))
             .flex()
             .items_center()
@@ -62,18 +113,11 @@ where
             .cursor_pointer()
             .on_mouse_down(MouseButton::Left, on_toggle)
             .child(svg().path(icon).size(px(10.)).text_color(muted))
-    } else {
-        div()
-            .id(SharedString::from(format!(
-                "sftp-tree-expand-empty-{}",
-                entry.path
-            )))
-            .size(px(14.))
     };
 
     // 文件夹图标
     let folder_icon = svg()
-        .path(if is_expanded {
+        .path(if row.is_expanded {
             icons::FOLDER_OPEN
         } else {
             icons::FOLDER
@@ -82,13 +126,11 @@ where
         .text_color(muted);
 
     let mut el = div()
-        .id(SharedString::from(format!("sftp-tree-item-{}", entry.path)))
+        .id(SharedString::from(format!("sftp-tree-item-{}", row.path)))
         .w_full()
         .h(px(ITEM_HEIGHT))
         .flex()
         .items_center()
-        .pl(indent)
-        .pr_2()
         .gap_1()
         .cursor_pointer()
         .hover(|s| s.bg(hover_bg))
@@ -102,8 +144,14 @@ where
                 .text_color(foreground)
                 .overflow_hidden()
                 .text_ellipsis()
-                .child(entry.name.clone()),
+                .child(row.name.clone()),
         );
+
+    if row.depth == 0 {
+        el = el.px_2();
+    } else {
+        el = el.pl(indent).pr_2();
+    }
 
     if is_selected {
         el = el.bg(selected_bg);
@@ -112,16 +160,12 @@ where
     el.into_any_element()
 }
 
-fn collect_tree_items<F>(
+fn collect_tree_rows(
     path: &str,
     depth: usize,
     state: &SftpState,
-    on_event: &F,
-    cx: &App,
-    items: &mut Vec<AnyElement>,
-) where
-    F: Fn(FolderTreeEvent, &mut App) + Clone + 'static,
-{
+    rows: &mut Vec<FolderTreeRow>,
+) {
     // 获取该路径下的缓存目录
     let entries = match state.dir_cache.get(path) {
         Some(cached) => &cached.entries,
@@ -129,118 +173,89 @@ fn collect_tree_items<F>(
     };
 
     // 只显示目录
-    let dirs: Vec<_> = entries.iter().filter(|e| e.is_dir()).collect();
-
-    for entry in dirs {
+    for entry in entries.iter().filter(|e| e.is_dir()) {
         let is_expanded = state.is_expanded(&entry.path);
-        let is_selected = state.current_path == entry.path;
-
-        let entry_path = entry.path.clone();
-        let on_toggle = on_event.clone();
-        let toggle_path = entry_path.clone();
-
-        let on_select = on_event.clone();
-        let select_path = entry_path.clone();
-
-        items.push(render_tree_item(
-            entry,
+        rows.push(FolderTreeRow {
+            path: entry.path.clone(),
+            name: entry.name.clone(),
             depth,
             is_expanded,
-            is_selected,
-            move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
-                on_toggle(FolderTreeEvent::ToggleExpand(toggle_path.clone()), cx);
-            },
-            move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
-                on_select(FolderTreeEvent::SelectDir(select_path.clone()), cx);
-            },
-            cx,
-        ));
+        });
 
         // 如果展开了，递归渲染子目录
         if is_expanded {
-            collect_tree_items(&entry.path, depth + 1, state, on_event, cx, items);
+            collect_tree_rows(&entry.path, depth + 1, state, rows);
         }
     }
 }
 
-pub fn render_folder_tree<F>(state: Option<&SftpState>, on_event: F, cx: &App) -> impl IntoElement
+pub fn render_folder_tree<F>(
+    tab_id: &str,
+    state: Option<&SftpState>,
+    on_event: F,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement
 where
     F: Fn(FolderTreeEvent, &mut App) + Clone + 'static,
 {
     let bg_color = crate::theme::sidebar_color(cx);
     let muted_foreground = cx.theme().muted_foreground;
 
+    let view_state = window.use_keyed_state(
+        SharedString::from(format!("sftp-folder-tree-state-{}", tab_id)),
+        cx,
+        |_, _| FolderTreeViewState::new(),
+    );
+
     match state {
         Some(s) => {
-            let mut items: Vec<AnyElement> = Vec::new();
+            view_state.update(cx, |view, _| view.sync_rows(s));
 
-            // 根目录
-            let is_root_expanded = s.is_expanded("/");
-            let on_root_toggle = on_event.clone();
-            let on_root_select = on_event.clone();
+            let rows = view_state.read(cx).rows.clone();
+            let scroll_handle = view_state.read(cx).scroll_handle.clone();
+            let current_path = s.current_path.clone();
+            let on_event = on_event.clone();
 
-            items.push(
-                div()
-                    .id("sftp-tree-root")
-                    .w_full()
-                    .h(px(ITEM_HEIGHT))
-                    .flex()
-                    .items_center()
-                    .px_2()
-                    .gap_1()
-                    .cursor_pointer()
-                    .hover(|el| el.bg(cx.theme().list_active_border))
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        on_root_select(FolderTreeEvent::SelectDir("/".to_string()), cx);
-                    })
-                    .child(
-                        div()
-                            .id("sftp-tree-root-expand")
-                            .size(px(14.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                on_root_toggle(FolderTreeEvent::ToggleExpand("/".to_string()), cx);
-                            })
-                            .child(
-                                svg()
-                                    .path(if is_root_expanded {
-                                        icons::CHEVRON_DOWN
-                                    } else {
-                                        icons::CHEVRON_RIGHT
-                                    })
-                                    .size(px(10.))
-                                    .text_color(muted_foreground),
-                            ),
-                    )
-                    .child(
-                        svg()
-                            .path(if is_root_expanded {
-                                icons::FOLDER_OPEN
-                            } else {
-                                icons::FOLDER
-                            })
-                            .size(px(14.))
-                            .text_color(muted_foreground),
-                    )
-                    .child(div().text_xs().text_color(cx.theme().foreground).child("/"))
-                    .into_any_element(),
-            );
+            let list = uniform_list(
+                SharedString::from(format!("sftp-folder-tree-list-{}", tab_id)),
+                rows.len(),
+                move |range, _window, cx| {
+                    let mut items = Vec::with_capacity(range.len());
+                    for ix in range {
+                        let row = &rows[ix];
+                        let is_selected = row.path == current_path;
+                        let on_toggle = on_event.clone();
+                        let on_select = on_event.clone();
+                        let toggle_path = row.path.clone();
+                        let select_path = row.path.clone();
 
-            // 递归收集（如果根目录展开）
-            if is_root_expanded {
-                collect_tree_items("/", 1, s, &on_event, cx, &mut items);
-            }
+                        items.push(render_tree_row(
+                            row,
+                            is_selected,
+                            move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                                on_toggle(FolderTreeEvent::ToggleExpand(toggle_path.clone()), cx);
+                            },
+                            move |_: &MouseDownEvent, _: &mut Window, cx: &mut App| {
+                                on_select(FolderTreeEvent::SelectDir(select_path.clone()), cx);
+                            },
+                            cx,
+                        ));
+                    }
+                    items
+                },
+            )
+            .track_scroll(scroll_handle.clone())
+            .with_sizing_behavior(ListSizingBehavior::Auto)
+            .size_full();
 
             div()
-                .id("sftp-folder-tree-scroll")
+                .id(SharedString::from(format!("sftp-folder-tree-scroll-{}", tab_id)))
                 .flex_1()
                 .min_h(px(0.))
                 .bg(bg_color)
-                .overflow_y_scrollbar()
-                .child(div().flex().flex_col().children(items))
+                .child(list)
+                .vertical_scrollbar(&scroll_handle)
                 .into_any_element()
         }
         None => {

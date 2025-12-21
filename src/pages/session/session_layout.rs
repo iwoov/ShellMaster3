@@ -17,7 +17,8 @@ pub fn render_session_layout(
     tab: &SessionTab,
     sidebar_collapsed: bool,
     session_state: Entity<SessionState>,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     // 获取命令输入状态和终端焦点句柄
     let command_input = session_state.read(cx).command_input.clone();
@@ -63,6 +64,7 @@ pub fn render_session_layout(
             sftp_file_list_view,
             session_state_for_sftp,
             tab_id_for_sftp,
+            window,
             cx,
         ))); // SFTP ~40%
 

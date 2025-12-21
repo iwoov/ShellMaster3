@@ -98,6 +98,11 @@ where
     let indent = px(INDENT_WIDTH * row.depth as f32);
 
     // 展开/折叠图标 - 可点击切换
+    let toggle_handler = move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+        cx.stop_propagation();
+        on_toggle(event, window, cx);
+    };
+
     let expand_icon = {
         let icon = if row.is_expanded {
             icons::CHEVRON_DOWN
@@ -111,7 +116,7 @@ where
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, on_toggle)
+            .on_mouse_down(MouseButton::Left, toggle_handler)
             .child(svg().path(icon).size(px(10.)).text_color(muted))
     };
 

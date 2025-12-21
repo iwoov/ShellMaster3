@@ -438,20 +438,10 @@ impl TableDelegate for FileListDelegate {
     fn render_empty(
         &mut self,
         _window: &mut Window,
-        cx: &mut Context<TableState<Self>>,
+        _cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let lang = &self.lang;
+        // 空文件夹不显示任何内容
         div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(t(lang, "sftp.empty_directory")),
-            )
     }
 
     fn loading(&self, _cx: &App) -> bool {
@@ -497,12 +487,16 @@ impl FileListView {
         });
 
         // 订阅 TableState 的事件并转发
-        cx.subscribe_in(&table_state, window, |this, _state, event: &TableEvent, _window, cx| {
-            if let TableEvent::ColumnWidthsChanged(widths) = event {
-                this.column_widths = widths.clone();
-            }
-            cx.emit(event.clone());
-        })
+        cx.subscribe_in(
+            &table_state,
+            window,
+            |this, _state, event: &TableEvent, _window, cx| {
+                if let TableEvent::ColumnWidthsChanged(widths) = event {
+                    this.column_widths = widths.clone();
+                }
+                cx.emit(event.clone());
+            },
+        )
         .detach();
 
         Self {

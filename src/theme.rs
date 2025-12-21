@@ -30,6 +30,12 @@ pub fn init(cx: &mut App) {
     dark_config.colors.muted_foreground = Some("#94a3b8".into()); // slate-400
                                                                   // 列表悬停颜色：明亮的蓝灰色 #334155
     dark_config.colors.list_hover = Some("#334155".into());
+    // 表格/列表颜色：避免纯黑，保持深蓝基调
+    dark_config.colors.table = Some("#1E2838".into());
+    dark_config.colors.table_head = Some("#1A2433".into());
+    dark_config.colors.table_even = Some("#1B2535".into());
+    dark_config.colors.table_hover = Some("#2A374D".into());
+    dark_config.colors.table_row_border = Some("#2C3A50".into());
     // 输入框边框
     dark_config.colors.input = Some("#475569".into());
     // 边框颜色：更明显的蓝灰色

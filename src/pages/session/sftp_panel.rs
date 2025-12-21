@@ -2,7 +2,6 @@
 
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::table::TableEvent;
 use gpui_component::ActiveTheme;
 
 use crate::components::sftp::{
@@ -118,95 +117,4 @@ pub fn render_sftp_panel(
                 .overflow_hidden()
                 .child(content_area),
         )
-}
-
-/// SFTP 面板包装器 - 用于在 Entity 上下文中渲染 SFTP 面板
-/// 这个组件负责订阅 TableEvent 并转发到 SessionState
-#[allow(dead_code)]
-pub struct SftpPanelWrapper {
-    session_state: Entity<SessionState>,
-    tab_id: String,
-    file_list_view: Entity<FileListView>,
-}
-
-#[allow(dead_code)]
-impl SftpPanelWrapper {
-    pub fn new(
-        session_state: Entity<SessionState>,
-        tab_id: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        // 创建 FileListView
-        let file_list_view = cx.new(|cx| FileListView::new(window, cx));
-
-        // 订阅 TableEvent
-        let tab_id_for_event = tab_id.clone();
-        let session_for_event = session_state.clone();
-        let file_list_for_event = file_list_view.clone();
-        cx.subscribe_in(
-            &file_list_view,
-            window,
-            move |_this, _view, event: &TableEvent, _window, cx| {
-                match event {
-                    TableEvent::DoubleClickedRow(row_ix) => {
-                        // 获取文件路径并触发打开事件
-                        if let Some(path) = file_list_for_event.read(cx).get_file_path(*row_ix, cx)
-                        {
-                            let tab_id = tab_id_for_event.clone();
-                            session_for_event.update(cx, |state, cx| {
-                                state.sftp_open(&tab_id, path, cx);
-                            });
-                        }
-                    }
-                    TableEvent::SelectRow(_row_ix) => {
-                        // TODO: 处理选择事件
-                    }
-                    _ => {}
-                }
-            },
-        )
-        .detach();
-
-        Self {
-            session_state,
-            tab_id,
-            file_list_view,
-        }
-    }
-}
-
-impl Render for SftpPanelWrapper {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 先克隆 sftp_state 以避免借用冲突
-        let sftp_state_clone = self
-            .session_state
-            .read(cx)
-            .tabs
-            .iter()
-            .find(|t| t.id == self.tab_id)
-            .and_then(|t| t.sftp_state.clone());
-
-        // 同步数据
-        self.file_list_view.update(cx, |v, cx| {
-            v.sync_from_sftp_state(sftp_state_clone.as_ref(), cx);
-        });
-
-        // 重新获取引用用于渲染
-        let sftp_state = self
-            .session_state
-            .read(cx)
-            .tabs
-            .iter()
-            .find(|t| t.id == self.tab_id)
-            .and_then(|t| t.sftp_state.as_ref());
-
-        render_sftp_panel(
-            sftp_state,
-            Some(self.file_list_view.clone()),
-            self.session_state.clone(),
-            self.tab_id.clone(),
-            cx,
-        )
-    }
 }

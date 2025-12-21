@@ -12,6 +12,8 @@ pub struct SftpState {
 
     /// 当前目录的文件列表
     pub file_list: Vec<FileEntry>,
+    /// 文件列表版本号（用于 UI 增量同步）
+    pub file_list_revision: u64,
 
     /// 文件夹树展开的目录集合
     pub expanded_dirs: HashSet<String>,
@@ -39,6 +41,10 @@ pub struct SftpState {
 
     /// gid -> groupname 缓存
     pub group_cache: HashMap<u32, String>,
+    /// 用户缓存版本号（用于 UI 增量同步）
+    pub user_cache_revision: u64,
+    /// 组缓存版本号（用于 UI 增量同步）
+    pub group_cache_revision: u64,
 }
 
 impl SftpState {
@@ -175,14 +181,7 @@ impl SftpState {
         } else {
             entries.into_iter().filter(|e| !e.is_hidden()).collect()
         };
-
-        // 排序：目录在前，然后按名称
-        self.file_list
-            .sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            });
+        self.file_list_revision = self.file_list_revision.wrapping_add(1);
     }
 
     /// 切换显示隐藏文件
@@ -279,6 +278,7 @@ impl SftpState {
                 }
             }
         }
+        self.user_cache_revision = self.user_cache_revision.wrapping_add(1);
     }
 
     /// 解析 /etc/group 内容并缓存 gid -> groupname 映射
@@ -292,6 +292,7 @@ impl SftpState {
                 }
             }
         }
+        self.group_cache_revision = self.group_cache_revision.wrapping_add(1);
     }
 
     /// 根据 uid 获取用户名

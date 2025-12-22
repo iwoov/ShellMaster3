@@ -1574,6 +1574,8 @@ impl SessionState {
                 let transfer_id_clone = transfer_item.id.clone();
                 // 克隆取消令牌以便在下载任务中使用
                 let cancel_token = transfer_item.cancel_token.clone();
+                // 克隆暂停标志以便在下载任务中使用
+                let pause_flag = transfer_item.pause_flag.clone();
 
                 // 添加传输项到列表
                 let _ = async_cx.update(|cx| {
@@ -1633,6 +1635,7 @@ impl SessionState {
                                         &local_path_clone,
                                         file_size,
                                         cancel_token_for_download,
+                                        pause_flag,
                                         move |transferred, total, speed| {
                                             let _ = tx_progress_clone.send(
                                                 DownloadEvent::Progress(transferred, total, speed),
@@ -1700,11 +1703,8 @@ impl SessionState {
                                                 .iter_mut()
                                                 .find(|t| t.id == transfer_id)
                                             {
-                                                transfer.progress.bytes_transferred = transferred;
-                                                transfer.progress.total_bytes = total;
-                                                transfer.progress.speed_bytes_per_sec = speed;
-                                                transfer.status =
-                                                    crate::models::sftp::TransferStatus::Downloading;
+                                                // 使用安全的进度更新方法
+                                                transfer.update_progress(transferred, total, speed);
                                             }
                                             cx.notify();
                                         });
@@ -1770,6 +1770,48 @@ impl SessionState {
 
             info!("[SFTP] Transfer cancelled: {}", transfer_id);
             cx.notify();
+        }
+    }
+
+    /// 暂停传输任务
+    pub fn pause_transfer(&mut self, transfer_id: &str, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Pausing transfer: {}", transfer_id);
+
+        if let Some(transfer) = self
+            .active_transfers
+            .iter_mut()
+            .find(|t| t.id == transfer_id)
+        {
+            if transfer.pause() {
+                info!("[SFTP] Transfer paused: {}", transfer_id);
+                cx.notify();
+            } else {
+                info!(
+                    "[SFTP] Cannot pause transfer in current state: {}",
+                    transfer_id
+                );
+            }
+        }
+    }
+
+    /// 恢复传输任务
+    pub fn resume_transfer(&mut self, transfer_id: &str, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Resuming transfer: {}", transfer_id);
+
+        if let Some(transfer) = self
+            .active_transfers
+            .iter_mut()
+            .find(|t| t.id == transfer_id)
+        {
+            if transfer.resume() {
+                info!("[SFTP] Transfer resumed: {}", transfer_id);
+                cx.notify();
+            } else {
+                info!(
+                    "[SFTP] Cannot resume transfer in current state: {}",
+                    transfer_id
+                );
+            }
         }
     }
 }

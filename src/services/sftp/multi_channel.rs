@@ -64,6 +64,7 @@ impl MultiChannelDownloader {
     /// * `local_path` - 本地保存路径
     /// * `file_size` - 文件大小
     /// * `cancel_token` - 取消令牌
+    /// * `pause_flag` - 暂停标志
     /// * `progress_callback` - 进度回调函数，参数为 (总已传输字节数, 总字节数, 总速度)
     ///
     /// # Returns
@@ -75,6 +76,7 @@ impl MultiChannelDownloader {
         local_path: &std::path::Path,
         file_size: u64,
         cancel_token: CancellationToken,
+        pause_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
         progress_callback: F,
     ) -> Result<(), String>
     where
@@ -125,6 +127,8 @@ impl MultiChannelDownloader {
             let progress_tracker = progress_tracker.clone();
             let progress_callback = progress_callback.clone();
             let file_size = file_size;
+            let pause_flag_clone = pause_flag.clone();
+            let cancel_token_clone = cancel_token.clone();
 
             let handle = tokio::spawn(async move {
                 // 为每个分片创建独立的 SFTP 服务
@@ -145,8 +149,10 @@ impl MultiChannelDownloader {
                 };
 
                 let chunk_idx = task.index;
+                let pause_flag_for_loop = pause_flag_clone.clone();
+                let cancel_token_for_loop = cancel_token_clone.clone();
 
-                // 下载分片
+                // 下载分片，带有暂停检查的进度回调
                 let result = sftp_service
                     .download_chunk(
                         &remote_path,
@@ -154,6 +160,17 @@ impl MultiChannelDownloader {
                         task.offset,
                         task.length,
                         move |bytes_transferred, speed| {
+                            // 检查暂停状态并等待
+                            use std::sync::atomic::Ordering;
+                            while pause_flag_for_loop.load(Ordering::Relaxed) {
+                                // 检查是否取消
+                                if cancel_token_for_loop.is_cancelled() {
+                                    return;
+                                }
+                                // 暂停时等待 100ms
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                            }
+
                             // 更新分片进度
                             let progress_tracker = progress_tracker.clone();
                             let progress_callback = progress_callback.clone();

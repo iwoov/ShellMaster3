@@ -170,6 +170,53 @@ fn render_transfer_panel(
                                     .child(
                                         div().text_xs().text_color(status_color).child(status_text),
                                     )
+                                    // 暂停/继续按钮（仅在下载中或已暂停时显示）
+                                    .when(is_active, |this| {
+                                        let is_paused = transfer.status
+                                            == crate::models::sftp::TransferStatus::Paused;
+                                        let session_state_for_pause = session_state.clone();
+                                        let transfer_id_pause = transfer_id.clone();
+                                        let button_color = cx.theme().muted_foreground;
+
+                                        this.child(
+                                            div()
+                                                .id(SharedString::from(format!(
+                                                    "pause-{}",
+                                                    transfer_id_pause
+                                                )))
+                                                .cursor_pointer()
+                                                .rounded(px(2.))
+                                                .p(px(2.))
+                                                .hover(|s| s.bg(button_color.opacity(0.2)))
+                                                .child(if is_paused {
+                                                    // 显示播放图标（继续）
+                                                    render_icon(icons::PLAY, button_color)
+                                                } else {
+                                                    // 显示暂停图标
+                                                    render_icon(icons::PAUSE, button_color)
+                                                })
+                                                .on_click({
+                                                    move |_, _, cx| {
+                                                        session_state_for_pause.update(
+                                                            cx,
+                                                            |state, cx| {
+                                                                if is_paused {
+                                                                    state.resume_transfer(
+                                                                        &transfer_id_pause,
+                                                                        cx,
+                                                                    );
+                                                                } else {
+                                                                    state.pause_transfer(
+                                                                        &transfer_id_pause,
+                                                                        cx,
+                                                                    );
+                                                                }
+                                                            },
+                                                        );
+                                                    }
+                                                }),
+                                        )
+                                    })
                                     // 取消按钮（仅在传输中显示）
                                     .when(is_active, |this| {
                                         this.child(

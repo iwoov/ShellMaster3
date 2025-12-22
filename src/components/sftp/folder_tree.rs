@@ -177,8 +177,11 @@ fn collect_tree_rows(path: &str, depth: usize, state: &SftpState, rows: &mut Vec
         None => return,
     };
 
-    // 只显示目录
-    for entry in entries.iter().filter(|e| e.is_dir()) {
+    // 只显示目录，并按名称字母顺序排序（A-Z，不区分大小写）
+    let mut dirs: Vec<_> = entries.iter().filter(|e| e.is_dir()).collect();
+    dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    for entry in dirs {
         let is_expanded = state.is_expanded(&entry.path);
         rows.push(FolderTreeRow {
             path: entry.path.clone(),

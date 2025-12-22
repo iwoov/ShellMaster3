@@ -26,6 +26,29 @@ use models::settings::ThemeMode;
 use pages::HomePage;
 use services::storage;
 
+/// 获取资源目录路径
+/// 在开发环境中使用项目的 assets 目录，在 .app 包中使用 Resources 目录
+fn get_assets_path() -> PathBuf {
+    // 首先尝试从可执行文件的位置推断 .app 包中的 Resources 目录
+    if let Ok(exe_path) = std::env::current_exe() {
+        // 在 .app 包中，可执行文件位于：ShellMaster3.app/Contents/MacOS/shellmaster3
+        // Resources 目录位于：ShellMaster3.app/Contents/Resources/
+        if let Some(parent) = exe_path.parent() {
+            if parent.ends_with("MacOS") {
+                if let Some(contents) = parent.parent() {
+                    let resources = contents.join("Resources").join("assets");
+                    if resources.exists() {
+                        return resources;
+                    }
+                }
+            }
+        }
+    }
+
+    // 开发环境：使用 CARGO_MANIFEST_DIR
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
+}
+
 fn main() {
     // 初始化日志系统
     // 可以通过 RUST_LOG 环境变量控制日志级别，例如：RUST_LOG=debug cargo run
@@ -39,7 +62,7 @@ fn main() {
 
     Application::new()
         .with_assets(Assets {
-            base: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+            base: get_assets_path(),
         })
         .run(|cx: &mut App| {
             // 初始化 gpui-component 组件库（必须在使用任何组件之前调用）

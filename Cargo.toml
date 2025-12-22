@@ -2,6 +2,8 @@
 name = "shellmaster3"
 version = "0.1.0"
 edition = "2021"
+authors = ["ShellMaster Team"]
+description = "SSH/SFTP 客户端"
 
 [dependencies]
 gpui = "0.2.2"
@@ -33,3 +35,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # SFTP
 russh-sftp = "2.1"
 futures = "0.3.31"
+
+[package.metadata.bundle]
+name = "ShellMaster3"
+identifier = "com.shellmaster.app"
+version = "0.1.0"
+icon = ["AppIcon.icns"]
+resources = ["assets"]
+copyright = "Copyright (c) 2024 ShellMaster Team. All rights reserved."
+category = "Developer Tool"
+short_description = "SSH/SFTP 客户端"
+long_description = "一个现代化的 SSH 和 SFTP 客户端，提供终端访问和文件传输功能。"

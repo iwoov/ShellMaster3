@@ -100,6 +100,8 @@ pub struct SessionState {
     pub sftp_path_bar_states: HashMap<String, Entity<PathBarState>>,
     /// SFTP 新建文件夹对话框状态
     pub sftp_new_folder_dialog: Option<Entity<NewFolderDialogState>>,
+    /// 活动传输列表
+    pub active_transfers: Vec<crate::models::sftp::TransferItem>,
 }
 
 impl Default for SessionState {
@@ -120,6 +122,7 @@ impl Default for SessionState {
             sftp_file_list_views: HashMap::new(),
             sftp_path_bar_states: HashMap::new(),
             sftp_new_folder_dialog: None,
+            active_transfers: Vec::new(),
         }
     }
 }
@@ -1480,6 +1483,186 @@ impl SessionState {
                             cx.notify();
                         });
                     });
+                }
+            })
+            .detach();
+    }
+
+    /// 下载文件到本地
+    ///
+    /// 使用系统文件选择器选择保存位置，然后异步下载文件
+    pub fn sftp_download_file(
+        &mut self,
+        tab_id: &str,
+        remote_path: String,
+        file_name: String,
+        file_size: u64,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        info!(
+            "[SFTP] Download file: {} ({} bytes) for tab {}",
+            remote_path, file_size, tab_id
+        );
+
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+
+        // 尝试获取 SFTP 服务
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    return;
+                }
+            };
+            match guard.get(&tab_id_owned) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    return;
+                }
+            }
+        };
+
+        // 获取 SSH manager 的 runtime
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        let runtime = ssh_manager.runtime();
+
+        // 尝试获取默认下载路径
+        let default_path = crate::services::storage::load_settings()
+            .map(|s| s.sftp.local_default_path.clone())
+            .unwrap_or_default();
+
+        let file_name_clone = file_name.clone();
+
+        // 使用 GPUI 异步上下文执行文件选择和下载
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                // 确定保存路径：优先使用默认路径，否则打开文件选择器
+                let local_path = if !default_path.is_empty() {
+                    // 使用默认下载路径 + 文件名
+                    let path = std::path::PathBuf::from(&default_path).join(&file_name_clone);
+                    info!("[SFTP] Using default download path: {:?}", path);
+                    path
+                } else {
+                    // 打开系统文件保存对话框
+                    let file_picker = rfd::AsyncFileDialog::new()
+                        .set_title("保存文件")
+                        .set_file_name(&file_name_clone);
+
+                    let save_handle = file_picker.save_file().await;
+
+                    let Some(file_handle) = save_handle else {
+                        info!("[SFTP] Download cancelled by user");
+                        return;
+                    };
+
+                    file_handle.path().to_path_buf()
+                };
+
+                info!("[SFTP] Downloading to: {:?}", local_path);
+
+                // 创建传输项并添加到列表
+                let transfer_item = crate::models::sftp::TransferItem::new_download(
+                    remote_path.clone(),
+                    local_path.clone(),
+                    file_size,
+                );
+                // 使用 transfer_item 内部生成的 id
+                let transfer_id_clone = transfer_item.id.clone();
+
+                // 添加传输项到列表
+                let _ = async_cx.update(|cx| {
+                    session_state.update(cx, |state, cx| {
+                        state.active_transfers.push(transfer_item);
+                        cx.notify();
+                    });
+                });
+
+                // 创建 channel 用于从 tokio 运行时发送进度和结果到 GPUI
+                enum DownloadEvent {
+                    Progress(u64, u64, u64), // transferred, total, speed
+                    Complete(Result<(), String>),
+                }
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DownloadEvent>();
+
+                // 在 SSH 运行时中执行下载
+                let remote_path_clone = remote_path.clone();
+                let local_path_clone = local_path.clone();
+                let tx_progress = tx.clone();
+                runtime.spawn(async move {
+                    let result = service
+                        .download_file(
+                            &remote_path_clone,
+                            &local_path_clone,
+                            move |transferred, total, speed| {
+                                // 发送进度更新（包含速度）
+                                let _ = tx_progress.send(DownloadEvent::Progress(
+                                    transferred,
+                                    total,
+                                    speed,
+                                ));
+                            },
+                        )
+                        .await;
+
+                    let _ = tx.send(DownloadEvent::Complete(result));
+                });
+
+                // 接收进度和结果
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        DownloadEvent::Progress(transferred, total, speed) => {
+                            let transfer_id = transfer_id_clone.clone();
+                            let _ = async_cx.update(|cx| {
+                                session_state.update(cx, |state, cx| {
+                                    if let Some(transfer) = state
+                                        .active_transfers
+                                        .iter_mut()
+                                        .find(|t| t.id == transfer_id)
+                                    {
+                                        transfer.progress.bytes_transferred = transferred;
+                                        transfer.progress.total_bytes = total;
+                                        transfer.progress.speed_bytes_per_sec = speed;
+                                        transfer.status =
+                                            crate::models::sftp::TransferStatus::Downloading;
+                                    }
+                                    cx.notify();
+                                });
+                            });
+                        }
+                        DownloadEvent::Complete(result) => {
+                            let transfer_id = transfer_id_clone.clone();
+                            let local_path = local_path.clone();
+                            let _ = async_cx.update(|cx| {
+                                session_state.update(cx, |state, cx| {
+                                    if let Some(transfer) = state
+                                        .active_transfers
+                                        .iter_mut()
+                                        .find(|t| t.id == transfer_id)
+                                    {
+                                        match &result {
+                                            Ok(()) => {
+                                                transfer.set_completed();
+                                                info!(
+                                                    "[SFTP] Download completed: {:?}",
+                                                    local_path
+                                                );
+                                            }
+                                            Err(e) => {
+                                                transfer.set_failed(e.clone());
+                                                error!("[SFTP] Download failed: {}", e);
+                                            }
+                                        }
+                                    }
+                                    cx.notify();
+                                });
+                            });
+                            break;
+                        }
+                    }
                 }
             })
             .detach();

@@ -4,6 +4,8 @@ use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::ActiveTheme;
 
+use crate::models::sftp::FileType;
+
 use crate::components::sftp::{
     render_folder_tree, render_sftp_toolbar, FileListView, FolderTreeEvent, PathBarState,
     SftpToolbarEvent,
@@ -32,6 +34,7 @@ pub fn render_sftp_panel(
     // === 创建事件处理闭包 ===
     let session_for_toolbar = session_state.clone();
     let tab_id_for_toolbar = tab_id.clone();
+    let file_list_for_toolbar = file_list_view.clone();
 
     let on_toolbar_event = move |event: SftpToolbarEvent, cx: &mut App| {
         session_for_toolbar.update(cx, |state, cx| match event {
@@ -48,7 +51,21 @@ pub fn render_sftp_panel(
                 // TODO: 实现上传
             }
             SftpToolbarEvent::Download => {
-                // TODO: 实现下载
+                // 获取选中的文件
+                if let Some(ref file_list) = file_list_for_toolbar {
+                    if let Some(file) = file_list.read(cx).get_selected_file(cx) {
+                        // 只允许下载文件，不支持目录
+                        if file.file_type != FileType::Directory {
+                            state.sftp_download_file(
+                                &tab_id_for_toolbar,
+                                file.path.clone(),
+                                file.name.clone(),
+                                file.size,
+                                cx,
+                            );
+                        }
+                    }
+                }
             }
         });
     };

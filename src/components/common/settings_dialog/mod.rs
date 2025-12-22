@@ -103,6 +103,7 @@ pub struct SettingsDialogState {
 
     // ============ SFTP 设置输入 ============
     pub concurrent_transfers_input: Option<Entity<InputState>>,
+    pub local_default_path_input: Option<Entity<InputState>>,
 
     // ============ 同步设置输入 ============
     pub webdav_url_input: Option<Entity<InputState>>,
@@ -143,6 +144,7 @@ impl Default for SettingsDialogState {
             disk_threshold_input: None,
             // SFTP
             concurrent_transfers_input: None,
+            local_default_path_input: None,
             // 同步
             webdav_url_input: None,
             webdav_username_input: None,
@@ -183,6 +185,7 @@ impl SettingsDialogState {
         self.memory_threshold_input = None;
         self.disk_threshold_input = None;
         self.concurrent_transfers_input = None;
+        self.local_default_path_input = None;
         self.webdav_url_input = None;
         self.webdav_username_input = None;
         self.webdav_password_input = None;
@@ -294,14 +297,23 @@ impl SettingsDialogState {
         }
 
         // SFTP 设置
+        let lang = &self.settings.theme.language;
         if self.concurrent_transfers_input.is_none() {
             let value = self.settings.sftp.concurrent_transfers.to_string();
             self.concurrent_transfers_input =
                 Some(create_int_number_input(value, 1, 10, 1, window, cx));
         }
+        if self.local_default_path_input.is_none() {
+            let value = self.settings.sftp.local_default_path.clone();
+            let placeholder = i18n::t(lang, "settings.sftp.default_download_path_placeholder");
+            self.local_default_path_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx).placeholder(placeholder);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
 
         // 同步设置
-        let lang = &self.settings.theme.language;
         if self.webdav_url_input.is_none() {
             let value = self.settings.sync.webdav_url.clone();
             self.webdav_url_input = Some(cx.new(|cx| {
@@ -425,6 +437,11 @@ impl SettingsDialogState {
             if let Ok(v) = input.read(cx).value().parse::<u32>() {
                 self.settings.monitor.disk_alert_threshold = v;
             }
+        }
+
+        // SFTP
+        if let Some(input) = &self.local_default_path_input {
+            self.settings.sftp.local_default_path = input.read(cx).value().to_string();
         }
 
         // 同步

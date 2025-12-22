@@ -591,6 +591,15 @@ impl FileListView {
     pub fn get_file_path(&self, row_ix: usize, cx: &App) -> Option<String> {
         self.table_state.read(cx).delegate().get_file_path(row_ix)
     }
+
+    /// 获取当前选中的文件条目
+    pub fn get_selected_file(&self, cx: &App) -> Option<FileEntry> {
+        let table_state = self.table_state.read(cx);
+        let selected_row = table_state.selected_row()?;
+        let delegate = table_state.delegate();
+        let entry_ix = delegate.row_order.get(selected_row).copied()?;
+        delegate.file_list.get(entry_ix).cloned()
+    }
 }
 
 impl EventEmitter<TableEvent> for FileListView {}

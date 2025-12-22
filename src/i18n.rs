@@ -69,6 +69,9 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.sftp.concurrent" => "并发传输数",
         "settings.sftp.preserve_time" => "保留时间戳",
         "settings.sftp.resume" => "断点续传",
+        "settings.sftp.default_download_path" => "默认下载路径",
+        "settings.sftp.default_download_path_placeholder" => "留空则每次下载弹窗选择",
+        "settings.sftp.browse" => "浏览",
         "settings.sftp.editor" => "编辑器",
         "settings.sftp.builtin_editor" => "使用内置编辑器",
         "settings.sftp.syntax_highlight" => "语法高亮",
@@ -336,6 +339,9 @@ fn zh_cn(key: &'static str) -> &'static str {
         "mini_sidebar.snippets" => "快捷命令",
         "mini_sidebar.transfer" => "传输管理",
 
+        // 传输管理
+        "transfer.empty" => "暂无传输任务",
+
         // 已知主机
         "known_hosts.empty.title" => "暂无已知主机",
         "known_hosts.empty.description" => "连接服务器并信任主机密钥后，会在这里显示",
@@ -409,6 +415,9 @@ fn en_us(key: &'static str) -> &'static str {
         "settings.sftp.concurrent" => "Concurrent Transfers",
         "settings.sftp.preserve_time" => "Preserve Timestamps",
         "settings.sftp.resume" => "Resume Transfers",
+        "settings.sftp.default_download_path" => "Default Download Path",
+        "settings.sftp.default_download_path_placeholder" => "Leave empty to prompt each time",
+        "settings.sftp.browse" => "Browse",
         "settings.sftp.editor" => "Editor",
         "settings.sftp.builtin_editor" => "Use Built-in Editor",
         "settings.sftp.syntax_highlight" => "Syntax Highlighting",
@@ -675,6 +684,9 @@ fn en_us(key: &'static str) -> &'static str {
         // Mini Sidebar
         "mini_sidebar.snippets" => "Snippets",
         "mini_sidebar.transfer" => "Transfer",
+
+        // Transfer Panel
+        "transfer.empty" => "No active transfers",
 
         // Known Hosts
         "known_hosts.empty.title" => "No Known Hosts",

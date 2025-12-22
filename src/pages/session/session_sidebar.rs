@@ -37,7 +37,7 @@ pub fn render_session_sidebar(
         ),
         SidebarPanel::Transfer => (
             crate::i18n::t(&lang, "mini_sidebar.transfer"),
-            render_placeholder_content("传输管理功能待完善", muted_foreground).into_any_element(),
+            render_transfer_panel(session_state.clone(), &lang, cx).into_any_element(),
         ),
     };
 
@@ -78,6 +78,175 @@ fn render_placeholder_content(text: &'static str, color: Hsla) -> impl IntoEleme
         .items_center()
         .justify_center()
         .child(div().text_sm().text_color(color).child(text))
+}
+
+/// 渲染传输管理面板
+fn render_transfer_panel(
+    session_state: Entity<SessionState>,
+    lang: &crate::models::settings::Language,
+    cx: &App,
+) -> impl IntoElement {
+    let transfers = &session_state.read(cx).active_transfers;
+    let muted_foreground = cx.theme().muted_foreground;
+    let foreground = cx.theme().foreground;
+    let primary = cx.theme().primary;
+    let destructive: Hsla = gpui::rgb(0xef4444).into();
+    let success: Hsla = gpui::rgb(0x22c55e).into();
+
+    if transfers.is_empty() {
+        // 空状态
+        div()
+            .id("transfer-panel-empty")
+            .flex_1()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .pt_8()
+            .child(render_icon(icons::CLOUD, muted_foreground.into()))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted_foreground)
+                    .child(crate::i18n::t(lang, "transfer.empty")),
+            )
+            .into_any_element()
+    } else {
+        // 传输列表
+        div()
+            .id("transfer-list-scroll")
+            .flex_1()
+            .overflow_y_scroll()
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(transfers.iter().enumerate().map(|(idx, transfer)| {
+                let progress_percent = transfer.progress.percentage();
+                let status_text = transfer.status.display_text();
+                let status_color = if transfer.status.is_error() {
+                    destructive
+                } else if transfer.status.is_complete() {
+                    success
+                } else {
+                    primary
+                };
+
+                div()
+                    .id(SharedString::from(format!("transfer-{}", idx)))
+                    .p_3()
+                    .bg(cx.theme().muted)
+                    .rounded(px(6.))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    // 文件名和状态
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_medium()
+                                    .text_color(foreground)
+                                    .overflow_hidden()
+                                    .max_w(px(140.))
+                                    .child(transfer.file_name()),
+                            )
+                            .child(div().text_xs().text_color(status_color).child(status_text)),
+                    )
+                    // 进度条
+                    .child(
+                        div()
+                            .h(px(4.))
+                            .w_full()
+                            .bg(cx.theme().muted_foreground.opacity(0.2))
+                            .rounded_full()
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(relative(progress_percent as f32 / 100.0))
+                                    .bg(status_color)
+                                    .rounded_full(),
+                            ),
+                    )
+                    // 进度详情
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_xs().text_color(muted_foreground).child(
+                                        format!(
+                                            "{} / {}",
+                                            format_bytes(transfer.progress.bytes_transferred),
+                                            format_bytes(transfer.progress.total_bytes)
+                                        ),
+                                    ))
+                                    // 下载速度（仅在下载中显示）
+                                    .when(
+                                        transfer.progress.speed_bytes_per_sec > 0
+                                            && !transfer.status.is_complete()
+                                            && !transfer.status.is_error(),
+                                        |this| {
+                                            this.child(div().text_xs().text_color(primary).child(
+                                                format!(
+                                                    "{}",
+                                                    format_speed(
+                                                        transfer.progress.speed_bytes_per_sec
+                                                    )
+                                                ),
+                                            ))
+                                        },
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted_foreground)
+                                    .child(format!("{:.0}%", progress_percent)),
+                            ),
+                    )
+            }))
+            .into_any_element()
+    }
+}
+
+/// 格式化字节数
+fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+/// 格式化速度
+fn format_speed(bytes_per_sec: u64) -> String {
+    if bytes_per_sec < 1024 {
+        format!("{} B/s", bytes_per_sec)
+    } else if bytes_per_sec < 1024 * 1024 {
+        format!("{:.1} KB/s", bytes_per_sec as f64 / 1024.0)
+    } else if bytes_per_sec < 1024 * 1024 * 1024 {
+        format!("{:.1} MB/s", bytes_per_sec as f64 / (1024.0 * 1024.0))
+    } else {
+        format!(
+            "{:.2} GB/s",
+            bytes_per_sec as f64 / (1024.0 * 1024.0 * 1024.0)
+        )
+    }
 }
 
 /// 渲染快捷命令树

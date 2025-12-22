@@ -1592,21 +1592,67 @@ impl SessionState {
                 let remote_path_clone = remote_path.clone();
                 let local_path_clone = local_path.clone();
                 let tx_progress = tx.clone();
+                let tab_id_for_download = tab_id_owned.clone();
+
+                // 多通道下载阈值：10MB
+                const MULTI_CHANNEL_THRESHOLD: u64 = 10 * 1024 * 1024;
+
+                // 获取并行通道数设置
+                let concurrent_transfers = crate::services::storage::load_settings()
+                    .map(|s| s.sftp.concurrent_transfers as usize)
+                    .unwrap_or(3);
+
                 runtime.spawn(async move {
-                    let result = service
-                        .download_file(
-                            &remote_path_clone,
-                            &local_path_clone,
-                            move |transferred, total, speed| {
-                                // 发送进度更新（包含速度）
-                                let _ = tx_progress.send(DownloadEvent::Progress(
-                                    transferred,
-                                    total,
-                                    speed,
-                                ));
-                            },
-                        )
-                        .await;
+                    let result =
+                        if file_size >= MULTI_CHANNEL_THRESHOLD && concurrent_transfers > 1 {
+                            // 使用多通道下载
+                            info!(
+                            "[SFTP] Using multi-channel download ({} channels) for {} ({} bytes)",
+                            concurrent_transfers, remote_path_clone, file_size
+                        );
+
+                            // 获取 SSH session
+                            let ssh_manager = crate::ssh::manager::SshManager::global();
+                            if let Some(ssh_session) = ssh_manager.get_session(&tab_id_for_download)
+                            {
+                                let downloader = crate::services::sftp::MultiChannelDownloader::new(
+                                    ssh_session,
+                                    tab_id_for_download.clone(),
+                                    concurrent_transfers,
+                                );
+
+                                let tx_progress_clone = tx_progress.clone();
+                                downloader
+                                    .download_file(
+                                        &remote_path_clone,
+                                        &local_path_clone,
+                                        file_size,
+                                        move |transferred, total, speed| {
+                                            let _ = tx_progress_clone.send(
+                                                DownloadEvent::Progress(transferred, total, speed),
+                                            );
+                                        },
+                                    )
+                                    .await
+                            } else {
+                                Err(format!("SSH session not found: {}", tab_id_for_download))
+                            }
+                        } else {
+                            // 使用单通道下载（小文件或只有1个通道）
+                            service
+                                .download_file(
+                                    &remote_path_clone,
+                                    &local_path_clone,
+                                    move |transferred, total, speed| {
+                                        let _ = tx_progress.send(DownloadEvent::Progress(
+                                            transferred,
+                                            total,
+                                            speed,
+                                        ));
+                                    },
+                                )
+                                .await
+                        };
 
                     let _ = tx.send(DownloadEvent::Complete(result));
                 });

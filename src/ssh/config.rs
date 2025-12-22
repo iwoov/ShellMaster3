@@ -114,14 +114,30 @@ impl SshConfig {
     /// 构建 russh 配置
     pub fn to_russh_config(&self) -> russh::client::Config {
         let mut config = russh::client::Config::default();
+
         // 设置不活动超时（russh 没有单独的 connection_timeout，我们用 inactivity_timeout）
         config.inactivity_timeout = Some(std::time::Duration::from_secs(self.connect_timeout));
+
         // 设置心跳
         if self.keepalive.enabled {
             config.keepalive_interval =
                 Some(std::time::Duration::from_secs(self.keepalive.interval));
             config.keepalive_max = self.keepalive.max_retries as usize;
         }
+
+        // === 性能优化 ===
+        // 增大窗口大小到 16MB（默认通常较小）
+        // 更大的窗口允许更多数据在等待确认前发送，提高高带宽连接的吞吐量
+        config.window_size = 16 * 1024 * 1024; // 16MB
+
+        // 增大最大包大小到 256KB
+        // 更大的包减少每字节的协议开销
+        config.maximum_packet_size = 256 * 1024; // 256KB
+
+        // 增大通道缓冲区大小
+        // 更大的缓冲区可以平滑数据流，防止瓶颈
+        config.channel_buffer_size = 32;
+
         config
     }
 }

@@ -67,7 +67,7 @@ impl FileListDelegate {
     fn create_columns(lang: &Language) -> Vec<Column> {
         vec![
             Column::new("name", t(lang, "sftp.header.name"))
-                .width(px(200.))
+                .width(px(300.))
                 .sortable(),
             Column::new("permissions", t(lang, "sftp.header.permissions"))
                 .width(px(90.))
@@ -272,23 +272,19 @@ fn get_file_icon(entry: &FileEntry) -> &'static str {
 
 /// 格式化修改时间
 fn format_modified_time(entry: &FileEntry) -> String {
+    use chrono::{Local, TimeZone};
+
     match entry.modified {
         Some(time) => {
             let duration = time
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default();
-            let secs = duration.as_secs();
-            let days = secs / 86400;
-            let years = 1970 + (days / 365);
-            let remaining_days = days % 365;
-            let months = remaining_days / 30 + 1;
-            let day = remaining_days % 30 + 1;
-            let hours = (secs % 86400) / 3600;
-            let mins = (secs % 3600) / 60;
-            format!(
-                "{:04}-{:02}-{:02} {:02}:{:02}",
-                years, months, day, hours, mins
-            )
+            let secs = duration.as_secs() as i64;
+            // 使用 chrono 进行正确的日期时间转换，并转为本地时区
+            match Local.timestamp_opt(secs, 0) {
+                chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
+                _ => "-".to_string(),
+            }
         }
         None => "-".to_string(),
     }

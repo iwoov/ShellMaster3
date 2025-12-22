@@ -5,7 +5,8 @@ use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::ActiveTheme;
 
 use crate::components::sftp::{
-    render_folder_tree, render_sftp_toolbar, FileListView, FolderTreeEvent, SftpToolbarEvent,
+    render_folder_tree, render_sftp_toolbar, FileListView, FolderTreeEvent, PathBarState,
+    SftpToolbarEvent,
 };
 use crate::models::sftp::SftpState;
 use crate::state::SessionState;
@@ -22,6 +23,7 @@ use crate::state::SessionState;
 pub fn render_sftp_panel(
     sftp_state: Option<&SftpState>,
     file_list_view: Option<Entity<FileListView>>,
+    path_bar_state: Option<Entity<PathBarState>>,
     session_state: Entity<SessionState>,
     tab_id: String,
     window: &mut Window,
@@ -39,9 +41,6 @@ pub fn render_sftp_panel(
             SftpToolbarEvent::GoHome => state.sftp_go_home(&tab_id_for_toolbar, cx),
             SftpToolbarEvent::Refresh => state.sftp_refresh(&tab_id_for_toolbar, cx),
             SftpToolbarEvent::ToggleHidden => state.sftp_toggle_hidden(&tab_id_for_toolbar, cx),
-            SftpToolbarEvent::NavigateTo(path) => {
-                state.sftp_navigate_to(&tab_id_for_toolbar, path, cx)
-            }
             SftpToolbarEvent::NewFolder => {
                 // TODO: 实现新建文件夹
             }
@@ -67,7 +66,21 @@ pub fn render_sftp_panel(
     };
 
     // === 顶部工具栏 ===
-    let toolbar = render_sftp_toolbar(sftp_state, on_toolbar_event, cx);
+    let toolbar: AnyElement = if let Some(path_bar) = path_bar_state {
+        render_sftp_toolbar(sftp_state, path_bar, on_toolbar_event, cx).into_any_element()
+    } else {
+        // 回退：显示空占位
+        let bg_color = crate::theme::sidebar_color(cx);
+        let border_color = cx.theme().border;
+        div()
+            .w_full()
+            .h(px(32.))
+            .flex_shrink_0()
+            .bg(bg_color)
+            .border_b_1()
+            .border_color(border_color)
+            .into_any_element()
+    };
 
     // === 左侧内容区：文件夹树 ===
     let folder_tree = render_folder_tree(&tab_id, sftp_state, on_folder_tree_event, window, cx);

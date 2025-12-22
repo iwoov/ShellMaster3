@@ -1,7 +1,7 @@
 // 全局 AppState
 
 use crate::components::monitor::DetailDialogState;
-use crate::components::sftp::FileListView;
+use crate::components::sftp::{FileListView, PathBarEvent, PathBarState};
 use crate::models::monitor::MonitorState;
 use crate::models::sftp::SftpState;
 use crate::models::SnippetsConfig;
@@ -96,6 +96,8 @@ pub struct SessionState {
     pub sftp_services: Arc<Mutex<HashMap<String, SftpService>>>,
     /// SFTP 文件列表视图（按 tab_id 存储）
     pub sftp_file_list_views: HashMap<String, Entity<FileListView>>,
+    /// SFTP 路径栏状态（按 tab_id 存储）
+    pub sftp_path_bar_states: HashMap<String, Entity<PathBarState>>,
 }
 
 impl Default for SessionState {
@@ -114,6 +116,7 @@ impl Default for SessionState {
             monitor_services: Arc::new(Mutex::new(HashMap::new())),
             sftp_services: Arc::new(Mutex::new(HashMap::new())),
             sftp_file_list_views: HashMap::new(),
+            sftp_path_bar_states: HashMap::new(),
         }
     }
 }
@@ -300,6 +303,35 @@ impl SessionState {
     /// 获取 SFTP 文件列表视图（如果存在）
     pub fn get_sftp_file_list_view(&self, tab_id: &str) -> Option<Entity<FileListView>> {
         self.sftp_file_list_views.get(tab_id).cloned()
+    }
+
+    /// 确保 SFTP 路径栏状态已创建
+    pub fn ensure_sftp_path_bar_state(
+        &mut self,
+        tab_id: &str,
+        session_state: Entity<SessionState>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Entity<PathBarState> {
+        if !self.sftp_path_bar_states.contains_key(tab_id) {
+            let tab_id_for_event = tab_id.to_string();
+            let view = cx.new(|cx| {
+                PathBarState::new(window, cx, move |event, cx| match event {
+                    PathBarEvent::Navigate(path) => {
+                        session_state.update(cx, |state, cx| {
+                            state.sftp_navigate_to(&tab_id_for_event, path, cx);
+                        });
+                    }
+                })
+            });
+            self.sftp_path_bar_states.insert(tab_id.to_string(), view);
+        }
+        self.sftp_path_bar_states.get(tab_id).unwrap().clone()
+    }
+
+    /// 获取 SFTP 路径栏状态（如果存在）
+    pub fn get_sftp_path_bar_state(&self, tab_id: &str) -> Option<Entity<PathBarState>> {
+        self.sftp_path_bar_states.get(tab_id).cloned()
     }
 
     /// 确保命令输入框已创建，并更新占位符为当前语言

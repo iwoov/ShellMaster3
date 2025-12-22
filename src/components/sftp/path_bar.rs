@@ -115,7 +115,7 @@ impl PathBarState {
 }
 
 impl Render for PathBarState {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let input_bg = cx.theme().background;
         let border_color = cx.theme().border;
 
@@ -150,6 +150,16 @@ impl Render for PathBarState {
                 breadcrumb = breadcrumb.child(item);
             }
 
+            // 右侧空白区域，点击触发编辑模式
+            let edit_trigger = div()
+                .id("sftp-path-bar-edit-trigger")
+                .flex_1()
+                .h_full()
+                .cursor_text()
+                .on_click(cx.listener(|this, _event, window, cx| {
+                    this.start_edit(window, cx);
+                }));
+
             div()
                 .id("sftp-path-bar")
                 .flex_1()
@@ -162,11 +172,10 @@ impl Render for PathBarState {
                 .flex()
                 .items_center()
                 .overflow_hidden()
-                .cursor_pointer()
-                .on_click(cx.listener(|this, _event, window, cx| {
-                    this.start_edit(window, cx);
-                }))
-                .child(breadcrumb)
+                // 面包屑（flex_shrink_0 保持紧凑）
+                .child(div().flex_shrink_0().child(breadcrumb))
+                // 右侧空白区域（flex_1 填充剩余空间）
+                .child(edit_trigger)
         }
     }
 }

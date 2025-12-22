@@ -2,9 +2,9 @@
 // 包含导航按钮（返回、前进、上级、主目录）+ 地址栏 + 操作按钮
 
 use gpui::*;
-use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use gpui_component::ActiveTheme;
 
+use super::PathBarState;
 use crate::constants::icons;
 use crate::models::sftp::SftpState;
 
@@ -27,7 +27,6 @@ pub enum SftpToolbarEvent {
     ToggleHidden,
     Upload,
     Download,
-    NavigateTo(String),
 }
 
 /// 渲染工具栏按钮
@@ -73,25 +72,27 @@ where
 }
 
 /// 渲染 SFTP 工具栏
-pub fn render_sftp_toolbar<F>(state: Option<&SftpState>, on_event: F, cx: &App) -> impl IntoElement
+pub fn render_sftp_toolbar<F>(
+    state: Option<&SftpState>,
+    path_bar_state: Entity<PathBarState>,
+    on_event: F,
+    cx: &App,
+) -> impl IntoElement
 where
     F: Fn(SftpToolbarEvent, &mut App) + Clone + 'static,
 {
     let bg_color = crate::theme::sidebar_color(cx);
     let border_color = cx.theme().border;
-    let input_bg = cx.theme().background;
-    let _muted_foreground = cx.theme().muted_foreground;
 
     // 获取状态信息
-    let (can_back, can_forward, can_up, current_path, show_hidden) = match state {
+    let (can_back, can_forward, can_up, show_hidden) = match state {
         Some(s) => (
             s.can_go_back(),
             s.can_go_forward(),
             s.can_go_up(),
-            s.current_path.as_str(),
             s.show_hidden,
         ),
-        None => (false, false, false, "/", false),
+        None => (false, false, false, false),
     };
 
     // === 导航按钮组 ===
@@ -142,42 +143,8 @@ where
             cx,
         ));
 
-    // === 地址栏（面包屑导航） ===
-    let path_segments = parse_path_segments(current_path);
-    let mut breadcrumb = Breadcrumb::new().text_xs();
-
-    for (i, (name, full_path)) in path_segments.iter().enumerate() {
-        let is_last = i == path_segments.len() - 1;
-        let path = full_path.clone();
-        let on_nav = on_event.clone();
-
-        let item = BreadcrumbItem::new(name.clone());
-        let item = if is_last {
-            // 最后一个元素禁用点击
-            item.disabled(true)
-        } else {
-            // 其他元素可点击导航
-            item.on_click(move |_, _, cx| {
-                on_nav(SftpToolbarEvent::NavigateTo(path.clone()), cx);
-            })
-        };
-
-        breadcrumb = breadcrumb.child(item);
-    }
-
-    let path_bar = div()
-        .flex_1()
-        .h(px(22.))
-        .mx_2()
-        .px_2()
-        .bg(input_bg)
-        .border_1()
-        .border_color(border_color)
-        .rounded(px(4.))
-        .flex()
-        .items_center()
-        .overflow_hidden()
-        .child(breadcrumb);
+    // === 地址栏（使用 PathBarState 组件，支持编辑模式） ===
+    let path_bar = div().flex_1().mx_2().child(path_bar_state);
 
     // === 操作按钮组 ===
     let hidden_icon = if show_hidden {
@@ -259,29 +226,4 @@ where
         .child(nav_buttons)
         .child(path_bar)
         .child(action_buttons)
-}
-
-/// 解析路径为面包屑段
-/// 例如："/home/wuyun" -> [("/", "/"), ("home", "/home"), ("wuyun", "/home/wuyun")]
-fn parse_path_segments(path: &str) -> Vec<(String, String)> {
-    let mut segments = Vec::new();
-
-    if path.is_empty() || !path.starts_with('/') {
-        return segments;
-    }
-
-    // 根目录
-    segments.push(("/".to_string(), "/".to_string()));
-
-    // 其他路径段
-    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let mut current_path = String::new();
-
-    for part in parts {
-        current_path.push('/');
-        current_path.push_str(part);
-        segments.push((part.to_string(), current_path.clone()));
-    }
-
-    segments
 }

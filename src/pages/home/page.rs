@@ -422,6 +422,20 @@ impl HomePage {
                         view.update(cx, |v, cx| {
                             v.sync_from_sftp_state(sftp_state, cx);
                         });
+
+                        // 提取当前路径（避免借用冲突）
+                        let current_path = sftp_state.map(|s| s.current_path.clone());
+
+                        // 确保 PathBarState 创建并同步路径
+                        let entity = cx.entity().clone();
+                        let path_bar =
+                            state.ensure_sftp_path_bar_state(&tab_id_for_sftp, entity, window, cx);
+                        // 同步当前路径到 PathBarState
+                        if let Some(path) = current_path {
+                            path_bar.update(cx, |pb, cx| {
+                                pb.set_path(&path, window, cx);
+                            });
+                        }
                     });
 
                     // 检查当前激活的终端是否已初始化
@@ -489,7 +503,7 @@ impl HomePage {
                         window,
                         cx,
                     )
-                        .into_any_element()
+                    .into_any_element()
                 }
                 SessionStatus::Error(_) | SessionStatus::Disconnected => {
                     // 错误或断开状态也使用连接页面显示

@@ -57,11 +57,14 @@ pub fn render_session_layout(
     let tab_id_for_sftp = tab.id.clone();
     // 获取 SFTP 文件列表视图（如果存在）
     let sftp_file_list_view = session_state.read(cx).get_sftp_file_list_view(&tab.id);
+    // 获取 SFTP 路径栏状态（如果存在）
+    let sftp_path_bar_state = session_state.read(cx).get_sftp_path_bar_state(&tab.id);
     let left_area = v_resizable("session-left-v")
         .child(resizable_panel().child(top_area))
         .child(resizable_panel().size(px(300.)).child(render_sftp_panel(
             tab.sftp_state.as_ref(),
             sftp_file_list_view,
+            sftp_path_bar_state,
             session_state_for_sftp,
             tab_id_for_sftp,
             window,

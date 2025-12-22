@@ -5,4 +5,5 @@ mod operations;
 mod service;
 
 pub use multi_channel::MultiChannelDownloader;
+pub use multi_channel::MultiChannelUploader;
 pub use service::SftpService;

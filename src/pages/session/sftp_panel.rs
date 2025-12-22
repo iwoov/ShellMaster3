@@ -48,7 +48,16 @@ pub fn render_sftp_panel(
                 state.sftp_open_new_folder_dialog(&tab_id_for_toolbar, cx);
             }
             SftpToolbarEvent::Upload => {
-                // TODO: 实现上传
+                // 获取当前SFTP路径
+                if let Some(current_path) = state
+                    .tabs
+                    .iter()
+                    .find(|t| t.id == tab_id_for_toolbar)
+                    .and_then(|t| t.sftp_state.as_ref())
+                    .map(|s| s.current_path.clone())
+                {
+                    state.sftp_upload_file(&tab_id_for_toolbar, current_path, cx);
+                }
             }
             SftpToolbarEvent::Download => {
                 // 获取选中的文件

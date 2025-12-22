@@ -303,3 +303,280 @@ impl MultiChannelDownloader {
 }
 
 use tokio::io::AsyncWriteExt;
+
+/// 多通道上传器
+/// 将文件分成多个分片，使用多个 SFTP 通道并行上传
+pub struct MultiChannelUploader {
+    /// SSH 会话
+    ssh_session: Arc<SshSession>,
+    /// 会话 ID
+    session_id: String,
+    /// 并行通道数
+    channel_count: usize,
+}
+
+impl MultiChannelUploader {
+    /// 创建多通道上传器
+    ///
+    /// # Arguments
+    /// * `ssh_session` - SSH 会话
+    /// * `session_id` - 会话 ID
+    /// * `channel_count` - 并行通道数（建议 2-8）
+    pub fn new(ssh_session: Arc<SshSession>, session_id: String, channel_count: usize) -> Self {
+        // 限制通道数在合理范围内
+        let channel_count = channel_count.clamp(1, 8);
+        Self {
+            ssh_session,
+            session_id,
+            channel_count,
+        }
+    }
+
+    /// 并行上传文件
+    ///
+    /// # Arguments
+    /// * `local_path` - 本地文件路径
+    /// * `remote_path` - 远程保存路径
+    /// * `file_size` - 文件大小
+    /// * `cancel_token` - 取消令牌
+    /// * `pause_flag` - 暂停标志
+    /// * `progress_callback` - 进度回调函数，参数为 (总已传输字节数, 总字节数, 总速度)
+    ///
+    /// # Returns
+    /// * `Ok(())` - 上传成功
+    /// * `Err(String)` - 上传失败
+    pub async fn upload_file<F>(
+        &self,
+        local_path: &std::path::Path,
+        remote_path: &str,
+        file_size: u64,
+        cancel_token: CancellationToken,
+        pause_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        progress_callback: F,
+    ) -> Result<(), String>
+    where
+        F: Fn(u64, u64, u64) + Send + Sync + 'static,
+    {
+        info!(
+            "[SFTP] Multi-channel upload: {:?} -> {} ({} bytes) with {} channels",
+            local_path, remote_path, file_size, self.channel_count
+        );
+
+        // 创建分片任务
+        let tasks = self.create_chunk_tasks(file_size);
+        let task_count = tasks.len();
+
+        info!("[SFTP] Created {} upload chunk tasks", task_count);
+
+        // 打开本地文件
+        let local_file = tokio::fs::File::open(local_path)
+            .await
+            .map_err(|e| format!("Failed to open local file: {}", e))?;
+        let local_file = Arc::new(Mutex::new(local_file));
+
+        // 在远程创建空文件（预分配空间）
+        // 使用主 SFTP 服务创建文件
+        let main_sftp = SftpService::new(
+            format!("{}-upload-main", self.session_id),
+            &self.ssh_session,
+        )
+        .await
+        .map_err(|e| format!("Failed to create main SFTP channel: {}", e))?;
+
+        // 创建远程文件
+        let remote_file = main_sftp
+            .sftp()
+            .create(remote_path)
+            .await
+            .map_err(|e| format!("Failed to create remote file: {}", e))?;
+
+        // 预分配文件大小（写入空字节到最后位置）
+        // 关闭文件，让分片任务可以写入
+        drop(remote_file);
+
+        // 创建进度追踪
+        let progress_tracker = Arc::new(Mutex::new(vec![ChunkProgress::default(); task_count]));
+
+        // 包装回调函数
+        let progress_callback = Arc::new(progress_callback);
+
+        // 启动并行上传任务
+        let mut handles = Vec::with_capacity(task_count);
+
+        for task in tasks {
+            let ssh_session = self.ssh_session.clone();
+            let session_id = self.session_id.clone();
+            let remote_path = remote_path.to_string();
+            let local_file = local_file.clone();
+            let progress_tracker = progress_tracker.clone();
+            let progress_callback = progress_callback.clone();
+            let file_size = file_size;
+            let pause_flag_clone = pause_flag.clone();
+            let cancel_token_clone = cancel_token.clone();
+
+            let handle = tokio::spawn(async move {
+                // 为每个分片创建独立的 SFTP 服务
+                let sftp_service = match SftpService::new(
+                    format!("{}-upload-chunk-{}", session_id, task.index),
+                    &ssh_session,
+                )
+                .await
+                {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!(
+                            "[SFTP] Failed to create SFTP channel for upload chunk {}: {}",
+                            task.index, e
+                        );
+                        return Err(e);
+                    }
+                };
+
+                let chunk_idx = task.index;
+                let pause_flag_for_loop = pause_flag_clone.clone();
+                let cancel_token_for_loop = cancel_token_clone.clone();
+
+                // 上传分片，带有暂停检查的进度回调
+                let result = sftp_service
+                    .upload_chunk(
+                        local_file,
+                        &remote_path,
+                        task.offset,
+                        task.length,
+                        move |bytes_transferred, speed| {
+                            // 检查暂停状态并等待
+                            use std::sync::atomic::Ordering;
+                            while pause_flag_for_loop.load(Ordering::Relaxed) {
+                                // 检查是否取消
+                                if cancel_token_for_loop.is_cancelled() {
+                                    return;
+                                }
+                                // 暂停时等待 100ms
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                            }
+
+                            // 更新分片进度
+                            let progress_tracker = progress_tracker.clone();
+                            let progress_callback = progress_callback.clone();
+
+                            // 使用 block_in_place 在同步上下文中更新
+                            tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(async {
+                                    let mut tracker = progress_tracker.lock().await;
+                                    tracker[chunk_idx].bytes_transferred = bytes_transferred;
+                                    tracker[chunk_idx].speed = speed;
+
+                                    // 计算总进度
+                                    let total_transferred: u64 =
+                                        tracker.iter().map(|p| p.bytes_transferred).sum();
+                                    let total_speed: u64 = tracker.iter().map(|p| p.speed).sum();
+
+                                    // 调用总进度回调
+                                    progress_callback(total_transferred, file_size, total_speed);
+                                });
+                            });
+                        },
+                    )
+                    .await;
+
+                match result {
+                    Ok(bytes) => {
+                        debug!(
+                            "[SFTP] Upload chunk {} completed: {} bytes",
+                            task.index, bytes
+                        );
+                        Ok(bytes)
+                    }
+                    Err(e) => {
+                        error!("[SFTP] Upload chunk {} failed: {}", task.index, e);
+                        Err(e)
+                    }
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        // 等待所有任务完成，同时监听取消信号
+        let remote_path_for_cleanup = remote_path.to_string();
+
+        // 使用 futures::future::join_all 来并行等待所有任务
+        let all_tasks = futures::future::join_all(handles);
+
+        let results = tokio::select! {
+            // 监听取消信号
+            _ = cancel_token.cancelled() => {
+                warn!("[SFTP] Multi-channel upload cancelled by user");
+                // 删除不完整的远程文件
+                let _ = main_sftp.remove_file(&remote_path_for_cleanup).await;
+                return Err("上传已取消".to_string());
+            }
+            // 等待所有上传任务完成
+            results = all_tasks => results,
+        };
+
+        // 处理结果
+        let mut total_bytes = 0u64;
+        let mut errors = Vec::new();
+
+        for (idx, result) in results.into_iter().enumerate() {
+            match result {
+                Ok(Ok(bytes)) => {
+                    total_bytes += bytes;
+                }
+                Ok(Err(e)) => {
+                    errors.push(format!("Chunk {}: {}", idx, e));
+                }
+                Err(e) => {
+                    errors.push(format!("Chunk {} task panic: {}", idx, e));
+                }
+            }
+        }
+
+        // 检查是否有错误
+        if !errors.is_empty() {
+            // 删除不完整的远程文件
+            let _ = main_sftp.remove_file(&remote_path_for_cleanup).await;
+            return Err(format!(
+                "Multi-channel upload failed:\n{}",
+                errors.join("\n")
+            ));
+        }
+
+        info!(
+            "[SFTP] Multi-channel upload completed: {} ({} bytes)",
+            remote_path, total_bytes
+        );
+
+        Ok(())
+    }
+
+    /// 创建分片任务
+    fn create_chunk_tasks(&self, file_size: u64) -> Vec<ChunkTask> {
+        // 最小分片大小为 1MB
+        const MIN_CHUNK_SIZE: u64 = 1024 * 1024;
+
+        // 计算每个分片的大小
+        let chunk_size = std::cmp::max(
+            MIN_CHUNK_SIZE,
+            (file_size + self.channel_count as u64 - 1) / self.channel_count as u64,
+        );
+
+        let mut tasks = Vec::new();
+        let mut offset = 0u64;
+        let mut index = 0;
+
+        while offset < file_size {
+            let length = std::cmp::min(chunk_size, file_size - offset);
+            tasks.push(ChunkTask {
+                index,
+                offset,
+                length,
+            });
+            offset += length;
+            index += 1;
+        }
+
+        tasks
+    }
+}

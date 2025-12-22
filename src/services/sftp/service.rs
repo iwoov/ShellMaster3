@@ -432,6 +432,219 @@ impl SftpService {
 
         Ok(bytes_transferred)
     }
+
+    /// 上传本地文件到远程服务器
+    ///
+    /// # Arguments
+    /// * `local_path` - 本地文件路径
+    /// * `remote_path` - 远程保存路径
+    /// * `progress_callback` - 进度回调函数，参数为 (已传输字节数, 总字节数, 速度bytes/s)
+    ///
+    /// # Returns
+    /// * `Ok(())` - 上传成功
+    /// * `Err(String)` - 上传失败，包含错误信息
+    pub async fn upload_file<F>(
+        &self,
+        local_path: &std::path::Path,
+        remote_path: &str,
+        progress_callback: F,
+    ) -> Result<(), String>
+    where
+        F: Fn(u64, u64, u64) + Send + 'static,
+    {
+        info!("[SFTP] Uploading file: {:?} -> {}", local_path, remote_path);
+
+        // 获取本地文件大小
+        let metadata = tokio::fs::metadata(local_path)
+            .await
+            .map_err(|e| format!("Failed to get local file metadata: {}", e))?;
+
+        let total_size = metadata.len();
+        if metadata.is_dir() {
+            return Err("Cannot upload a directory".to_string());
+        }
+
+        // 打开本地文件
+        let mut local_file = tokio::fs::File::open(local_path)
+            .await
+            .map_err(|e| format!("Failed to open local file: {}", e))?;
+
+        // 创建远程文件
+        let mut remote_file = self
+            .sftp
+            .create(remote_path)
+            .await
+            .map_err(|e| format!("Failed to create remote file: {}", e))?;
+
+        // 读取并写入
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // 使用较大的 chunk size 以提高性能 (256KB)
+        const CHUNK_SIZE: usize = 256 * 1024;
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        let mut bytes_transferred: u64 = 0;
+
+        // 速度计算变量
+        let start_time = std::time::Instant::now();
+        let mut last_update_time = start_time;
+        let mut last_bytes = 0u64;
+        let mut current_speed: u64 = 0;
+
+        loop {
+            let bytes_read = local_file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| format!("Failed to read from local file: {}", e))?;
+
+            if bytes_read == 0 {
+                break;
+            }
+
+            remote_file
+                .write_all(&buffer[..bytes_read])
+                .await
+                .map_err(|e| format!("Failed to write to remote file: {}", e))?;
+
+            bytes_transferred += bytes_read as u64;
+
+            // 计算速度（每100ms更新一次或更少）
+            let now = std::time::Instant::now();
+            let elapsed = now.duration_since(last_update_time);
+            if elapsed.as_millis() >= 100 {
+                let bytes_delta = bytes_transferred - last_bytes;
+                current_speed = (bytes_delta as f64 / elapsed.as_secs_f64()) as u64;
+                last_update_time = now;
+                last_bytes = bytes_transferred;
+            }
+
+            // 调用进度回调（包含速度）
+            progress_callback(bytes_transferred, total_size, current_speed);
+        }
+
+        // 确保所有数据都写入远程
+        remote_file
+            .flush()
+            .await
+            .map_err(|e| format!("Failed to flush remote file: {}", e))?;
+
+        info!(
+            "[SFTP] Upload completed: {:?} ({} bytes)",
+            local_path, bytes_transferred
+        );
+
+        Ok(())
+    }
+
+    /// 上传文件的指定分片（用于多通道并行上传）
+    ///
+    /// # Arguments
+    /// * `local_file` - 本地文件句柄（线程安全，使用 seek 读取指定位置）
+    /// * `remote_path` - 远程文件路径
+    /// * `offset` - 起始偏移量
+    /// * `length` - 要上传的字节数
+    /// * `progress_callback` - 进度回调函数，参数为 (本分片已传输字节数, 速度bytes/s)
+    ///
+    /// # Returns
+    /// * `Ok(bytes_uploaded)` - 上传成功，返回实际上传的字节数
+    /// * `Err(String)` - 上传失败，包含错误信息
+    pub async fn upload_chunk<F>(
+        &self,
+        local_file: std::sync::Arc<tokio::sync::Mutex<tokio::fs::File>>,
+        remote_path: &str,
+        offset: u64,
+        length: u64,
+        progress_callback: F,
+    ) -> Result<u64, String>
+    where
+        F: Fn(u64, u64) + Send + 'static,
+    {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+
+        debug!(
+            "[SFTP] Uploading chunk: {} offset={} length={}",
+            remote_path, offset, length
+        );
+
+        // 打开远程文件用于写入（需要使用特殊标志来支持 seek 写入）
+        let mut remote_file = self
+            .sftp
+            .open_with_flags(remote_path, russh_sftp::protocol::OpenFlags::WRITE)
+            .await
+            .map_err(|e| format!("Failed to open remote file for writing: {}", e))?;
+
+        // Seek 到指定偏移量
+        remote_file
+            .seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|e| format!("Failed to seek remote file: {}", e))?;
+
+        // 读取并写入
+        const CHUNK_SIZE: usize = 256 * 1024; // 256KB per write
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        let mut bytes_transferred: u64 = 0;
+        let mut remaining = length;
+
+        // 速度计算变量
+        let start_time = std::time::Instant::now();
+        let mut last_update_time = start_time;
+        let mut last_bytes = 0u64;
+        let mut current_speed: u64 = 0;
+
+        while remaining > 0 {
+            let to_read = std::cmp::min(CHUNK_SIZE as u64, remaining) as usize;
+
+            // 从本地文件读取（需要 seek 到正确位置）
+            let bytes_read = {
+                let mut file = local_file.lock().await;
+                file.seek(std::io::SeekFrom::Start(offset + bytes_transferred))
+                    .await
+                    .map_err(|e| format!("Failed to seek local file: {}", e))?;
+                file.read(&mut buffer[..to_read])
+                    .await
+                    .map_err(|e| format!("Failed to read from local file: {}", e))?
+            };
+
+            if bytes_read == 0 {
+                // 文件可能比预期短
+                break;
+            }
+
+            // 写入远程文件
+            remote_file
+                .write_all(&buffer[..bytes_read])
+                .await
+                .map_err(|e| format!("Failed to write to remote file: {}", e))?;
+
+            bytes_transferred += bytes_read as u64;
+            remaining -= bytes_read as u64;
+
+            // 计算速度（每100ms更新一次）
+            let now = std::time::Instant::now();
+            let elapsed = now.duration_since(last_update_time);
+            if elapsed.as_millis() >= 100 {
+                let bytes_delta = bytes_transferred - last_bytes;
+                current_speed = (bytes_delta as f64 / elapsed.as_secs_f64()) as u64;
+                last_update_time = now;
+                last_bytes = bytes_transferred;
+            }
+
+            // 调用进度回调
+            progress_callback(bytes_transferred, current_speed);
+        }
+
+        // 确保数据写入
+        remote_file
+            .flush()
+            .await
+            .map_err(|e| format!("Failed to flush remote file: {}", e))?;
+
+        debug!(
+            "[SFTP] Chunk upload completed: {} offset={} uploaded={}",
+            remote_path, offset, bytes_transferred
+        );
+
+        Ok(bytes_transferred)
+    }
 }
 
 impl Drop for SftpService {

@@ -10,6 +10,7 @@ use super::session_sidebar::render_session_sidebar;
 use super::sftp_panel::render_sftp_panel;
 use super::terminal_page::render_terminal_panel;
 use crate::components::monitor::render_detail_dialog;
+use crate::components::sftp::render_new_folder_dialog_overlay;
 use crate::state::{SessionState, SessionTab, SidebarPanel};
 
 /// 渲染 Session 主布局
@@ -27,6 +28,9 @@ pub fn render_session_layout(
     // 获取 Monitor 详情弹窗状态
     let monitor_detail_dialog = session_state.read(cx).monitor_detail_dialog.clone();
     let monitor_detail_dialog_for_panel = monitor_detail_dialog.clone();
+
+    // 获取 SFTP 新建文件夹对话框状态
+    let new_folder_dialog = session_state.read(cx).get_sftp_new_folder_dialog();
 
     // 获取 tab_id 用于网络接口选择
     let tab_id = tab.id.clone();
@@ -195,13 +199,29 @@ pub fn render_session_layout(
     };
 
     // 返回带有 dialog overlay 的容器
+    let mut result = div().relative().size_full().child(main_content);
+
+    // 添加 Monitor 详情弹窗
     if let Some(dialog_state) = monitor_detail_dialog {
-        div()
-            .relative()
-            .size_full()
-            .child(main_content)
-            .child(render_detail_dialog(dialog_state, &tab.monitor_state, cx))
-    } else {
-        div().size_full().child(main_content)
+        result = result.child(render_detail_dialog(dialog_state, &tab.monitor_state, cx));
     }
+
+    // 添加 SFTP 新建文件夹弹窗
+    if let Some(dialog_state) = new_folder_dialog {
+        let is_open = dialog_state.read(cx).is_open;
+        if is_open {
+            let session_state_for_create = session_state.clone();
+            result = result.child(render_new_folder_dialog_overlay(
+                dialog_state,
+                move |path, tab_id, cx| {
+                    session_state_for_create.update(cx, |state, cx| {
+                        state.sftp_create_folder(path, tab_id, cx);
+                    });
+                },
+                cx,
+            ));
+        }
+    }
+
+    result
 }

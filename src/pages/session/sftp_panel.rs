@@ -42,7 +42,7 @@ pub fn render_sftp_panel(
             SftpToolbarEvent::Refresh => state.sftp_refresh(&tab_id_for_toolbar, cx),
             SftpToolbarEvent::ToggleHidden => state.sftp_toggle_hidden(&tab_id_for_toolbar, cx),
             SftpToolbarEvent::NewFolder => {
-                // TODO: 实现新建文件夹
+                state.sftp_open_new_folder_dialog(&tab_id_for_toolbar, cx);
             }
             SftpToolbarEvent::Upload => {
                 // TODO: 实现上传

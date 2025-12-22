@@ -1,7 +1,7 @@
 // 全局 AppState
 
 use crate::components::monitor::DetailDialogState;
-use crate::components::sftp::{FileListView, PathBarEvent, PathBarState};
+use crate::components::sftp::{FileListView, NewFolderDialogState, PathBarEvent, PathBarState};
 use crate::models::monitor::MonitorState;
 use crate::models::sftp::SftpState;
 use crate::models::SnippetsConfig;
@@ -98,6 +98,8 @@ pub struct SessionState {
     pub sftp_file_list_views: HashMap<String, Entity<FileListView>>,
     /// SFTP 路径栏状态（按 tab_id 存储）
     pub sftp_path_bar_states: HashMap<String, Entity<PathBarState>>,
+    /// SFTP 新建文件夹对话框状态
+    pub sftp_new_folder_dialog: Option<Entity<NewFolderDialogState>>,
 }
 
 impl Default for SessionState {
@@ -117,6 +119,7 @@ impl Default for SessionState {
             sftp_services: Arc::new(Mutex::new(HashMap::new())),
             sftp_file_list_views: HashMap::new(),
             sftp_path_bar_states: HashMap::new(),
+            sftp_new_folder_dialog: None,
         }
     }
 }
@@ -1524,6 +1527,132 @@ fn get_path_hierarchy(path: &str) -> Vec<String> {
     }
 
     hierarchy
+}
+
+impl SessionState {
+    /// 确保新建文件夹对话框已创建
+    pub fn ensure_sftp_new_folder_dialog(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> Entity<NewFolderDialogState> {
+        if self.sftp_new_folder_dialog.is_none() {
+            self.sftp_new_folder_dialog = Some(cx.new(|_| NewFolderDialogState::default()));
+        }
+        self.sftp_new_folder_dialog.clone().unwrap()
+    }
+
+    /// 获取新建文件夹对话框状态（如果存在）
+    pub fn get_sftp_new_folder_dialog(&self) -> Option<Entity<NewFolderDialogState>> {
+        self.sftp_new_folder_dialog.clone()
+    }
+
+    /// 打开新建文件夹对话框
+    pub fn sftp_open_new_folder_dialog(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
+        // 获取当前路径
+        let current_path = self
+            .tabs
+            .iter()
+            .find(|t| t.id == tab_id)
+            .and_then(|t| t.sftp_state.as_ref())
+            .map(|s| s.current_path.clone())
+            .unwrap_or_else(|| "/".to_string());
+
+        let dialog = self.ensure_sftp_new_folder_dialog(cx);
+        dialog.update(cx, |s, _| {
+            s.open(current_path, tab_id.to_string());
+        });
+        cx.notify();
+    }
+
+    /// 创建新文件夹
+    pub fn sftp_create_folder(
+        &mut self,
+        path: String,
+        tab_id: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let dialog_state = self.sftp_new_folder_dialog.clone();
+
+        // 尝试获取 SFTP 服务
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    if let Some(dialog) = dialog_state {
+                        dialog.update(cx, |s, _| {
+                            s.set_error(format!("Internal error: {}", e));
+                        });
+                    }
+                    return;
+                }
+            };
+            match guard.get(&tab_id) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id);
+                    if let Some(dialog) = dialog_state {
+                        dialog.update(cx, |s, _| {
+                            s.set_error("SFTP service not available".to_string());
+                        });
+                    }
+                    return;
+                }
+            }
+        };
+
+        info!("[SFTP] Creating folder: {} for tab {}", path, tab_id);
+
+        // 创建 channel 用于从 tokio 运行时发送结果到 GPUI
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<(), String>>();
+
+        // 在 SSH 运行时中执行异步创建
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        let path_for_task = path.clone();
+        ssh_manager.runtime().spawn(async move {
+            let result = service.mkdir(&path_for_task).await;
+            let _ = tx.send(result);
+        });
+
+        // 在 GPUI 上下文中处理结果
+        let path_for_refresh = path.clone();
+        let tab_id_for_refresh = tab_id.clone();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                while let Some(result) = rx.recv().await {
+                    let _ = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            match result {
+                                Ok(_) => {
+                                    info!(
+                                        "[SFTP] Folder created successfully: {}",
+                                        path_for_refresh
+                                    );
+                                    // 关闭对话框
+                                    if let Some(dialog) = &state.sftp_new_folder_dialog {
+                                        dialog.update(cx, |s, _| s.close());
+                                    }
+                                    // 刷新当前目录
+                                    state.sftp_refresh(&tab_id_for_refresh, cx);
+                                }
+                                Err(e) => {
+                                    error!("[SFTP] Failed to create folder: {}", e);
+                                    // 显示错误
+                                    if let Some(dialog) = &state.sftp_new_folder_dialog {
+                                        dialog.update(cx, |s, _| {
+                                            s.set_error(e);
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                    });
+                }
+            })
+            .detach();
+    }
 }
 
 /// 将 russh-sftp 的目录条目转换为 FileEntry

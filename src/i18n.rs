@@ -256,6 +256,16 @@ fn zh_cn(key: &'static str) -> &'static str {
         "sftp.header.owner" => "用户/组",
         "sftp.header.size" => "大小",
         "sftp.header.modified" => "修改时间",
+        // SFTP 新建文件夹对话框
+        "sftp.new_folder.title" => "新建文件夹",
+        "sftp.new_folder.name" => "文件夹名称",
+        "sftp.new_folder.placeholder" => "请输入文件夹名称",
+        "sftp.new_folder.error_empty" => "文件夹名称不能为空",
+        "sftp.new_folder.error_invalid" => "文件夹名称包含非法字符",
+        "sftp.new_folder.success" => "文件夹创建成功",
+        "sftp.new_folder.failed" => "创建文件夹失败",
+        "sftp.loading" => "加载中...",
+        "sftp.not_connected" => "未连接",
         // 终端输入
         "session.terminal.simulated" => "模拟终端区域",
         "session.terminal.command_placeholder" => "输入命令...",
@@ -586,6 +596,16 @@ fn en_us(key: &'static str) -> &'static str {
         "sftp.header.owner" => "User/Group",
         "sftp.header.size" => "Size",
         "sftp.header.modified" => "Modified",
+        // SFTP New Folder Dialog
+        "sftp.new_folder.title" => "New Folder",
+        "sftp.new_folder.name" => "Folder Name",
+        "sftp.new_folder.placeholder" => "Enter folder name",
+        "sftp.new_folder.error_empty" => "Folder name cannot be empty",
+        "sftp.new_folder.error_invalid" => "Folder name contains invalid characters",
+        "sftp.new_folder.success" => "Folder created successfully",
+        "sftp.new_folder.failed" => "Failed to create folder",
+        "sftp.loading" => "Loading...",
+        "sftp.not_connected" => "Not connected",
         // Terminal Input
         "session.terminal.simulated" => "Simulated Terminal",
         "session.terminal.command_placeholder" => "Enter command...",

@@ -121,7 +121,7 @@ where
             .child(svg().path(icon).size(px(10.)).text_color(muted))
     };
 
-    // 文件夹图标
+    // 文件夹图标 - 使用蓝色与文件列表保持一致
     let folder_icon = svg()
         .path(if row.is_expanded {
             icons::FOLDER_OPEN
@@ -129,7 +129,7 @@ where
             icons::FOLDER
         })
         .size(px(14.))
-        .text_color(muted);
+        .text_color(cx.theme().link);
 
     let mut el = div()
         .id(SharedString::from(format!("sftp-tree-item-{}", row.path)))

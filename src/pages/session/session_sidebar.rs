@@ -142,7 +142,13 @@ fn render_transfer_panel(
                     .flex_col()
                     .gap_2()
                     // 文件名和状态
-                    .child(
+                    .child({
+                        let transfer_id = transfer.id.clone();
+                        let session_state_for_cancel = session_state.clone();
+                        let is_active =
+                            !transfer.status.is_complete() && !transfer.status.is_error();
+                        let cancel_color = cx.theme().muted_foreground;
+
                         div()
                             .flex()
                             .items_center()
@@ -153,11 +159,48 @@ fn render_transfer_panel(
                                     .font_medium()
                                     .text_color(foreground)
                                     .overflow_hidden()
-                                    .max_w(px(140.))
+                                    .max_w(px(120.))
                                     .child(transfer.file_name()),
                             )
-                            .child(div().text_xs().text_color(status_color).child(status_text)),
-                    )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div().text_xs().text_color(status_color).child(status_text),
+                                    )
+                                    // 取消按钮（仅在传输中显示）
+                                    .when(is_active, |this| {
+                                        this.child(
+                                            div()
+                                                .id(SharedString::from(format!(
+                                                    "cancel-{}",
+                                                    transfer_id
+                                                )))
+                                                .cursor_pointer()
+                                                .rounded(px(2.))
+                                                .p(px(2.))
+                                                .hover(|s| s.bg(cancel_color.opacity(0.2)))
+                                                .child(render_icon(icons::X, cancel_color))
+                                                .on_click({
+                                                    let transfer_id = transfer_id.clone();
+                                                    move |_, _, cx| {
+                                                        session_state_for_cancel.update(
+                                                            cx,
+                                                            |state, cx| {
+                                                                state.cancel_transfer(
+                                                                    &transfer_id,
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    }
+                                                }),
+                                        )
+                                    }),
+                            )
+                    })
                     // 进度条
                     .child(
                         div()

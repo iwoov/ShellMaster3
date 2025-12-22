@@ -3,7 +3,8 @@
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 
 use super::service::SftpService;
 use crate::ssh::session::SshSession;
@@ -62,6 +63,7 @@ impl MultiChannelDownloader {
     /// * `remote_path` - 远程文件路径
     /// * `local_path` - 本地保存路径
     /// * `file_size` - 文件大小
+    /// * `cancel_token` - 取消令牌
     /// * `progress_callback` - 进度回调函数，参数为 (总已传输字节数, 总字节数, 总速度)
     ///
     /// # Returns
@@ -72,6 +74,7 @@ impl MultiChannelDownloader {
         remote_path: &str,
         local_path: &std::path::Path,
         file_size: u64,
+        cancel_token: CancellationToken,
         progress_callback: F,
     ) -> Result<(), String>
     where
@@ -190,12 +193,30 @@ impl MultiChannelDownloader {
             handles.push(handle);
         }
 
-        // 等待所有任务完成
+        // 等待所有任务完成，同时监听取消信号
+        let local_path_for_cleanup = local_path.to_path_buf();
+
+        // 使用 futures::future::join_all 来并行等待所有任务
+        let all_tasks = futures::future::join_all(handles);
+
+        let results = tokio::select! {
+            // 监听取消信号
+            _ = cancel_token.cancelled() => {
+                warn!("[SFTP] Multi-channel download cancelled by user");
+                // 删除不完整的文件
+                let _ = tokio::fs::remove_file(&local_path_for_cleanup).await;
+                return Err("下载已取消".to_string());
+            }
+            // 等待所有下载任务完成
+            results = all_tasks => results,
+        };
+
+        // 处理结果
         let mut total_bytes = 0u64;
         let mut errors = Vec::new();
 
-        for (idx, handle) in handles.into_iter().enumerate() {
-            match handle.await {
+        for (idx, result) in results.into_iter().enumerate() {
+            match result {
                 Ok(Ok(bytes)) => {
                     total_bytes += bytes;
                 }
@@ -220,7 +241,7 @@ impl MultiChannelDownloader {
 
         // 确保文件写入完成
         {
-            let mut file = local_file.lock().await;
+            let file = local_file.lock().await;
             file.sync_all()
                 .await
                 .map_err(|e| format!("Failed to sync file: {}", e))?;

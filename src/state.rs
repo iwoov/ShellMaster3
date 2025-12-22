@@ -1572,6 +1572,8 @@ impl SessionState {
                 );
                 // 使用 transfer_item 内部生成的 id
                 let transfer_id_clone = transfer_item.id.clone();
+                // 克隆取消令牌以便在下载任务中使用
+                let cancel_token = transfer_item.cancel_token.clone();
 
                 // 添加传输项到列表
                 let _ = async_cx.update(|cx| {
@@ -1602,6 +1604,9 @@ impl SessionState {
                     .map(|s| s.sftp.concurrent_transfers as usize)
                     .unwrap_or(3);
 
+                // 克隆取消令牌用于下载任务内部
+                let cancel_token_for_download = cancel_token.clone();
+
                 runtime.spawn(async move {
                     let result =
                         if file_size >= MULTI_CHANNEL_THRESHOLD && concurrent_transfers > 1 {
@@ -1627,6 +1632,7 @@ impl SessionState {
                                         &remote_path_clone,
                                         &local_path_clone,
                                         file_size,
+                                        cancel_token_for_download,
                                         move |transferred, total, speed| {
                                             let _ = tx_progress_clone.send(
                                                 DownloadEvent::Progress(transferred, total, speed),
@@ -1657,10 +1663,15 @@ impl SessionState {
                     let _ = tx.send(DownloadEvent::Complete(result));
                 });
 
-                // 接收进度和结果
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        DownloadEvent::Progress(transferred, total, speed) => {
+                // 接收进度和结果，同时监听取消信号
+                loop {
+                    tokio::select! {
+                        // 监听取消信号
+                        _ = cancel_token.cancelled() => {
+                            info!("[SFTP] Download cancelled by user: {}", transfer_id_clone);
+                            // 删除未完成的文件（使用 std::fs 因为不在 tokio 运行时中）
+                            let _ = std::fs::remove_file(&local_path);
+                            // 更新状态
                             let transfer_id = transfer_id_clone.clone();
                             let _ = async_cx.update(|cx| {
                                 session_state.update(cx, |state, cx| {
@@ -1669,49 +1680,97 @@ impl SessionState {
                                         .iter_mut()
                                         .find(|t| t.id == transfer_id)
                                     {
-                                        transfer.progress.bytes_transferred = transferred;
-                                        transfer.progress.total_bytes = total;
-                                        transfer.progress.speed_bytes_per_sec = speed;
-                                        transfer.status =
-                                            crate::models::sftp::TransferStatus::Downloading;
-                                    }
-                                    cx.notify();
-                                });
-                            });
-                        }
-                        DownloadEvent::Complete(result) => {
-                            let transfer_id = transfer_id_clone.clone();
-                            let local_path = local_path.clone();
-                            let _ = async_cx.update(|cx| {
-                                session_state.update(cx, |state, cx| {
-                                    if let Some(transfer) = state
-                                        .active_transfers
-                                        .iter_mut()
-                                        .find(|t| t.id == transfer_id)
-                                    {
-                                        match &result {
-                                            Ok(()) => {
-                                                transfer.set_completed();
-                                                info!(
-                                                    "[SFTP] Download completed: {:?}",
-                                                    local_path
-                                                );
-                                            }
-                                            Err(e) => {
-                                                transfer.set_failed(e.clone());
-                                                error!("[SFTP] Download failed: {}", e);
-                                            }
-                                        }
+                                        transfer.status = crate::models::sftp::TransferStatus::Cancelled;
+                                        transfer.error = Some("用户取消".to_string());
                                     }
                                     cx.notify();
                                 });
                             });
                             break;
                         }
+                        // 接收下载事件
+                        event = rx.recv() => {
+                            match event {
+                                Some(DownloadEvent::Progress(transferred, total, speed)) => {
+                                    let transfer_id = transfer_id_clone.clone();
+                                    let _ = async_cx.update(|cx| {
+                                        session_state.update(cx, |state, cx| {
+                                            if let Some(transfer) = state
+                                                .active_transfers
+                                                .iter_mut()
+                                                .find(|t| t.id == transfer_id)
+                                            {
+                                                transfer.progress.bytes_transferred = transferred;
+                                                transfer.progress.total_bytes = total;
+                                                transfer.progress.speed_bytes_per_sec = speed;
+                                                transfer.status =
+                                                    crate::models::sftp::TransferStatus::Downloading;
+                                            }
+                                            cx.notify();
+                                        });
+                                    });
+                                }
+                                Some(DownloadEvent::Complete(result)) => {
+                                    let transfer_id = transfer_id_clone.clone();
+                                    let local_path = local_path.clone();
+                                    let _ = async_cx.update(|cx| {
+                                        session_state.update(cx, |state, cx| {
+                                            if let Some(transfer) = state
+                                                .active_transfers
+                                                .iter_mut()
+                                                .find(|t| t.id == transfer_id)
+                                            {
+                                                match &result {
+                                                    Ok(()) => {
+                                                        transfer.set_completed();
+                                                        info!(
+                                                            "[SFTP] Download completed: {:?}",
+                                                            local_path
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        transfer.set_failed(e.clone());
+                                                        error!("[SFTP] Download failed: {}", e);
+                                                    }
+                                                }
+                                            }
+                                            cx.notify();
+                                        });
+                                    });
+                                    break;
+                                }
+                                None => {
+                                    // Channel closed unexpectedly
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
             })
             .detach();
+    }
+
+    /// 取消传输任务
+    ///
+    /// 标记传输为已取消状态并触发取消令牌
+    pub fn cancel_transfer(&mut self, transfer_id: &str, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Cancelling transfer: {}", transfer_id);
+
+        if let Some(transfer) = self
+            .active_transfers
+            .iter_mut()
+            .find(|t| t.id == transfer_id)
+        {
+            // 触发取消令牌
+            transfer.cancel_token.cancel();
+            // 更新状态
+            transfer.status = crate::models::sftp::TransferStatus::Cancelled;
+            transfer.error = Some("用户取消".to_string());
+
+            info!("[SFTP] Transfer cancelled: {}", transfer_id);
+            cx.notify();
+        }
     }
 }
 

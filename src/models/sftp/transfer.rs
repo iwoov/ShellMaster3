@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 /// 传输状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +126,7 @@ impl TransferProgress {
 }
 
 /// 传输项
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TransferItem {
     /// 唯一标识符
     pub id: String,
@@ -141,6 +142,8 @@ pub struct TransferItem {
     pub error: Option<String>,
     /// 是否是上传（false 表示下载）
     pub is_upload: bool,
+    /// 取消令牌
+    pub cancel_token: CancellationToken,
 }
 
 impl TransferItem {
@@ -154,6 +157,7 @@ impl TransferItem {
             progress: TransferProgress::new(total_bytes),
             error: None,
             is_upload: false,
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -167,6 +171,7 @@ impl TransferItem {
             progress: TransferProgress::new(total_bytes),
             error: None,
             is_upload: true,
+            cancel_token: CancellationToken::new(),
         }
     }
 

@@ -59,13 +59,14 @@ impl SessionState {
 
             // 订阅 FileListContextMenuEvent 以处理右键菜单事件
             let tab_id_for_context = tab_id.to_string();
+            let view_for_context = view.clone();
             cx.subscribe_in(
                 &view,
                 window,
                 move |this,
                       _emitter,
                       event: &crate::components::sftp::FileListContextMenuEvent,
-                      _window,
+                      window,
                       cx| {
                     use crate::components::sftp::FileListContextMenuEvent;
                     let tab_id = tab_id_for_context.clone();
@@ -78,6 +79,15 @@ impl SessionState {
                         }
                         FileListContextMenuEvent::OpenFolder(path) => {
                             this.sftp_navigate_to(&tab_id, path.clone(), cx);
+                        }
+                        FileListContextMenuEvent::Rename(path) => {
+                            // 开始内联重命名
+                            view_for_context.update(cx, |view, cx| {
+                                view.start_rename(path.clone(), window, cx);
+                            });
+                        }
+                        FileListContextMenuEvent::RenameConfirmed { old_path, new_name } => {
+                            this.sftp_rename(&tab_id, old_path.clone(), new_name.clone(), cx);
                         }
                         _ => {
                             // TODO: 其他事件待实现

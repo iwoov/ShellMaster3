@@ -24,7 +24,7 @@ pub enum FileListContextMenuEvent {
     EditFile(String),   // 文件路径
     CopyName(String),   // 文件名
     CopyPath(String),   // 完整路径
-    Rename(String),     // 文件路径
+    Rename(String),     // 文件路径 - 开始重命名
     Delete(String),     // 文件路径
     Properties(String), // 文件路径
 
@@ -40,6 +40,10 @@ pub enum FileListContextMenuEvent {
     UploadFile,
     UploadFolder,
     SelectAll,
+
+    // 重命名确认/取消
+    RenameConfirmed { old_path: String, new_name: String },
+    RenameCancelled,
 }
 
 /// 图标尺寸
@@ -70,6 +74,10 @@ pub struct FileListDelegate {
     current_sort_col: usize,
     /// 当前排序方向
     current_sort: ColumnSort,
+    /// 正在编辑的文件路径（用于内联重命名）
+    pub editing_path: Option<String>,
+    /// 重命名输入框状态（用于内联编辑）
+    pub rename_input: Option<Entity<gpui_component::input::InputState>>,
 }
 
 impl FileListDelegate {
@@ -85,6 +93,8 @@ impl FileListDelegate {
             lang,
             current_sort_col: COL_NAME,
             current_sort: ColumnSort::Ascending,
+            editing_path: None,
+            rename_input: None,
         };
         delegate.sync_column_sort_state();
         delegate
@@ -395,6 +405,47 @@ impl TableDelegate for FileListDelegate {
                     muted
                 };
 
+                // 检查是否正在编辑此文件
+                let is_editing = self.editing_path.as_ref() == Some(&entry.path);
+
+                if is_editing {
+                    // 内联编辑模式 - 显示输入框
+                    if let Some(input_state) = &self.rename_input {
+                        use gpui_component::input::Input;
+                        use gpui_component::Sizable;
+
+                        let border_color = cx.theme().primary;
+                        let bg = cx.theme().background;
+
+                        return div()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .overflow_hidden()
+                            .child(svg().path(icon).size(px(ICON_SIZE)).text_color(icon_color))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .h(px(22.))
+                                    .px_1()
+                                    .bg(bg)
+                                    .border_1()
+                                    .border_color(border_color)
+                                    .rounded(px(4.))
+                                    .child(
+                                        Input::new(input_state)
+                                            .appearance(false) // 无边框样式
+                                            .cleanable(false)
+                                            .xsmall()
+                                            .w_full(),
+                                    ),
+                            )
+                            .into_any_element();
+                    }
+                }
+
+                // 正常显示模式
                 div()
                     .h_full()
                     .flex()
@@ -413,6 +464,7 @@ impl TableDelegate for FileListDelegate {
                     )
                     .into_any_element()
             }
+
             COL_PERMISSIONS => div()
                 .h_full()
                 .flex()
@@ -502,6 +554,10 @@ pub struct FileListView {
     last_user_cache_revision: u64,
     /// 组缓存版本
     last_group_cache_revision: u64,
+    /// 内联重命名输入框
+    rename_input: Option<Entity<gpui_component::input::InputState>>,
+    /// 正在编辑的文件路径
+    editing_path: Option<String>,
 }
 
 impl FileListView {
@@ -543,6 +599,8 @@ impl FileListView {
             last_file_list_revision: 0,
             last_user_cache_revision: 0,
             last_group_cache_revision: 0,
+            rename_input: None,
+            editing_path: None,
         }
     }
 
@@ -639,6 +697,81 @@ impl FileListView {
         let entry_ix = delegate.row_order.get(selected_row).copied()?;
         delegate.file_list.get(entry_ix).cloned()
     }
+
+    /// 开始内联重命名
+    pub fn start_rename(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        // 获取文件名
+        let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+
+        // 创建输入框
+        let input = cx.new(|cx| {
+            let mut state = gpui_component::input::InputState::new(window, cx);
+            state.set_value(name, window, cx);
+            state
+        });
+
+        // 订阅输入框事件
+        use gpui_component::input::InputEvent;
+        cx.subscribe(&input, |this, _input, event: &InputEvent, cx| {
+            match event {
+                InputEvent::PressEnter { .. } => {
+                    // 按下回车，确认重命名
+                    this.confirm_rename(cx);
+                }
+                InputEvent::Blur => {
+                    // 失焦时取消编辑
+                    this.cancel_rename(cx);
+                }
+                _ => {}
+            }
+        })
+        .detach();
+
+        // 聚焦输入框
+        input.update(cx, |input, cx| {
+            input.focus(window, cx);
+        });
+
+        self.rename_input = Some(input.clone());
+        self.editing_path = Some(path.clone());
+
+        // 更新 delegate 的编辑状态和输入框
+        self.table_state.update(cx, |state, _| {
+            let delegate = state.delegate_mut();
+            delegate.editing_path = Some(path);
+            delegate.rename_input = Some(input);
+        });
+
+        cx.notify();
+    }
+
+    /// 确认重命名
+    pub fn confirm_rename(&mut self, cx: &mut Context<Self>) {
+        if let (Some(input), Some(old_path)) = (&self.rename_input, &self.editing_path) {
+            let new_name = input.read(cx).value().to_string().trim().to_string();
+            if !new_name.is_empty() {
+                let old_path = old_path.clone();
+                cx.emit(FileListContextMenuEvent::RenameConfirmed { old_path, new_name });
+            }
+        }
+        self.cancel_rename(cx);
+    }
+
+    /// 取消重命名
+    pub fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        self.rename_input = None;
+        self.editing_path = None;
+
+        // 清除 delegate 的编辑状态
+        self.table_state.update(cx, |state, _| {
+            let delegate = state.delegate_mut();
+            delegate.editing_path = None;
+            delegate.rename_input = None;
+        });
+
+        cx.emit(FileListContextMenuEvent::RenameCancelled);
+        cx.notify();
+    }
 }
 
 impl EventEmitter<TableEvent> for FileListView {}
@@ -695,6 +828,7 @@ impl Render for FileListView {
         div()
             .id("sftp-file-list-container")
             .size_full()
+            .relative()
             .child(table)
             .context_menu(move |menu, _window, cx| {
                 // 读取当前选中的文件条目

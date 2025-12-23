@@ -510,6 +510,111 @@ impl SessionState {
             .detach();
     }
 
+    /// SFTP 重命名文件或目录
+    pub fn sftp_rename(
+        &mut self,
+        tab_id: &str,
+        old_path: String,
+        new_name: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        info!(
+            "[SFTP] Rename: {} -> {} for tab {}",
+            old_path, new_name, tab_id
+        );
+
+        // 计算新路径
+        let new_path = if let Some(parent) = old_path.rsplit_once('/').map(|(p, _)| p) {
+            if parent.is_empty() {
+                format!("/{}", new_name)
+            } else {
+                format!("{}/{}", parent, new_name)
+            }
+        } else {
+            new_name.clone()
+        };
+
+        // 获取当前目录路径用于刷新
+        let current_path = {
+            let tab = self.tabs.iter().find(|t| t.id == tab_id);
+            tab.and_then(|t| t.sftp_state.as_ref())
+                .map(|s| s.current_path.clone())
+        };
+
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+        let old_path_clone = old_path.clone();
+        let new_path_clone = new_path.clone();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<(), String>>();
+
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    return;
+                }
+            };
+            match guard.get(&tab_id_owned) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    return;
+                }
+            }
+        };
+
+        // 在 tokio 运行时中执行重命名操作
+        ssh_manager.runtime().spawn(async move {
+            let result = service.rename(&old_path_clone, &new_path_clone).await;
+            let _ = tx.send(result);
+        });
+
+        // 在 GPUI 异步上下文中处理结果
+        let tab_id_for_ui = tab_id.to_string();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                if let Some(result) = rx.recv().await {
+                    let tab_id_clone = tab_id_for_ui.clone();
+                    let _ = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            match result {
+                                Ok(()) => {
+                                    info!(
+                                        "[SFTP] Successfully renamed: {} -> {}",
+                                        old_path, new_path
+                                    );
+                                    // 刷新当前目录
+                                    if let Some(current) = current_path {
+                                        state.sftp_load_directory(&tab_id_clone, current, cx);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "[SFTP] Failed to rename {} to {}: {}",
+                                        old_path, new_path, e
+                                    );
+                                    if let Some(tab) =
+                                        state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
+                                    {
+                                        if let Some(ref mut sftp_state) = tab.sftp_state {
+                                            sftp_state.set_error(format!("重命名失败: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        });
+                    });
+                }
+            })
+            .detach();
+    }
+
     /// 切换显示/隐藏隐藏文件
     pub fn sftp_toggle_hidden(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
         info!("[SFTP] Toggle hidden for tab {}", tab_id);

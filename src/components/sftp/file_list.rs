@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use gpui::*;
+use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_component::table::{Column, ColumnSort, Table, TableDelegate, TableEvent, TableState};
 use gpui_component::ActiveTheme;
 
@@ -14,6 +15,32 @@ use crate::constants::icons;
 use crate::i18n::t;
 use crate::models::settings::Language;
 use crate::models::sftp::{FileEntry, FileType, SftpState};
+
+/// SFTP 文件列表右键菜单事件
+#[derive(Clone, Debug)]
+pub enum FileListContextMenuEvent {
+    // 文件操作
+    Download(String),   // 文件路径
+    EditFile(String),   // 文件路径
+    CopyName(String),   // 文件名
+    CopyPath(String),   // 完整路径
+    Rename(String),     // 文件路径
+    Delete(String),     // 文件路径
+    Properties(String), // 文件路径
+
+    // 文件夹操作
+    OpenFolder(String),     // 文件夹路径
+    DownloadFolder(String), // 文件夹路径
+    OpenInTerminal(String), // 目录路径
+
+    // 空白区域操作
+    Refresh,
+    NewFolder,
+    NewFile,
+    UploadFile,
+    UploadFolder,
+    SelectAll,
+}
 
 /// 图标尺寸
 const ICON_SIZE: f32 = 16.0;
@@ -244,6 +271,18 @@ impl FileListDelegate {
             .get(row_ix)
             .and_then(|&ix| self.file_list.get(ix))
             .map(|e| e.path.clone())
+    }
+
+    /// 获取指定行的文件条目
+    pub fn get_file_entry(&self, row_ix: usize) -> Option<&FileEntry> {
+        self.row_order
+            .get(row_ix)
+            .and_then(|&ix| self.file_list.get(ix))
+    }
+
+    /// 获取文件列表是否为空
+    pub fn is_empty(&self) -> bool {
+        self.file_list.is_empty()
     }
 }
 
@@ -603,11 +642,13 @@ impl FileListView {
 }
 
 impl EventEmitter<TableEvent> for FileListView {}
+impl EventEmitter<FileListContextMenuEvent> for FileListView {}
 
 impl Render for FileListView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let bg_color = crate::theme::sidebar_color(cx);
         let muted_foreground = cx.theme().muted_foreground;
+        let lang = self.lang.clone();
 
         if !self.connected {
             // 未连接状态
@@ -643,10 +684,317 @@ impl Render for FileListView {
                 .into_any_element();
         }
 
-        // 正常状态 - 显示 Table
-        Table::new(&self.table_state)
-            .stripe(true)
-            .bordered(false)
+        let has_items = !self.table_state.read(cx).delegate().is_empty();
+
+        // 获取自身 Entity 用于在上下文菜单中发出事件
+        let this = cx.entity().clone();
+
+        // 正常状态 - 显示 Table，包装在带上下文菜单的容器中
+        let table = Table::new(&self.table_state).stripe(true).bordered(false);
+
+        div()
+            .id("sftp-file-list-container")
+            .size_full()
+            .child(table)
+            .context_menu(move |menu, _window, cx| {
+                // 读取当前选中的文件条目
+                let selected_entry = this.read(cx).get_selected_file(cx);
+
+                // 根据选中的项目类型构建不同的菜单
+                // 注意：这里使用"选中"而不是"悬停"，类似于 Windows 资源管理器的行为
+                match &selected_entry {
+                    Some(entry) if entry.is_dir() => {
+                        // 文件夹右键菜单
+                        build_folder_context_menu(menu, entry, &lang, this.clone())
+                    }
+                    Some(entry) => {
+                        // 文件右键菜单
+                        build_file_context_menu(menu, entry, &lang, this.clone())
+                    }
+                    None if has_items => {
+                        // 有文件但没选中 - 空白区域菜单
+                        build_empty_area_context_menu(menu, &lang, this.clone())
+                    }
+                    None => {
+                        // 完全空的文件夹
+                        build_empty_area_context_menu(menu, &lang, this.clone())
+                    }
+                }
+            })
             .into_any_element()
     }
+}
+
+/// 构建文件右键菜单
+fn build_file_context_menu(
+    menu: gpui_component::menu::PopupMenu,
+    entry: &FileEntry,
+    lang: &Language,
+    entity: Entity<FileListView>,
+) -> gpui_component::menu::PopupMenu {
+    let path = entry.path.clone();
+    let name = entry.name.clone();
+    let path_for_download = path.clone();
+    let path_for_edit = path.clone();
+    let name_for_copy = name.clone();
+    let path_for_copy = path.clone();
+    let path_for_rename = path.clone();
+    let path_for_delete = path.clone();
+    let path_for_terminal = std::path::Path::new(&path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/".to_string());
+    let path_for_properties = path.clone();
+
+    let download_label = t(lang, "sftp.context_menu.download").to_string();
+    let edit_label = t(lang, "sftp.context_menu.edit_file").to_string();
+    let copy_name_label = t(lang, "sftp.context_menu.copy_name").to_string();
+    let copy_path_label = t(lang, "sftp.context_menu.copy_path").to_string();
+    let rename_label = t(lang, "sftp.context_menu.rename").to_string();
+    let delete_label = t(lang, "sftp.context_menu.delete").to_string();
+    let terminal_label = t(lang, "sftp.context_menu.open_in_terminal").to_string();
+    let properties_label = t(lang, "sftp.context_menu.properties").to_string();
+
+    let e1 = entity.clone();
+    let e2 = entity.clone();
+    let e3 = entity.clone();
+    let e4 = entity.clone();
+    let e5 = entity.clone();
+    let e6 = entity.clone();
+
+    menu.item(
+        menu_item_element(&download_label).on_click(move |_, _, cx| {
+            e1.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::Download(
+                    path_for_download.clone(),
+                ));
+            });
+        }),
+    )
+    .item({
+        let path = path_for_edit.clone();
+        menu_item_element(&edit_label).on_click(move |_, _, cx| {
+            e2.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::EditFile(path.clone()));
+            });
+        })
+    })
+    .separator()
+    .item(
+        menu_item_element(&copy_name_label).on_click(move |_, _, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(name_for_copy.clone()));
+        }),
+    )
+    .item(
+        menu_item_element(&copy_path_label).on_click(move |_, _, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(path_for_copy.clone()));
+        }),
+    )
+    .separator()
+    .item({
+        let path = path_for_rename.clone();
+        menu_item_element(&rename_label).on_click(move |_, _, cx| {
+            e3.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::Rename(path.clone()));
+            });
+        })
+    })
+    .item({
+        let path = path_for_delete.clone();
+        menu_item_element(&delete_label).on_click(move |_, _, cx| {
+            e4.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::Delete(path.clone()));
+            });
+        })
+    })
+    .separator()
+    .item({
+        let path = path_for_terminal.clone();
+        menu_item_element(&terminal_label).on_click(move |_, _, cx| {
+            e5.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::OpenInTerminal(path.clone()));
+            });
+        })
+    })
+    .item({
+        let path = path_for_properties.clone();
+        menu_item_element(&properties_label).on_click(move |_, _, cx| {
+            e6.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::Properties(path.clone()));
+            });
+        })
+    })
+}
+
+/// 构建文件夹右键菜单
+fn build_folder_context_menu(
+    menu: gpui_component::menu::PopupMenu,
+    entry: &FileEntry,
+    lang: &Language,
+    entity: Entity<FileListView>,
+) -> gpui_component::menu::PopupMenu {
+    let path = entry.path.clone();
+    let name = entry.name.clone();
+    let path_for_open = path.clone();
+    let path_for_download = path.clone();
+    let name_for_copy = name.clone();
+    let path_for_copy = path.clone();
+    let path_for_rename = path.clone();
+    let path_for_delete = path.clone();
+    let path_for_terminal = path.clone();
+    let path_for_properties = path.clone();
+
+    let open_label = t(lang, "sftp.context_menu.open_folder").to_string();
+    let download_label = t(lang, "sftp.context_menu.download_folder").to_string();
+    let copy_name_label = t(lang, "sftp.context_menu.copy_name").to_string();
+    let copy_path_label = t(lang, "sftp.context_menu.copy_path").to_string();
+    let rename_label = t(lang, "sftp.context_menu.rename").to_string();
+    let delete_label = t(lang, "sftp.context_menu.delete").to_string();
+    let terminal_label = t(lang, "sftp.context_menu.open_in_terminal").to_string();
+    let properties_label = t(lang, "sftp.context_menu.properties").to_string();
+
+    let e1 = entity.clone();
+    let e2 = entity.clone();
+    let e3 = entity.clone();
+    let e4 = entity.clone();
+    let e5 = entity.clone();
+    let e6 = entity.clone();
+
+    menu.item({
+        let path = path_for_open.clone();
+        menu_item_element(&open_label).on_click(move |_, _, cx| {
+            e1.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::OpenFolder(path.clone()));
+            });
+        })
+    })
+    .item({
+        let path = path_for_download.clone();
+        menu_item_element(&download_label).on_click(move |_, _, cx| {
+            e2.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::DownloadFolder(path.clone()));
+            });
+        })
+    })
+    .separator()
+    .item(
+        menu_item_element(&copy_name_label).on_click(move |_, _, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(name_for_copy.clone()));
+        }),
+    )
+    .item(
+        menu_item_element(&copy_path_label).on_click(move |_, _, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(path_for_copy.clone()));
+        }),
+    )
+    .separator()
+    .item({
+        let path = path_for_rename.clone();
+        menu_item_element(&rename_label).on_click(move |_, _, cx| {
+            e3.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::Rename(path.clone()));
+            });
+        })
+    })
+    .item({
+        let path = path_for_delete.clone();
+        menu_item_element(&delete_label).on_click(move |_, _, cx| {
+            e4.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::Delete(path.clone()));
+            });
+        })
+    })
+    .separator()
+    .item({
+        let path = path_for_terminal.clone();
+        menu_item_element(&terminal_label).on_click(move |_, _, cx| {
+            e5.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::OpenInTerminal(path.clone()));
+            });
+        })
+    })
+    .item({
+        let path = path_for_properties.clone();
+        menu_item_element(&properties_label).on_click(move |_, _, cx| {
+            e6.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::Properties(path.clone()));
+            });
+        })
+    })
+}
+
+/// 构建空白区域右键菜单
+fn build_empty_area_context_menu(
+    menu: gpui_component::menu::PopupMenu,
+    lang: &Language,
+    entity: Entity<FileListView>,
+) -> gpui_component::menu::PopupMenu {
+    let refresh_label = t(lang, "sftp.context_menu.refresh").to_string();
+    let new_folder_label = t(lang, "sftp.context_menu.new_folder").to_string();
+    let new_file_label = t(lang, "sftp.context_menu.new_file").to_string();
+    let upload_file_label = t(lang, "sftp.context_menu.upload_file").to_string();
+    let upload_folder_label = t(lang, "sftp.context_menu.upload_folder").to_string();
+    let select_all_label = t(lang, "sftp.context_menu.select_all").to_string();
+
+    let e1 = entity.clone();
+    let e2 = entity.clone();
+    let e3 = entity.clone();
+    let e4 = entity.clone();
+    let e5 = entity.clone();
+    let e6 = entity.clone();
+
+    menu.item(menu_item_element(&refresh_label).on_click(move |_, _, cx| {
+        e1.update(cx, |_, cx| {
+            cx.emit(FileListContextMenuEvent::Refresh);
+        });
+    }))
+    .separator()
+    .item(
+        menu_item_element(&new_folder_label).on_click(move |_, _, cx| {
+            e2.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::NewFolder);
+            });
+        }),
+    )
+    .item(
+        menu_item_element(&new_file_label).on_click(move |_, _, cx| {
+            e3.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::NewFile);
+            });
+        }),
+    )
+    .separator()
+    .item(
+        menu_item_element(&upload_file_label).on_click(move |_, _, cx| {
+            e4.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::UploadFile);
+            });
+        }),
+    )
+    .item(
+        menu_item_element(&upload_folder_label).on_click(move |_, _, cx| {
+            e5.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::UploadFolder);
+            });
+        }),
+    )
+    .separator()
+    .item(
+        menu_item_element(&select_all_label).on_click(move |_, _, cx| {
+            e6.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::SelectAll);
+            });
+        }),
+    )
+}
+
+/// 创建菜单项元素
+fn menu_item_element(label: &str) -> PopupMenuItem {
+    let label = label.to_string();
+    PopupMenuItem::element(move |_window, cx| {
+        div()
+            .text_xs()
+            .text_color(cx.theme().foreground)
+            .child(label.clone())
+    })
 }

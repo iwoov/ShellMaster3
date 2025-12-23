@@ -155,12 +155,31 @@ fn render_transfer_panel(
                             .justify_between()
                             .child(
                                 div()
-                                    .text_xs()
-                                    .font_medium()
-                                    .text_color(foreground)
-                                    .overflow_hidden()
-                                    .max_w(px(120.))
-                                    .child(transfer.file_name()),
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    // 上传/下载方向图标
+                                    .child(render_icon(
+                                        if transfer.is_upload {
+                                            icons::UPLOAD
+                                        } else {
+                                            icons::DOWNLOAD
+                                        },
+                                        if transfer.is_upload {
+                                            gpui::rgb(0x3b82f6).into() // 蓝色表示上传
+                                        } else {
+                                            gpui::rgb(0x22c55e).into() // 绿色表示下载
+                                        },
+                                    ))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_medium()
+                                            .text_color(foreground)
+                                            .overflow_hidden()
+                                            .max_w(px(110.))
+                                            .child(transfer.file_name()),
+                                    ),
                             )
                             .child(
                                 div()

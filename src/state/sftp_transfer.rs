@@ -357,6 +357,8 @@ impl SessionState {
                 );
                 let transfer_id_clone = transfer_item.id.clone();
                 let cancel_token = transfer_item.cancel_token.clone();
+                // 克隆暂停标志以便在上传任务中使用（必须在 push 之前克隆）
+                let pause_flag = transfer_item.pause_flag.clone();
 
                 // 添加传输项到列表
                 let _ = async_cx.update(|cx| {
@@ -386,13 +388,6 @@ impl SessionState {
                 let concurrent_transfers = crate::services::storage::load_settings()
                     .map(|s| s.sftp.concurrent_transfers as usize)
                     .unwrap_or(3);
-
-                // 获取暂停标志（从 transfer_item 克隆）
-                // 注意：需要在 async_cx.update 之后重新获取
-                let pause_flag = {
-                    let pause_flag_clone = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                    pause_flag_clone
-                };
 
                 // 克隆取消令牌用于上传任务内部
                 let cancel_token_for_upload = cancel_token.clone();

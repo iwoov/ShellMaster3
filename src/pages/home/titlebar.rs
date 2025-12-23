@@ -7,26 +7,33 @@ use crate::components::common::icon::render_icon;
 use crate::constants::icons;
 use crate::state::{SessionState, SessionStatus};
 
-/// 渲染 Home 按钮区域（独立于 Sidebar，宽度与 Sidebar 相同）
+/// 渲染 Home 按钮（紧凑版本，不占用 sidebar 宽度）
 pub fn render_home_button(session_state: Entity<SessionState>, cx: &App) -> impl IntoElement {
-    let bg = crate::theme::sidebar_color(cx);
-    let border = cx.theme().border;
-    let hover_bg = cx.theme().muted;
+    let bg = crate::theme::titlebar_color(cx); // 使用标题栏背景色
+    let border = cx.theme().title_bar_border;
     let icon_color = cx.theme().muted_foreground;
     let session_state_for_click = session_state.clone();
 
+    // macOS: 红绿灯在左侧，Home 按钮需要在红绿灯右边留出空间
+    // Windows: Home 按钮直接在最左侧
+    let left_padding = if cfg!(target_os = "macos") {
+        px(80.) // 为 macOS 红绿灯留出空间
+    } else {
+        px(8.) // Windows 只需要小间距
+    };
+
+    // 注意：GPUI 的 hover 闭包中使用 move 捕获变量会导致悬浮效果失效
+    // 因此这里使用硬编码的 rgba 值（半透明灰色）
     div()
-        .w(px(230.)) // 与 sidebar 宽度相同
-        .flex_shrink_0() // 防止被压缩
         .h(px(44.)) // 标题栏高度
-        .bg(bg)
-        .border_r_1()
-        .border_b_1()
+        .bg(bg) // 标题栏背景色
+        .border_b_1() // 底部边框
         .border_color(border)
         .flex()
+        .flex_shrink_0()
         .items_center()
-        .justify_end() // 右对齐，让 Home 按钮在红绿灯右边
-        .px_2()
+        .pl(left_padding)
+        .pr_2()
         .child(
             div()
                 .id("home-btn")
@@ -34,7 +41,7 @@ pub fn render_home_button(session_state: Entity<SessionState>, cx: &App) -> impl
                 .h_9()
                 .rounded_md()
                 .cursor_pointer()
-                .hover(move |s| s.bg(hover_bg))
+                .hover(|s| s.bg(rgba(0x80808040))) // 半透明灰色悬浮效果
                 .flex()
                 .items_center()
                 .justify_center()
@@ -48,6 +55,10 @@ pub fn render_home_button(session_state: Entity<SessionState>, cx: &App) -> impl
 }
 
 /// 渲染主页标题栏（Home 页面，无内容）
+use crate::components::common::window_controls::render_windows_controls;
+
+// ...
+
 pub fn render_titlebar(cx: &App) -> impl IntoElement {
     let bg = crate::theme::titlebar_color(cx);
     let border = cx.theme().title_bar_border;
@@ -58,6 +69,17 @@ pub fn render_titlebar(cx: &App) -> impl IntoElement {
         .bg(bg)
         .border_b_1()
         .border_color(border)
+        .flex() // Added flex
+        .items_center() // Added items_center
+        .justify_end() // Align items to the right (if simple div) or use spacer
+        .child(
+            div()
+                .id("titlebar-drag-area")
+                .flex_1()
+                .h_full()
+                .window_control_area(WindowControlArea::Drag),
+        ) // Spacer with drag functionality
+        .child(render_windows_controls(cx)) // Add window controls
 }
 
 /// 渲染会话标题栏（带标签页）
@@ -73,15 +95,6 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
     let state = session_state.read(cx);
     let tabs = state.tabs.clone();
     let active_tab_id = state.active_tab_id.clone();
-    let sidebar_collapsed = state.sidebar_collapsed;
-
-    // 折叠按钮图标
-    let toggle_icon = if sidebar_collapsed {
-        icons::PANEL_RIGHT_OPEN
-    } else {
-        icons::PANEL_RIGHT_CLOSE
-    };
-    let session_state_for_toggle = session_state.clone();
 
     div()
         .h(px(44.)) // 与 Home 按钮区域高度相同
@@ -91,7 +104,7 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
         .border_color(border)
         .flex()
         .items_center()
-        .px_4()
+        .pl_4() // 只添加左侧 padding，右侧让 window controls 靠边
         // 标签页列表
         .child(
             div()
@@ -194,25 +207,7 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
                     }
                 })),
         )
-        // 占位，将折叠按钮推到右侧
-        .child(div().flex_1())
-        // Sidebar 折叠/展开按钮
-        .child(
-            div()
-                .id("sidebar-toggle-btn")
-                .w_8()
-                .h_8()
-                .rounded_md()
-                .cursor_pointer()
-                .hover(move |s| s.bg(secondary_hover))
-                .flex()
-                .items_center()
-                .justify_center()
-                .on_click(move |_, _, cx| {
-                    session_state_for_toggle.update(cx, |state, _| {
-                        state.toggle_sidebar();
-                    });
-                })
-                .child(render_icon(toggle_icon, muted_foreground.into())),
-        )
+        // 占位，将折叠按钮推到右侧 (with drag support for Windows)
+        .child(div().id("session-titlebar-drag-area").flex_1().h_full())
+        .child(render_windows_controls(cx)) // Add window controls
 }

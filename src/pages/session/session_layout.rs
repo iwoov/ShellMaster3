@@ -106,8 +106,17 @@ pub fn render_session_layout(
         .hover(|s| s.bg(hover_bg))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             snippets_session_state.update(cx, |state, _| {
-                state.load_snippets_config();
-                state.set_sidebar_panel(SidebarPanel::Snippets);
+                // 如果已经是当前面板，则切换侧边栏折叠状态
+                if state.active_sidebar_panel == SidebarPanel::Snippets {
+                    state.toggle_sidebar();
+                } else {
+                    // 切换到该面板并确保侧边栏展开
+                    state.load_snippets_config();
+                    state.set_sidebar_panel(SidebarPanel::Snippets);
+                    if state.sidebar_collapsed {
+                        state.sidebar_collapsed = false;
+                    }
+                }
             });
         })
         .child(
@@ -136,7 +145,16 @@ pub fn render_session_layout(
         .hover(|s| s.bg(hover_bg))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             transfer_session_state.update(cx, |state, _| {
-                state.set_sidebar_panel(SidebarPanel::Transfer);
+                // 如果已经是当前面板，则切换侧边栏折叠状态
+                if state.active_sidebar_panel == SidebarPanel::Transfer {
+                    state.toggle_sidebar();
+                } else {
+                    // 切换到该面板并确保侧边栏展开
+                    state.set_sidebar_panel(SidebarPanel::Transfer);
+                    if state.sidebar_collapsed {
+                        state.sidebar_collapsed = false;
+                    }
+                }
             });
         })
         .child(

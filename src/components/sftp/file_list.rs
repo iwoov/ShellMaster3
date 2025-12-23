@@ -763,7 +763,7 @@ fn build_file_context_menu(
     let e6 = entity.clone();
 
     menu.item(
-        menu_item_element(&download_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::DOWNLOAD, &download_label).on_click(move |_, _, cx| {
             e1.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::Download(
                     path_for_download.clone(),
@@ -773,7 +773,7 @@ fn build_file_context_menu(
     )
     .item({
         let path = path_for_edit.clone();
-        menu_item_element(&edit_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::EDIT, &edit_label).on_click(move |_, _, cx| {
             e2.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::EditFile(path.clone()));
             });
@@ -781,19 +781,19 @@ fn build_file_context_menu(
     })
     .separator()
     .item(
-        menu_item_element(&copy_name_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::COPY, &copy_name_label).on_click(move |_, _, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(name_for_copy.clone()));
         }),
     )
     .item(
-        menu_item_element(&copy_path_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::COPY, &copy_path_label).on_click(move |_, _, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(path_for_copy.clone()));
         }),
     )
     .separator()
     .item({
         let path = path_for_rename.clone();
-        menu_item_element(&rename_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::EDIT, &rename_label).on_click(move |_, _, cx| {
             e3.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::Rename(path.clone()));
             });
@@ -801,7 +801,7 @@ fn build_file_context_menu(
     })
     .item({
         let path = path_for_delete.clone();
-        menu_item_element(&delete_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::TRASH, &delete_label).on_click(move |_, _, cx| {
             e4.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::Delete(path.clone()));
             });
@@ -810,7 +810,7 @@ fn build_file_context_menu(
     .separator()
     .item({
         let path = path_for_terminal.clone();
-        menu_item_element(&terminal_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::TERMINAL, &terminal_label).on_click(move |_, _, cx| {
             e5.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::OpenInTerminal(path.clone()));
             });
@@ -818,7 +818,7 @@ fn build_file_context_menu(
     })
     .item({
         let path = path_for_properties.clone();
-        menu_item_element(&properties_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::INFO, &properties_label).on_click(move |_, _, cx| {
             e6.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::Properties(path.clone()));
             });
@@ -862,7 +862,7 @@ fn build_folder_context_menu(
 
     menu.item({
         let path = path_for_open.clone();
-        menu_item_element(&open_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::FOLDER_OPEN, &open_label).on_click(move |_, _, cx| {
             e1.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::OpenFolder(path.clone()));
             });
@@ -870,7 +870,7 @@ fn build_folder_context_menu(
     })
     .item({
         let path = path_for_download.clone();
-        menu_item_element(&download_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::DOWNLOAD, &download_label).on_click(move |_, _, cx| {
             e2.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::DownloadFolder(path.clone()));
             });
@@ -878,19 +878,19 @@ fn build_folder_context_menu(
     })
     .separator()
     .item(
-        menu_item_element(&copy_name_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::COPY, &copy_name_label).on_click(move |_, _, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(name_for_copy.clone()));
         }),
     )
     .item(
-        menu_item_element(&copy_path_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::COPY, &copy_path_label).on_click(move |_, _, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(path_for_copy.clone()));
         }),
     )
     .separator()
     .item({
         let path = path_for_rename.clone();
-        menu_item_element(&rename_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::EDIT, &rename_label).on_click(move |_, _, cx| {
             e3.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::Rename(path.clone()));
             });
@@ -898,7 +898,7 @@ fn build_folder_context_menu(
     })
     .item({
         let path = path_for_delete.clone();
-        menu_item_element(&delete_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::TRASH, &delete_label).on_click(move |_, _, cx| {
             e4.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::Delete(path.clone()));
             });
@@ -907,7 +907,7 @@ fn build_folder_context_menu(
     .separator()
     .item({
         let path = path_for_terminal.clone();
-        menu_item_element(&terminal_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::TERMINAL, &terminal_label).on_click(move |_, _, cx| {
             e5.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::OpenInTerminal(path.clone()));
             });
@@ -915,7 +915,7 @@ fn build_folder_context_menu(
     })
     .item({
         let path = path_for_properties.clone();
-        menu_item_element(&properties_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::INFO, &properties_label).on_click(move |_, _, cx| {
             e6.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::Properties(path.clone()));
             });
@@ -943,21 +943,23 @@ fn build_empty_area_context_menu(
     let e5 = entity.clone();
     let e6 = entity.clone();
 
-    menu.item(menu_item_element(&refresh_label).on_click(move |_, _, cx| {
-        e1.update(cx, |_, cx| {
-            cx.emit(FileListContextMenuEvent::Refresh);
-        });
-    }))
+    menu.item(
+        menu_item_element(icons::REFRESH, &refresh_label).on_click(move |_, _, cx| {
+            e1.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::Refresh);
+            });
+        }),
+    )
     .separator()
     .item(
-        menu_item_element(&new_folder_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::FOLDER_PLUS, &new_folder_label).on_click(move |_, _, cx| {
             e2.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::NewFolder);
             });
         }),
     )
     .item(
-        menu_item_element(&new_file_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::FILE, &new_file_label).on_click(move |_, _, cx| {
             e3.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::NewFile);
             });
@@ -965,14 +967,14 @@ fn build_empty_area_context_menu(
     )
     .separator()
     .item(
-        menu_item_element(&upload_file_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::UPLOAD, &upload_file_label).on_click(move |_, _, cx| {
             e4.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::UploadFile);
             });
         }),
     )
     .item(
-        menu_item_element(&upload_folder_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::UPLOAD, &upload_folder_label).on_click(move |_, _, cx| {
             e5.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::UploadFolder);
             });
@@ -980,7 +982,7 @@ fn build_empty_area_context_menu(
     )
     .separator()
     .item(
-        menu_item_element(&select_all_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::CHECK, &select_all_label).on_click(move |_, _, cx| {
             e6.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::SelectAll);
             });
@@ -988,13 +990,22 @@ fn build_empty_area_context_menu(
     )
 }
 
-/// 创建菜单项元素
-fn menu_item_element(label: &str) -> PopupMenuItem {
+/// 创建带图标的菜单项元素
+fn menu_item_element(icon: &str, label: &str) -> PopupMenuItem {
+    let icon = icon.to_string();
     let label = label.to_string();
     PopupMenuItem::element(move |_window, cx| {
+        let muted = cx.theme().muted_foreground;
         div()
-            .text_xs()
-            .text_color(cx.theme().foreground)
-            .child(label.clone())
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(svg().path(icon.clone()).size(px(14.)).text_color(muted))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().foreground)
+                    .child(label.clone()),
+            )
     })
 }

@@ -7,7 +7,5 @@ pub mod network_card;
 pub mod system_card;
 pub mod view;
 
-pub use detail_dialog::{
-    render_detail_button, render_detail_dialog, DetailDialogState, DetailDialogType,
-};
+pub use detail_dialog::{render_detail_dialog, DetailDialogState};
 pub use view::render_monitor_view;

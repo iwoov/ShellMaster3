@@ -109,7 +109,7 @@ pub fn render_network_card(
                 .flex_col()
                 .gap_2()
                 // 历史趋势图
-                .child(render_simple_chart(state, cx))
+                .child(render_simple_chart(state))
                 // 实时数值
                 .child(render_network_speed(state, cx)),
         )
@@ -199,7 +199,7 @@ fn render_static_dropdown(text: &'static str, cx: &App) -> impl IntoElement {
 }
 
 /// 渲染简易柱状图（模拟历史趋势）
-fn render_simple_chart(state: &MonitorState, cx: &App) -> impl IntoElement {
+fn render_simple_chart(state: &MonitorState) -> impl IntoElement {
     let chart_line_color_tx = hsla(145.0 / 360.0, 0.6, 0.5, 0.8); // 绿色 TX
     let chart_line_color_rx = hsla(210.0 / 360.0, 0.8, 0.6, 0.8); // 蓝色 RX
 

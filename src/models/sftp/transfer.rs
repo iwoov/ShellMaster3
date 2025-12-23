@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::Instant;
+
 use tokio_util::sync::CancellationToken;
 
 /// 传输状态
@@ -108,16 +108,6 @@ impl TransferStatus {
             _ => false,
         }
     }
-
-    /// 尝试转换到新状态，返回是否成功
-    pub fn transition_to(&mut self, next: TransferStatus) -> bool {
-        if self.can_transition_to(&next) {
-            *self = next;
-            true
-        } else {
-            false
-        }
-    }
 }
 
 /// 传输进度
@@ -129,8 +119,6 @@ pub struct TransferProgress {
     pub total_bytes: u64,
     /// 传输速度 (bytes/s)
     pub speed_bytes_per_sec: u64,
-    /// 开始时间
-    pub started_at: Option<Instant>,
 }
 
 impl TransferProgress {
@@ -140,26 +128,7 @@ impl TransferProgress {
             bytes_transferred: 0,
             total_bytes,
             speed_bytes_per_sec: 0,
-            started_at: None,
         }
-    }
-
-    /// 更新进度
-    pub fn update(&mut self, bytes_transferred: u64) {
-        self.bytes_transferred = bytes_transferred;
-
-        // 计算速度
-        if let Some(started_at) = self.started_at {
-            let elapsed = started_at.elapsed().as_secs_f64();
-            if elapsed > 0.0 {
-                self.speed_bytes_per_sec = (bytes_transferred as f64 / elapsed) as u64;
-            }
-        }
-    }
-
-    /// 开始传输
-    pub fn start(&mut self) {
-        self.started_at = Some(Instant::now());
     }
 
     /// 完成传输
@@ -173,20 +142,6 @@ impl TransferProgress {
             return 0.0;
         }
         (self.bytes_transferred as f64 / self.total_bytes as f64) * 100.0
-    }
-
-    /// 格式化速度显示
-    pub fn format_speed(&self) -> String {
-        format_bytes_per_sec(self.speed_bytes_per_sec)
-    }
-
-    /// 预估剩余时间（秒）
-    pub fn estimated_remaining_secs(&self) -> Option<u64> {
-        if self.speed_bytes_per_sec == 0 {
-            return None;
-        }
-        let remaining_bytes = self.total_bytes.saturating_sub(self.bytes_transferred);
-        Some(remaining_bytes / self.speed_bytes_per_sec)
     }
 }
 
@@ -311,18 +266,6 @@ impl TransferItem {
         }
     }
 
-    /// 取消传输
-    pub fn cancel(&mut self) -> bool {
-        if self.status.can_transition_to(&TransferStatus::Cancelled) {
-            self.cancel_token.cancel();
-            self.status = TransferStatus::Cancelled;
-            self.error = Some("用户取消".to_string());
-            true
-        } else {
-            false
-        }
-    }
-
     /// 获取文件名
     pub fn file_name(&self) -> String {
         if self.is_upload {
@@ -337,19 +280,5 @@ impl TransferItem {
                 .unwrap_or(&self.remote_path)
                 .to_string()
         }
-    }
-}
-
-/// 格式化字节速度
-fn format_bytes_per_sec(bytes_per_sec: u64) -> String {
-    let speed = bytes_per_sec as f64;
-    if speed >= 1_073_741_824.0 {
-        format!("{:.1} GB/s", speed / 1_073_741_824.0)
-    } else if speed >= 1_048_576.0 {
-        format!("{:.1} MB/s", speed / 1_048_576.0)
-    } else if speed >= 1_024.0 {
-        format!("{:.1} KB/s", speed / 1_024.0)
-    } else {
-        format!("{} B/s", bytes_per_sec)
     }
 }

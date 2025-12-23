@@ -46,5 +46,5 @@ pub fn render_monitor_view(
             cx,
         ))
         // 磁盘状态卡片
-        .child(render_disk_card(state, dialog_state, cx))
+        .child(render_disk_card(state, cx))
 }

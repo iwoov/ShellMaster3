@@ -5,14 +5,8 @@ use gpui_component::{ActiveTheme, StyledExt};
 
 use crate::models::monitor::MonitorState;
 
-use super::detail_dialog::DetailDialogState;
-
 /// 渲染磁盘状态区块（无卡片边框，最后一个区块无底部边框）
-pub fn render_disk_card(
-    state: &MonitorState,
-    dialog_state: Entity<DetailDialogState>,
-    cx: &App,
-) -> impl IntoElement {
+pub fn render_disk_card(state: &MonitorState, cx: &App) -> impl IntoElement {
     let title_color = hsla(210.0 / 360.0, 1.0, 0.5, 1.0); // 蓝色标题
     let foreground = cx.theme().foreground;
     let muted_color = cx.theme().muted_foreground;

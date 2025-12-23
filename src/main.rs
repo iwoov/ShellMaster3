@@ -1,6 +1,9 @@
 // ShellMaster - SSH/SFTP 客户端
 // 应用入口
 
+// Windows 下 release 模式隐藏终端窗口
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use gpui::*;
 use gpui_component::Root;
 use std::path::PathBuf;

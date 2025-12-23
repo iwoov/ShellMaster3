@@ -98,9 +98,12 @@ impl SessionState {
                 let pause_flag = transfer_item.pause_flag.clone();
 
                 // 添加传输项到列表，同时自动切换到传输面板
+                let tab_id_for_transfer = tab_id_owned.clone();
                 let _ = async_cx.update(|cx| {
                     session_state.update(cx, |state, cx| {
-                        state.active_transfers.push(transfer_item);
+                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_transfer) {
+                            tab.active_transfers.push(transfer_item);
+                        }
                         // 自动切换到传输管理面板
                         state.set_sidebar_panel(super::SidebarPanel::Transfer);
                         cx.notify();
@@ -198,15 +201,18 @@ impl SessionState {
                             let _ = std::fs::remove_file(&local_path);
                             // 更新状态
                             let transfer_id = transfer_id_clone.clone();
+                            let tab_id = tab_id_owned.clone();
                             let _ = async_cx.update(|cx| {
                                 session_state.update(cx, |state, cx| {
-                                    if let Some(transfer) = state
-                                        .active_transfers
-                                        .iter_mut()
-                                        .find(|t| t.id == transfer_id)
-                                    {
-                                        transfer.status = crate::models::sftp::TransferStatus::Cancelled;
-                                        transfer.error = Some("用户取消".to_string());
+                                    if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                        if let Some(transfer) = tab
+                                            .active_transfers
+                                            .iter_mut()
+                                            .find(|t| t.id == transfer_id)
+                                        {
+                                            transfer.status = crate::models::sftp::TransferStatus::Cancelled;
+                                            transfer.error = Some("用户取消".to_string());
+                                        }
                                     }
                                     cx.notify();
                                 });
@@ -218,15 +224,18 @@ impl SessionState {
                             match event {
                                 Some(DownloadEvent::Progress(transferred, total, speed)) => {
                                     let transfer_id = transfer_id_clone.clone();
+                                    let tab_id = tab_id_owned.clone();
                                     let _ = async_cx.update(|cx| {
                                         session_state.update(cx, |state, cx| {
-                                            if let Some(transfer) = state
-                                                .active_transfers
-                                                .iter_mut()
-                                                .find(|t| t.id == transfer_id)
-                                            {
-                                                // 使用安全的进度更新方法
-                                                transfer.update_progress(transferred, total, speed);
+                                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                                if let Some(transfer) = tab
+                                                    .active_transfers
+                                                    .iter_mut()
+                                                    .find(|t| t.id == transfer_id)
+                                                {
+                                                    // 使用安全的进度更新方法
+                                                    transfer.update_progress(transferred, total, speed);
+                                                }
                                             }
                                             cx.notify();
                                         });
@@ -235,24 +244,27 @@ impl SessionState {
                                 Some(DownloadEvent::Complete(result)) => {
                                     let transfer_id = transfer_id_clone.clone();
                                     let local_path = local_path.clone();
+                                    let tab_id = tab_id_owned.clone();
                                     let _ = async_cx.update(|cx| {
                                         session_state.update(cx, |state, cx| {
-                                            if let Some(transfer) = state
-                                                .active_transfers
-                                                .iter_mut()
-                                                .find(|t| t.id == transfer_id)
-                                            {
-                                                match &result {
-                                                    Ok(()) => {
-                                                        transfer.set_completed();
-                                                        info!(
-                                                            "[SFTP] Download completed: {:?}",
-                                                            local_path
-                                                        );
-                                                    }
-                                                    Err(e) => {
-                                                        transfer.set_failed(e.clone());
-                                                        error!("[SFTP] Download failed: {}", e);
+                                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                                if let Some(transfer) = tab
+                                                    .active_transfers
+                                                    .iter_mut()
+                                                    .find(|t| t.id == transfer_id)
+                                                {
+                                                    match &result {
+                                                        Ok(()) => {
+                                                            transfer.set_completed();
+                                                            info!(
+                                                                "[SFTP] Download completed: {:?}",
+                                                                local_path
+                                                            );
+                                                        }
+                                                        Err(e) => {
+                                                            transfer.set_failed(e.clone());
+                                                            error!("[SFTP] Download failed: {}", e);
+                                                        }
                                                     }
                                                 }
                                             }
@@ -363,9 +375,12 @@ impl SessionState {
                 let pause_flag = transfer_item.pause_flag.clone();
 
                 // 添加传输项到列表，同时自动切换到传输面板
+                let tab_id_for_transfer = tab_id_owned.clone();
                 let _ = async_cx.update(|cx| {
                     session_state.update(cx, |state, cx| {
-                        state.active_transfers.push(transfer_item);
+                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_transfer) {
+                            tab.active_transfers.push(transfer_item);
+                        }
                         // 自动切换到传输管理面板
                         state.set_sidebar_panel(super::SidebarPanel::Transfer);
                         cx.notify();
@@ -461,15 +476,18 @@ impl SessionState {
                             info!("[SFTP] Upload cancelled by user: {}", transfer_id_clone);
                             // 更新状态
                             let transfer_id = transfer_id_clone.clone();
+                            let tab_id = tab_id_owned.clone();
                             let _ = async_cx.update(|cx| {
                                 session_state.update(cx, |state, cx| {
-                                    if let Some(transfer) = state
-                                        .active_transfers
-                                        .iter_mut()
-                                        .find(|t| t.id == transfer_id)
-                                    {
-                                        transfer.status = crate::models::sftp::TransferStatus::Cancelled;
-                                        transfer.error = Some("用户取消".to_string());
+                                    if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                        if let Some(transfer) = tab
+                                            .active_transfers
+                                            .iter_mut()
+                                            .find(|t| t.id == transfer_id)
+                                        {
+                                            transfer.status = crate::models::sftp::TransferStatus::Cancelled;
+                                            transfer.error = Some("用户取消".to_string());
+                                        }
                                     }
                                     cx.notify();
                                 });
@@ -481,19 +499,22 @@ impl SessionState {
                             match event {
                                 Some(UploadEvent::Progress(transferred, total, speed)) => {
                                     let transfer_id = transfer_id_clone.clone();
+                                    let tab_id = tab_id_owned.clone();
                                     let _ = async_cx.update(|cx| {
                                         session_state.update(cx, |state, cx| {
-                                            if let Some(transfer) = state
-                                                .active_transfers
-                                                .iter_mut()
-                                                .find(|t| t.id == transfer_id)
-                                            {
-                                                transfer.progress.bytes_transferred = transferred;
-                                                transfer.progress.total_bytes = total;
-                                                if transfer.status != crate::models::sftp::TransferStatus::Paused {
-                                                    transfer.progress.speed_bytes_per_sec = speed;
-                                                    if transfer.status == crate::models::sftp::TransferStatus::Pending {
-                                                        transfer.status = crate::models::sftp::TransferStatus::Uploading;
+                                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                                if let Some(transfer) = tab
+                                                    .active_transfers
+                                                    .iter_mut()
+                                                    .find(|t| t.id == transfer_id)
+                                                {
+                                                    transfer.progress.bytes_transferred = transferred;
+                                                    transfer.progress.total_bytes = total;
+                                                    if transfer.status != crate::models::sftp::TransferStatus::Paused {
+                                                        transfer.progress.speed_bytes_per_sec = speed;
+                                                        if transfer.status == crate::models::sftp::TransferStatus::Pending {
+                                                            transfer.status = crate::models::sftp::TransferStatus::Uploading;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -504,24 +525,27 @@ impl SessionState {
                                 Some(UploadEvent::Complete(result)) => {
                                     let transfer_id = transfer_id_clone.clone();
                                     let remote_path = remote_path.clone();
+                                    let tab_id = tab_id_owned.clone();
                                     let _ = async_cx.update(|cx| {
                                         session_state.update(cx, |state, cx| {
-                                            if let Some(transfer) = state
-                                                .active_transfers
-                                                .iter_mut()
-                                                .find(|t| t.id == transfer_id)
-                                            {
-                                                match &result {
-                                                    Ok(()) => {
-                                                        transfer.set_completed();
-                                                        info!(
-                                                            "[SFTP] Upload completed: {}",
-                                                            remote_path
-                                                        );
-                                                    }
-                                                    Err(e) => {
-                                                        transfer.set_failed(e.clone());
-                                                        error!("[SFTP] Upload failed: {}", e);
+                                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                                if let Some(transfer) = tab
+                                                    .active_transfers
+                                                    .iter_mut()
+                                                    .find(|t| t.id == transfer_id)
+                                                {
+                                                    match &result {
+                                                        Ok(()) => {
+                                                            transfer.set_completed();
+                                                            info!(
+                                                                "[SFTP] Upload completed: {}",
+                                                                remote_path
+                                                            );
+                                                        }
+                                                        Err(e) => {
+                                                            transfer.set_failed(e.clone());
+                                                            error!("[SFTP] Upload failed: {}", e);
+                                                        }
                                                     }
                                                 }
                                             }
@@ -548,19 +572,23 @@ impl SessionState {
     pub fn cancel_transfer(&mut self, transfer_id: &str, cx: &mut gpui::Context<Self>) {
         info!("[SFTP] Cancelling transfer: {}", transfer_id);
 
-        if let Some(transfer) = self
-            .active_transfers
-            .iter_mut()
-            .find(|t| t.id == transfer_id)
-        {
-            // 触发取消令牌
-            transfer.cancel_token.cancel();
-            // 更新状态
-            transfer.status = crate::models::sftp::TransferStatus::Cancelled;
-            transfer.error = Some("用户取消".to_string());
+        // 遍历所有 tab 查找传输任务
+        for tab in self.tabs.iter_mut() {
+            if let Some(transfer) = tab
+                .active_transfers
+                .iter_mut()
+                .find(|t| t.id == transfer_id)
+            {
+                // 触发取消令牌
+                transfer.cancel_token.cancel();
+                // 更新状态
+                transfer.status = crate::models::sftp::TransferStatus::Cancelled;
+                transfer.error = Some("用户取消".to_string());
 
-            info!("[SFTP] Transfer cancelled: {}", transfer_id);
-            cx.notify();
+                info!("[SFTP] Transfer cancelled: {}", transfer_id);
+                cx.notify();
+                return;
+            }
         }
     }
 
@@ -568,19 +596,23 @@ impl SessionState {
     pub fn pause_transfer(&mut self, transfer_id: &str, cx: &mut gpui::Context<Self>) {
         info!("[SFTP] Pausing transfer: {}", transfer_id);
 
-        if let Some(transfer) = self
-            .active_transfers
-            .iter_mut()
-            .find(|t| t.id == transfer_id)
-        {
-            if transfer.pause() {
-                info!("[SFTP] Transfer paused: {}", transfer_id);
-                cx.notify();
-            } else {
-                info!(
-                    "[SFTP] Cannot pause transfer in current state: {}",
-                    transfer_id
-                );
+        // 遍历所有 tab 查找传输任务
+        for tab in self.tabs.iter_mut() {
+            if let Some(transfer) = tab
+                .active_transfers
+                .iter_mut()
+                .find(|t| t.id == transfer_id)
+            {
+                if transfer.pause() {
+                    info!("[SFTP] Transfer paused: {}", transfer_id);
+                    cx.notify();
+                } else {
+                    info!(
+                        "[SFTP] Cannot pause transfer in current state: {}",
+                        transfer_id
+                    );
+                }
+                return;
             }
         }
     }
@@ -589,19 +621,23 @@ impl SessionState {
     pub fn resume_transfer(&mut self, transfer_id: &str, cx: &mut gpui::Context<Self>) {
         info!("[SFTP] Resuming transfer: {}", transfer_id);
 
-        if let Some(transfer) = self
-            .active_transfers
-            .iter_mut()
-            .find(|t| t.id == transfer_id)
-        {
-            if transfer.resume() {
-                info!("[SFTP] Transfer resumed: {}", transfer_id);
-                cx.notify();
-            } else {
-                info!(
-                    "[SFTP] Cannot resume transfer in current state: {}",
-                    transfer_id
-                );
+        // 遍历所有 tab 查找传输任务
+        for tab in self.tabs.iter_mut() {
+            if let Some(transfer) = tab
+                .active_transfers
+                .iter_mut()
+                .find(|t| t.id == transfer_id)
+            {
+                if transfer.resume() {
+                    info!("[SFTP] Transfer resumed: {}", transfer_id);
+                    cx.notify();
+                } else {
+                    info!(
+                        "[SFTP] Cannot resume transfer in current state: {}",
+                        transfer_id
+                    );
+                }
+                return;
             }
         }
     }

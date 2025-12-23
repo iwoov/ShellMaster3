@@ -20,7 +20,6 @@ pub fn render_session_sidebar(
     session_state: Entity<SessionState>,
     cx: &App,
 ) -> impl IntoElement {
-    let muted_foreground = cx.theme().muted_foreground;
     let bg_color = crate::theme::sidebar_color(cx);
     let foreground = cx.theme().foreground;
 
@@ -70,23 +69,22 @@ pub fn render_session_sidebar(
         )
 }
 
-/// 渲染占位内容
-fn render_placeholder_content(text: &'static str, color: Hsla) -> impl IntoElement {
-    div()
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(div().text_sm().text_color(color).child(text))
-}
-
 /// 渲染传输管理面板
 fn render_transfer_panel(
     session_state: Entity<SessionState>,
     lang: &crate::models::settings::Language,
     cx: &App,
 ) -> impl IntoElement {
-    let transfers = &session_state.read(cx).active_transfers;
+    let state = session_state.read(cx);
+
+    // 获取当前活动 tab 的传输列表
+    let transfers: Vec<_> = state
+        .active_tab_id
+        .as_ref()
+        .and_then(|tab_id| state.tabs.iter().find(|t| &t.id == tab_id))
+        .map(|tab| tab.active_transfers.iter().collect())
+        .unwrap_or_default();
+
     let muted_foreground = cx.theme().muted_foreground;
     let foreground = cx.theme().foreground;
     let primary = cx.theme().primary;

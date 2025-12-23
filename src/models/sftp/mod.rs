@@ -5,5 +5,5 @@ pub mod transfer;
 pub mod types;
 
 pub use state::SftpState;
-pub use transfer::{TransferItem, TransferProgress, TransferStatus};
-pub use types::{CachedDir, FileEntry, FileType, NavigationHistory};
+pub use transfer::{TransferItem, TransferStatus};
+pub use types::{FileEntry, FileType};

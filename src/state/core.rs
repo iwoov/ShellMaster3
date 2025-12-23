@@ -32,6 +32,7 @@ impl SessionState {
             terminal_counter: 1,
             monitor_state: MonitorState::empty(),
             sftp_state: None,
+            active_transfers: Vec::new(),
         };
         // 新标签插入到最前面
         self.tabs.insert(0, tab);

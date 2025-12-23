@@ -17,7 +17,6 @@ use crate::services::sftp::SftpService;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use gpui::prelude::*;
 use gpui::{Entity, FocusHandle};
 use gpui_component::input::InputState;
 
@@ -66,6 +65,8 @@ pub struct SessionTab {
     pub monitor_state: MonitorState,
     /// SFTP 状态（懒加载）
     pub sftp_state: Option<SftpState>,
+    /// 活动传输列表（上传/下载任务）
+    pub active_transfers: Vec<crate::models::sftp::TransferItem>,
 }
 
 /// 侧边栏面板类型
@@ -106,8 +107,6 @@ pub struct SessionState {
     pub sftp_path_bar_states: HashMap<String, Entity<PathBarState>>,
     /// SFTP 新建文件夹对话框状态
     pub sftp_new_folder_dialog: Option<Entity<NewFolderDialogState>>,
-    /// 活动传输列表
-    pub active_transfers: Vec<crate::models::sftp::TransferItem>,
 }
 
 impl Default for SessionState {
@@ -128,7 +127,6 @@ impl Default for SessionState {
             sftp_file_list_views: HashMap::new(),
             sftp_path_bar_states: HashMap::new(),
             sftp_new_folder_dialog: None,
-            active_transfers: Vec::new(),
         }
     }
 }

@@ -3,13 +3,12 @@
 use super::{convert_sftp_entries, get_path_hierarchy, SessionState, SftpInitResult};
 use crate::models::sftp::SftpState;
 use crate::services::sftp::SftpService;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 impl SessionState {
     /// 启动 SFTP 服务
     /// 在 SSH 连接成功后调用，初始化 SFTP 子系统并加载用户主目录
     pub fn start_sftp_service(&mut self, tab_id: String, cx: &mut gpui::Context<Self>) {
-        use gpui::prelude::*;
         let session_state = cx.entity().clone();
 
         // 获取 SSH manager 和 session
@@ -415,6 +414,102 @@ impl SessionState {
         }
     }
 
+    /// SFTP 删除文件或目录
+    pub fn sftp_delete(&mut self, tab_id: &str, path: String, cx: &mut gpui::Context<Self>) {
+        info!("[SFTP] Delete: {} for tab {}", path, tab_id);
+
+        // 获取当前目录路径用于刷新
+        let current_path = {
+            let tab = self.tabs.iter().find(|t| t.id == tab_id);
+            tab.and_then(|t| t.sftp_state.as_ref())
+                .map(|s| s.current_path.clone())
+        };
+
+        // 判断是文件还是目录
+        let is_dir = {
+            let tab = self.tabs.iter().find(|t| t.id == tab_id);
+            match tab.and_then(|t| t.sftp_state.as_ref()) {
+                Some(state) => state
+                    .file_list
+                    .iter()
+                    .find(|e| e.path == path)
+                    .map(|e| e.is_dir())
+                    .unwrap_or(false),
+                None => return,
+            }
+        };
+
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+        let path_clone = path.clone();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<(), String>>();
+
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    return;
+                }
+            };
+            match guard.get(&tab_id_owned) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    return;
+                }
+            }
+        };
+
+        // 在 tokio 运行时中执行删除操作
+        ssh_manager.runtime().spawn(async move {
+            let result = if is_dir {
+                service.remove_dir(&path_clone).await
+            } else {
+                service.remove_file(&path_clone).await
+            };
+            let _ = tx.send(result);
+        });
+
+        // 在 GPUI 异步上下文中处理结果
+        let tab_id_for_ui = tab_id.to_string();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                if let Some(result) = rx.recv().await {
+                    let tab_id_clone = tab_id_for_ui.clone();
+                    let _ = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            match result {
+                                Ok(()) => {
+                                    info!("[SFTP] Successfully deleted: {}", path);
+                                    // 刷新当前目录
+                                    if let Some(current) = current_path {
+                                        state.sftp_load_directory(&tab_id_clone, current, cx);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[SFTP] Failed to delete {}: {}", path, e);
+                                    if let Some(tab) =
+                                        state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
+                                    {
+                                        if let Some(ref mut sftp_state) = tab.sftp_state {
+                                            sftp_state.set_error(format!("删除失败: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        });
+                    });
+                }
+            })
+            .detach();
+    }
+
     /// 切换显示/隐藏隐藏文件
     pub fn sftp_toggle_hidden(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
         info!("[SFTP] Toggle hidden for tab {}", tab_id);
@@ -458,7 +553,6 @@ impl SessionState {
         path: String,
         cx: &mut gpui::Context<Self>,
     ) {
-        use gpui::prelude::*;
         let sftp_services = self.sftp_services.clone();
         let session_state = cx.entity().clone();
         let tab_id_owned = tab_id.to_string();

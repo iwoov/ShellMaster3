@@ -32,8 +32,8 @@ impl SessionState {
             let view = cx.new(|cx| FileListView::new(window, cx));
 
             // 订阅 TableEvent 以处理双击事件
-            let tab_id_for_event = tab_id.to_string();
-            let view_for_event = view.clone();
+            let tab_id_for_table = tab_id.to_string();
+            let view_for_table = view.clone();
             cx.subscribe_in(
                 &view,
                 window,
@@ -42,8 +42,8 @@ impl SessionState {
                     match event {
                         TableEvent::DoubleClickedRow(row_ix) => {
                             // 获取文件路径并触发打开事件
-                            if let Some(path) = view_for_event.read(cx).get_file_path(*row_ix, cx) {
-                                let tab_id = tab_id_for_event.clone();
+                            if let Some(path) = view_for_table.read(cx).get_file_path(*row_ix, cx) {
+                                let tab_id = tab_id_for_table.clone();
                                 // 直接在 this 上操作，避免嵌套 update
                                 this.sftp_open(&tab_id, path, cx);
                             }
@@ -52,6 +52,36 @@ impl SessionState {
                             // TODO: 处理选择事件
                         }
                         _ => {}
+                    }
+                },
+            )
+            .detach();
+
+            // 订阅 FileListContextMenuEvent 以处理右键菜单事件
+            let tab_id_for_context = tab_id.to_string();
+            cx.subscribe_in(
+                &view,
+                window,
+                move |this,
+                      _emitter,
+                      event: &crate::components::sftp::FileListContextMenuEvent,
+                      _window,
+                      cx| {
+                    use crate::components::sftp::FileListContextMenuEvent;
+                    let tab_id = tab_id_for_context.clone();
+                    match event {
+                        FileListContextMenuEvent::Delete(path) => {
+                            this.sftp_delete(&tab_id, path.clone(), cx);
+                        }
+                        FileListContextMenuEvent::Refresh => {
+                            this.sftp_refresh(&tab_id, cx);
+                        }
+                        FileListContextMenuEvent::OpenFolder(path) => {
+                            this.sftp_navigate_to(&tab_id, path.clone(), cx);
+                        }
+                        _ => {
+                            // TODO: 其他事件待实现
+                        }
                     }
                 },
             )

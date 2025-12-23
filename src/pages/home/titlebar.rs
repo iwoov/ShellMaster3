@@ -208,6 +208,12 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
                 })),
         )
         // 占位，将折叠按钮推到右侧 (with drag support for Windows)
-        .child(div().id("session-titlebar-drag-area").flex_1().h_full())
+        .child(
+            div()
+                .id("session-titlebar-drag-area")
+                .flex_1()
+                .h_full()
+                .window_control_area(WindowControlArea::Drag),
+        )
         .child(render_windows_controls(cx)) // Add window controls
 }

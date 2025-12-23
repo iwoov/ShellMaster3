@@ -97,10 +97,12 @@ impl SessionState {
                 // 克隆暂停标志以便在下载任务中使用
                 let pause_flag = transfer_item.pause_flag.clone();
 
-                // 添加传输项到列表
+                // 添加传输项到列表，同时自动切换到传输面板
                 let _ = async_cx.update(|cx| {
                     session_state.update(cx, |state, cx| {
                         state.active_transfers.push(transfer_item);
+                        // 自动切换到传输管理面板
+                        state.set_sidebar_panel(super::SidebarPanel::Transfer);
                         cx.notify();
                     });
                 });
@@ -360,10 +362,12 @@ impl SessionState {
                 // 克隆暂停标志以便在上传任务中使用（必须在 push 之前克隆）
                 let pause_flag = transfer_item.pause_flag.clone();
 
-                // 添加传输项到列表
+                // 添加传输项到列表，同时自动切换到传输面板
                 let _ = async_cx.update(|cx| {
                     session_state.update(cx, |state, cx| {
                         state.active_transfers.push(transfer_item);
+                        // 自动切换到传输管理面板
+                        state.set_sidebar_panel(super::SidebarPanel::Transfer);
                         cx.notify();
                     });
                 });

@@ -10,7 +10,10 @@ use super::session_sidebar::render_session_sidebar;
 use super::sftp_panel::render_sftp_panel;
 use super::terminal_page::render_terminal_panel;
 use crate::components::monitor::render_detail_dialog;
-use crate::components::sftp::{render_new_file_dialog_overlay, render_new_folder_dialog_overlay};
+use crate::components::sftp::{
+    render_new_file_dialog_overlay, render_new_folder_dialog_overlay,
+    render_properties_dialog_overlay,
+};
 use crate::state::{SessionState, SessionTab, SidebarPanel};
 
 /// 渲染 Session 主布局
@@ -33,6 +36,8 @@ pub fn render_session_layout(
     let new_folder_dialog = session_state.read(cx).get_sftp_new_folder_dialog();
     // 获取 SFTP 新建文件对话框状态
     let new_file_dialog = session_state.read(cx).get_sftp_new_file_dialog();
+    // 获取 SFTP 属性对话框状态
+    let properties_dialog = session_state.read(cx).get_sftp_properties_dialog();
 
     // 获取 tab_id 用于网络接口选择
     let tab_id = tab.id.clone();
@@ -257,6 +262,14 @@ pub fn render_session_layout(
                 },
                 cx,
             ));
+        }
+    }
+
+    // 添加 SFTP 属性弹窗
+    if let Some(dialog_state) = properties_dialog {
+        let is_open = dialog_state.read(cx).is_open;
+        if is_open {
+            result = result.child(render_properties_dialog_overlay(dialog_state, cx));
         }
     }
 

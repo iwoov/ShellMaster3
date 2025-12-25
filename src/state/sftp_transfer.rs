@@ -2,7 +2,7 @@
 //!
 //! This module contains methods for downloading, uploading files, and managing transfer state.
 
-use super::{NewFileDialogState, NewFolderDialogState, SessionState};
+use super::{NewFileDialogState, NewFolderDialogState, PropertiesDialogState, SessionState};
 use gpui::prelude::*;
 use gpui::Entity;
 use tracing::{error, info};
@@ -1922,4 +1922,246 @@ impl SessionState {
             })
             .detach();
     }
+
+    // ============ 属性对话框 ============
+
+    /// 确保属性对话框状态已创建
+    pub fn ensure_sftp_properties_dialog(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> Entity<PropertiesDialogState> {
+        if self.sftp_properties_dialog.is_none() {
+            self.sftp_properties_dialog = Some(cx.new(|_| PropertiesDialogState::default()));
+        }
+        self.sftp_properties_dialog.clone().unwrap()
+    }
+
+    /// 获取属性对话框状态
+    pub fn get_sftp_properties_dialog(&self) -> Option<Entity<PropertiesDialogState>> {
+        self.sftp_properties_dialog.clone()
+    }
+
+    /// 打开属性对话框
+    pub fn sftp_open_properties_dialog(
+        &mut self,
+        tab_id: &str,
+        path: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        info!("[SFTP] Open properties dialog for: {} in tab {}", path, tab_id);
+
+        // 从 file_list 中查找对应的 FileEntry
+        let entry = {
+            let tab = self.tabs.iter().find(|t| t.id == tab_id);
+            if let Some(tab) = tab {
+                if let Some(sftp_state) = &tab.sftp_state {
+                    sftp_state.file_list.iter().find(|e| e.path == path).cloned()
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(entry) = entry {
+            let dialog = self.ensure_sftp_properties_dialog(cx);
+            let entry_clone = entry.clone();
+            dialog.update(cx, |d, _| {
+                d.open(entry_clone, tab_id.to_string());
+            });
+
+            // 如果是符号链接，异步获取链接目标
+            if entry.file_type == crate::models::sftp::FileType::Symlink {
+                self.sftp_fetch_symlink_target(tab_id, &path, dialog.clone(), cx);
+            }
+
+            // 如果是文件夹，异步计算总大小（通过 SSH du 命令）
+            if entry.is_dir() {
+                self.sftp_calculate_folder_size(tab_id, &path, dialog.clone(), cx);
+            }
+
+            cx.notify();
+        } else {
+            error!("[SFTP] File entry not found for path: {}", path);
+        }
+    }
+
+    /// 获取符号链接目标
+    fn sftp_fetch_symlink_target(
+        &self,
+        tab_id: &str,
+        path: &str,
+        dialog: Entity<PropertiesDialogState>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let sftp_services = self.sftp_services.clone();
+        let tab_id_owned = tab_id.to_string();
+        let path_owned = path.to_string();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<String, String>>();
+
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    return;
+                }
+            };
+            match guard.get(&tab_id_owned) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    return;
+                }
+            }
+        };
+
+        let path_clone = path_owned.clone();
+        ssh_manager.runtime().spawn(async move {
+            let result = service.read_link(&path_clone).await;
+            let _ = tx.send(result);
+        });
+
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                if let Some(result) = rx.recv().await {
+                    let _ = async_cx.update(|cx| {
+                        if let Ok(target) = result {
+                            dialog.update(cx, |d, _| {
+                                d.set_symlink_target(target);
+                            });
+                        }
+                    });
+                }
+            })
+            .detach();
+    }
+
+    /// 计算文件夹大小（通过 SSH du 命令）
+    pub fn sftp_calculate_folder_size(
+        &mut self,
+        tab_id: &str,
+        path: &str,
+        dialog: Entity<PropertiesDialogState>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        info!("[SFTP] Calculating folder size for: {} in tab {}", path, tab_id);
+
+        // 标记正在计算，并获取取消令牌
+        let cancellation_token = dialog.update(cx, |d, _| {
+            d.start_calculating_size()
+        });
+
+        let tab_id_owned = tab_id.to_string();
+        let path_owned = path.to_string();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<u64, String>>();
+
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+
+        // 获取 SSH session 来执行命令
+        let session = match ssh_manager.get_session(&tab_id_owned) {
+            Some(s) => s,
+            None => {
+                error!("[SFTP] No SSH session for tab {}", tab_id_owned);
+                return;
+            }
+        };
+
+        let path_clone = path_owned.clone();
+        let token_for_task = cancellation_token.clone();
+        ssh_manager.runtime().spawn(async move {
+            // 检查是否已取消
+            if token_for_task.is_cancelled() {
+                info!("[SFTP] Folder size calculation cancelled before start");
+                return;
+            }
+
+            // 打开 exec 通道
+            let exec_channel = match session.open_exec().await {
+                Ok(ch) => ch,
+                Err(e) => {
+                    let _ = tx.send(Err(format!("Failed to open exec channel: {:?}", e)));
+                    return;
+                }
+            };
+
+            // 再次检查是否已取消
+            if token_for_task.is_cancelled() {
+                info!("[SFTP] Folder size calculation cancelled");
+                return;
+            }
+
+            // 执行 du 命令获取文件夹大小（字节）
+            // 使用 du -sb 获取总字节数，2>/dev/null 忽略权限错误
+            let command = format!("du -sb '{}' 2>/dev/null | cut -f1", path_clone.replace("'", "'\\''"));
+            
+            match exec_channel.exec(&command).await {
+                Ok(output) => {
+                    // 检查是否已取消
+                    if token_for_task.is_cancelled() {
+                        info!("[SFTP] Folder size calculation cancelled after exec");
+                        return;
+                    }
+
+                    if output.exit_code == 0 {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        let size_str = stdout.trim();
+                        match size_str.parse::<u64>() {
+                            Ok(size) => {
+                                info!("[SFTP] Folder size calculated: {} bytes", size);
+                                let _ = tx.send(Ok(size));
+                            }
+                            Err(_) => {
+                                let _ = tx.send(Err(format!("Failed to parse size: {}", size_str)));
+                            }
+                        }
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        let _ = tx.send(Err(format!("du command failed: {}", stderr)));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(format!("Failed to execute du: {:?}", e)));
+                }
+            }
+        });
+
+        let token_for_ui = cancellation_token.clone();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                // 使用 tokio::select! 来同时监听结果和取消信号
+                tokio::select! {
+                    _ = token_for_ui.cancelled() => {
+                        info!("[SFTP] Folder size UI update cancelled");
+                    }
+                    result = rx.recv() => {
+                        if let Some(result) = result {
+                            let _ = async_cx.update(|cx| {
+                                match result {
+                                    Ok(size) => {
+                                        dialog.update(cx, |d, _| {
+                                            d.set_folder_size(size);
+                                        });
+                                    }
+                                    Err(e) => {
+                                        error!("[SFTP] Folder size calculation failed: {}", e);
+                                        // 设置为 0 表示计算失败
+                                        dialog.update(cx, |d, _| {
+                                            d.set_folder_size(0);
+                                        });
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            })
+            .detach();
+    }
 }
+

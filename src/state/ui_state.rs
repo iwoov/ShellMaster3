@@ -169,8 +169,12 @@ impl SessionState {
                             // 在终端中打开目录
                             this.sftp_open_in_terminal(&tab_id, path.clone(), cx);
                         }
+                        FileListContextMenuEvent::Properties(path) => {
+                            // 显示属性对话框
+                            this.sftp_open_properties_dialog(&tab_id, path.clone(), cx);
+                        }
                         _ => {
-                            // TODO: 其他事件待实现 (EditFile, CopyName, CopyPath, Properties, etc.)
+                            // TODO: 其他事件待实现 (EditFile, CopyName, CopyPath, etc.)
                         }
                     }
                 },

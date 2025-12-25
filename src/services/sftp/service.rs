@@ -176,6 +176,15 @@ impl SftpService {
         Ok(())
     }
 
+    /// 读取符号链接目标
+    pub async fn read_link(&self, path: &str) -> Result<String, String> {
+        info!("[SFTP] Reading symlink target: {}", path);
+        self.sftp
+            .read_link(path)
+            .await
+            .map_err(|e| format!("Failed to read link {}: {}", path, e))
+    }
+
     /// 删除文件
     pub async fn remove_file(&self, path: &str) -> Result<(), String> {
         info!("[SFTP] Removing file: {}", path);

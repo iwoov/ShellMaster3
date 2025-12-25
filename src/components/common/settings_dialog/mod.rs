@@ -104,6 +104,14 @@ pub struct SettingsDialogState {
     // ============ SFTP 设置输入 ============
     pub concurrent_transfers_input: Option<Entity<InputState>>,
     pub local_default_path_input: Option<Entity<InputState>>,
+    // 编辑器设置输入
+    pub external_editor_path_input: Option<Entity<InputState>>,
+    pub max_edit_file_size_input: Option<Entity<InputState>>,
+    pub editor_font_family_input: Option<Entity<InputState>>,
+    pub editor_font_size_input: Option<Entity<InputState>>,
+    pub editor_line_height_input: Option<Entity<InputState>>,
+    pub editor_gutter_width_input: Option<Entity<InputState>>,
+    pub editor_gutter_padding_input: Option<Entity<InputState>>,
 
     // ============ 同步设置输入 ============
     pub webdav_url_input: Option<Entity<InputState>>,
@@ -145,6 +153,13 @@ impl Default for SettingsDialogState {
             // SFTP
             concurrent_transfers_input: None,
             local_default_path_input: None,
+            external_editor_path_input: None,
+            max_edit_file_size_input: None,
+            editor_font_family_input: None,
+            editor_font_size_input: None,
+            editor_line_height_input: None,
+            editor_gutter_width_input: None,
+            editor_gutter_padding_input: None,
             // 同步
             webdav_url_input: None,
             webdav_username_input: None,
@@ -186,6 +201,13 @@ impl SettingsDialogState {
         self.disk_threshold_input = None;
         self.concurrent_transfers_input = None;
         self.local_default_path_input = None;
+        self.external_editor_path_input = None;
+        self.max_edit_file_size_input = None;
+        self.editor_font_family_input = None;
+        self.editor_font_size_input = None;
+        self.editor_line_height_input = None;
+        self.editor_gutter_width_input = None;
+        self.editor_gutter_padding_input = None;
         self.webdav_url_input = None;
         self.webdav_username_input = None;
         self.webdav_password_input = None;
@@ -311,6 +333,49 @@ impl SettingsDialogState {
                 state.set_value(value, window, cx);
                 state
             }));
+        }
+        // 编辑器设置
+        if self.external_editor_path_input.is_none() {
+            let value = self.settings.sftp.external_editor_path.clone();
+            let placeholder = i18n::t(lang, "settings.sftp.external_editor_placeholder");
+            self.external_editor_path_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx).placeholder(placeholder);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.max_edit_file_size_input.is_none() {
+            let value = self.settings.sftp.max_edit_file_size_kb.to_string();
+            self.max_edit_file_size_input =
+                Some(create_int_number_input(value, 1, 102400, 1, window, cx)); // 1KB - 100MB
+        }
+        if self.editor_font_family_input.is_none() {
+            let value = self.settings.sftp.editor_font_family.clone();
+            self.editor_font_family_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.editor_font_size_input.is_none() {
+            let value = self.settings.sftp.editor_font_size.to_string();
+            self.editor_font_size_input =
+                Some(create_int_number_input(value, 8, 72, 1, window, cx));
+        }
+        if self.editor_line_height_input.is_none() {
+            let value = format!("{:.1}", self.settings.sftp.editor_line_height);
+            self.editor_line_height_input =
+                Some(create_float_number_input(value, 1.0, 3.0, 0.1, window, cx));
+        }
+        if self.editor_gutter_width_input.is_none() {
+            let value = self.settings.sftp.editor_gutter_width.to_string();
+            self.editor_gutter_width_input =
+                Some(create_int_number_input(value, 20, 100, 1, window, cx));
+        }
+        if self.editor_gutter_padding_input.is_none() {
+            let value = self.settings.sftp.editor_gutter_padding.to_string();
+            self.editor_gutter_padding_input =
+                Some(create_int_number_input(value, 0, 20, 1, window, cx));
         }
 
         // 同步设置
@@ -442,6 +507,37 @@ impl SettingsDialogState {
         // SFTP
         if let Some(input) = &self.local_default_path_input {
             self.settings.sftp.local_default_path = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.external_editor_path_input {
+            self.settings.sftp.external_editor_path = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.max_edit_file_size_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.sftp.max_edit_file_size_kb = v;
+            }
+        }
+        if let Some(input) = &self.editor_font_family_input {
+            self.settings.sftp.editor_font_family = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.editor_font_size_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.sftp.editor_font_size = v;
+            }
+        }
+        if let Some(input) = &self.editor_line_height_input {
+            if let Ok(v) = input.read(cx).value().parse::<f32>() {
+                self.settings.sftp.editor_line_height = v;
+            }
+        }
+        if let Some(input) = &self.editor_gutter_width_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.sftp.editor_gutter_width = v;
+            }
+        }
+        if let Some(input) = &self.editor_gutter_padding_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.sftp.editor_gutter_padding = v;
+            }
         }
 
         // 同步

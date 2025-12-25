@@ -259,7 +259,7 @@ pub fn render_number_row(
             div()
                 .w(px(120.))
                 .text_sm()
-                .text_color(cx.theme().muted_foreground)
+                .text_color(cx.theme().foreground)
                 .child(label),
         )
         .child(

@@ -209,11 +209,16 @@ pub struct SftpSettings {
     pub local_default_path: String,
     pub remote_default_path: String,
     pub remember_last_path: bool,
-    // 编辑器
+    // 编辑器 - 基本设置
     pub use_builtin_editor: bool,
     pub external_editor_path: String,
-    pub auto_save: bool,
-    pub syntax_highlighting: bool,
+    pub max_edit_file_size_kb: u32, // 最大可编辑文件大小 (KB)
+    // 编辑器 - 内置编辑器外观
+    pub editor_font_family: String,
+    pub editor_font_size: u32,
+    pub editor_line_height: f32,
+    pub editor_gutter_width: u32,
+    pub editor_gutter_padding: u32,
 }
 
 impl Default for SftpSettings {
@@ -236,8 +241,12 @@ impl Default for SftpSettings {
             remember_last_path: true,
             use_builtin_editor: true,
             external_editor_path: String::new(),
-            auto_save: false,
-            syntax_highlighting: true,
+            max_edit_file_size_kb: 5120, // 5MB
+            editor_font_family: "JetBrains Mono".to_string(),
+            editor_font_size: 14,
+            editor_line_height: 1.4,
+            editor_gutter_width: 48,
+            editor_gutter_padding: 8,
         }
     }
 }

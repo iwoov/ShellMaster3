@@ -7,7 +7,9 @@ use gpui_component::input::Input;
 
 use crate::i18n;
 
-use super::super::helpers::{render_number_row, render_section_title, render_switch_row};
+use super::super::helpers::{
+    render_input_row, render_number_row, render_section_title, render_switch_row,
+};
 use super::super::SettingsDialogState;
 
 /// 渲染SFTP设置面板
@@ -115,7 +117,7 @@ pub fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                         )),
                 ),
         )
-        // 编辑器
+        // 编辑器 - 基本设置
         .child(
             div()
                 .flex()
@@ -138,13 +140,112 @@ pub fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                             |s, v| s.settings.sftp.use_builtin_editor = v,
                             cx,
                         ))
-                        .child(render_switch_row(
-                            "sftp-syntax-highlight",
-                            i18n::t(lang, "settings.sftp.syntax_highlight"),
-                            sftp.syntax_highlighting,
-                            state.clone(),
-                            |s, v| s.settings.sftp.syntax_highlighting = v,
-                            cx,
+                        // 外置编辑器路径
+                        .children(
+                            state
+                                .read(cx)
+                                .external_editor_path_input
+                                .as_ref()
+                                .map(|input| {
+                                    render_path_row(
+                                        i18n::t(lang, "settings.sftp.external_editor_path"),
+                                        i18n::t(lang, "settings.sftp.browse"),
+                                        input,
+                                        state.clone(),
+                                        cx,
+                                    )
+                                }),
+                        )
+                        // 最大可编辑文件大小
+                        .children(
+                            state
+                                .read(cx)
+                                .max_edit_file_size_input
+                                .as_ref()
+                                .map(|input| {
+                                    render_number_row(
+                                        i18n::t(lang, "settings.sftp.max_edit_file_size"),
+                                        input,
+                                        cx,
+                                    )
+                                }),
+                        ),
+                ),
+        )
+        // 编辑器 - 外观设置
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title(
+                    i18n::t(lang, "settings.sftp.editor_appearance"),
+                    cx,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        // 编辑器字体
+                        .children(
+                            state
+                                .read(cx)
+                                .editor_font_family_input
+                                .as_ref()
+                                .map(|input| {
+                                    render_input_row(
+                                        i18n::t(lang, "settings.sftp.editor_font_family"),
+                                        input,
+                                        cx,
+                                    )
+                                }),
+                        )
+                        // 编辑器字号
+                        .children(state.read(cx).editor_font_size_input.as_ref().map(|input| {
+                            render_number_row(
+                                i18n::t(lang, "settings.sftp.editor_font_size"),
+                                input,
+                                cx,
+                            )
+                        }))
+                        // 行高
+                        .children(
+                            state
+                                .read(cx)
+                                .editor_line_height_input
+                                .as_ref()
+                                .map(|input| {
+                                    render_number_row(
+                                        i18n::t(lang, "settings.sftp.editor_line_height"),
+                                        input,
+                                        cx,
+                                    )
+                                }),
+                        )
+                        // 行号栏宽度
+                        .children(
+                            state
+                                .read(cx)
+                                .editor_gutter_width_input
+                                .as_ref()
+                                .map(|input| {
+                                    render_number_row(
+                                        i18n::t(lang, "settings.sftp.editor_gutter_width"),
+                                        input,
+                                        cx,
+                                    )
+                                }),
+                        )
+                        // 行号栏内边距
+                        .children(state.read(cx).editor_gutter_padding_input.as_ref().map(
+                            |input| {
+                                render_number_row(
+                                    i18n::t(lang, "settings.sftp.editor_gutter_padding"),
+                                    input,
+                                    cx,
+                                )
+                            },
                         )),
                 ),
         )

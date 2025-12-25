@@ -74,7 +74,15 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.sftp.browse" => "浏览",
         "settings.sftp.editor" => "编辑器",
         "settings.sftp.builtin_editor" => "使用内置编辑器",
-        "settings.sftp.syntax_highlight" => "语法高亮",
+        "settings.sftp.external_editor_path" => "外置编辑器路径",
+        "settings.sftp.external_editor_placeholder" => "如 /usr/bin/code 或留空使用系统默认",
+        "settings.sftp.max_edit_file_size" => "最大可编辑文件(KB)",
+        "settings.sftp.editor_appearance" => "编辑器外观",
+        "settings.sftp.editor_font_family" => "编辑器字体",
+        "settings.sftp.editor_font_size" => "编辑器字号",
+        "settings.sftp.editor_line_height" => "行高",
+        "settings.sftp.editor_gutter_width" => "行号栏宽度",
+        "settings.sftp.editor_gutter_padding" => "行号栏内边距",
 
         // 监控设置
         "settings.monitor.data_collection" => "数据采集",
@@ -470,7 +478,17 @@ fn en_us(key: &'static str) -> &'static str {
         "settings.sftp.browse" => "Browse",
         "settings.sftp.editor" => "Editor",
         "settings.sftp.builtin_editor" => "Use Built-in Editor",
-        "settings.sftp.syntax_highlight" => "Syntax Highlighting",
+        "settings.sftp.external_editor_path" => "External Editor Path",
+        "settings.sftp.external_editor_placeholder" => {
+            "e.g. /usr/bin/code or leave empty for system default"
+        }
+        "settings.sftp.max_edit_file_size" => "Max Editable File Size (KB)",
+        "settings.sftp.editor_appearance" => "Editor Appearance",
+        "settings.sftp.editor_font_family" => "Editor Font",
+        "settings.sftp.editor_font_size" => "Editor Font Size",
+        "settings.sftp.editor_line_height" => "Line Height",
+        "settings.sftp.editor_gutter_width" => "Gutter Width",
+        "settings.sftp.editor_gutter_padding" => "Gutter Padding",
 
         // Monitor Settings
         "settings.monitor.data_collection" => "Data Collection",

@@ -157,6 +157,14 @@ impl SessionState {
                                 }
                             }
                         }
+                        FileListContextMenuEvent::NewFolder => {
+                            // 新建文件夹
+                            this.sftp_open_new_folder_dialog(&tab_id, cx);
+                        }
+                        FileListContextMenuEvent::NewFile => {
+                            // 新建文件
+                            this.sftp_open_new_file_dialog(&tab_id, cx);
+                        }
                         _ => {
                             // TODO: 其他事件待实现 (EditFile, CopyName, CopyPath, Properties, etc.)
                         }

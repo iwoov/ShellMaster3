@@ -161,6 +161,21 @@ impl SftpService {
             .map_err(|e| format!("Failed to create directory {}: {}", path, e))
     }
 
+    /// 创建空文件
+    pub async fn create_file(&self, path: &str) -> Result<(), String> {
+        info!("[SFTP] Creating file: {}", path);
+        use tokio::io::AsyncWriteExt;
+        let mut file = self
+            .sftp
+            .create(path)
+            .await
+            .map_err(|e| format!("Failed to create file {}: {}", path, e))?;
+        file.flush()
+            .await
+            .map_err(|e| format!("Failed to flush file {}: {}", path, e))?;
+        Ok(())
+    }
+
     /// 删除文件
     pub async fn remove_file(&self, path: &str) -> Result<(), String> {
         info!("[SFTP] Removing file: {}", path);

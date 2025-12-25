@@ -267,6 +267,14 @@ fn zh_cn(key: &'static str) -> &'static str {
         "sftp.new_folder.error_invalid" => "文件夹名称包含非法字符",
         "sftp.new_folder.success" => "文件夹创建成功",
         "sftp.new_folder.failed" => "创建文件夹失败",
+        // SFTP 新建文件对话框
+        "sftp.new_file.title" => "新建文件",
+        "sftp.new_file.name" => "文件名称",
+        "sftp.new_file.placeholder" => "请输入文件名称",
+        "sftp.new_file.error_empty" => "文件名称不能为空",
+        "sftp.new_file.error_invalid" => "文件名称包含非法字符",
+        "sftp.new_file.success" => "文件创建成功",
+        "sftp.new_file.failed" => "创建文件失败",
         "sftp.loading" => "加载中...",
         "sftp.not_connected" => "未连接",
         // SFTP 删除通知
@@ -642,6 +650,14 @@ fn en_us(key: &'static str) -> &'static str {
         "sftp.new_folder.error_invalid" => "Folder name contains invalid characters",
         "sftp.new_folder.success" => "Folder created successfully",
         "sftp.new_folder.failed" => "Failed to create folder",
+        // SFTP New File Dialog
+        "sftp.new_file.title" => "New File",
+        "sftp.new_file.name" => "File Name",
+        "sftp.new_file.placeholder" => "Enter file name",
+        "sftp.new_file.error_empty" => "File name cannot be empty",
+        "sftp.new_file.error_invalid" => "File name contains invalid characters",
+        "sftp.new_file.success" => "File created successfully",
+        "sftp.new_file.failed" => "Failed to create file",
         "sftp.loading" => "Loading...",
         "sftp.not_connected" => "Not connected",
         // SFTP Delete Notification

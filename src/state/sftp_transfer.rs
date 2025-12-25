@@ -2,7 +2,7 @@
 //!
 //! This module contains methods for downloading, uploading files, and managing transfer state.
 
-use super::{NewFolderDialogState, SessionState};
+use super::{NewFileDialogState, NewFolderDialogState, SessionState};
 use gpui::prelude::*;
 use gpui::Entity;
 use tracing::{error, info};
@@ -1753,34 +1753,169 @@ impl SessionState {
                             }
                         });
 
-                        // 推送通知
-                        if let Some(window) = cx.active_window() {
-                            use gpui::AppContext as _;
-                            let _ = cx.update_window(window, |_, window, cx| {
-                                use gpui::Styled;
-                                use gpui_component::notification::{
-                                    Notification, NotificationType,
-                                };
-                                use gpui_component::WindowExt;
+                        // 推送失败通知（成功时不通知，用户可通过文件列表刷新看到）
+                        if result_clone.is_err() {
+                            if let Some(window) = cx.active_window() {
+                                use gpui::AppContext as _;
+                                let _ = cx.update_window(window, |_, window, cx| {
+                                    use gpui::Styled;
+                                    use gpui_component::notification::{
+                                        Notification, NotificationType,
+                                    };
+                                    use gpui_component::WindowExt;
 
-                                let lang = crate::services::storage::load_settings()
-                                    .map(|s| s.theme.language)
-                                    .unwrap_or_default();
+                                    let lang = crate::services::storage::load_settings()
+                                        .map(|s| s.theme.language)
+                                        .unwrap_or_default();
 
-                                let notification = match result_clone {
-                                    Ok(_) => Notification::new()
-                                        .message(crate::i18n::t(&lang, "sftp.new_folder.success"))
-                                        .with_type(NotificationType::Success)
-                                        .w_48()
-                                        .py_2(),
-                                    Err(_) => Notification::new()
+                                    let notification = Notification::new()
                                         .message(crate::i18n::t(&lang, "sftp.new_folder.failed"))
                                         .with_type(NotificationType::Error)
                                         .w_48()
-                                        .py_2(),
-                                };
-                                window.push_notification(notification, cx);
+                                        .py_2();
+                                    window.push_notification(notification, cx);
+                                });
+                            }
+                        }
+                    });
+                }
+            })
+            .detach();
+    }
+
+    // ============ 新建文件对话框 ============
+
+    /// 确保新建文件对话框状态已创建
+    pub fn ensure_sftp_new_file_dialog(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> Entity<NewFileDialogState> {
+        if self.sftp_new_file_dialog.is_none() {
+            self.sftp_new_file_dialog = Some(cx.new(|_| NewFileDialogState::default()));
+        }
+        self.sftp_new_file_dialog.clone().unwrap()
+    }
+
+    /// 获取新建文件对话框状态（如果存在）
+    pub fn get_sftp_new_file_dialog(&self) -> Option<Entity<NewFileDialogState>> {
+        self.sftp_new_file_dialog.clone()
+    }
+
+    /// 打开新建文件对话框
+    pub fn sftp_open_new_file_dialog(&mut self, tab_id: &str, cx: &mut gpui::Context<Self>) {
+        // 获取当前路径
+        let current_path = self
+            .tabs
+            .iter()
+            .find(|t| t.id == tab_id)
+            .and_then(|t| t.sftp_state.as_ref())
+            .map(|s| s.current_path.clone())
+            .unwrap_or_else(|| "/".to_string());
+
+        let dialog = self.ensure_sftp_new_file_dialog(cx);
+        dialog.update(cx, |s, _| {
+            s.open(current_path, tab_id.to_string());
+        });
+        cx.notify();
+    }
+
+    /// 创建新文件
+    pub fn sftp_create_file(
+        &mut self,
+        path: String,
+        tab_id: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let dialog_state = self.sftp_new_file_dialog.clone();
+
+        // 尝试获取 SFTP 服务
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    if let Some(dialog) = dialog_state {
+                        dialog.update(cx, |s, _| {
+                            s.set_error(format!("Internal error: {}", e));
+                        });
+                    }
+                    return;
+                }
+            };
+            match guard.get(&tab_id) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id);
+                    if let Some(dialog) = dialog_state {
+                        dialog.update(cx, |s, _| {
+                            s.set_error("SFTP service not available".to_string());
+                        });
+                    }
+                    return;
+                }
+            }
+        };
+
+        info!("[SFTP] Creating file: {} for tab {}", path, tab_id);
+
+        // 创建 channel 用于从 tokio 运行时发送结果到 GPUI
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<(), String>>();
+
+        // 在 SSH 运行时中执行异步创建
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        let path_for_task = path.clone();
+        ssh_manager.runtime().spawn(async move {
+            let result = service.create_file(&path_for_task).await;
+            let _ = tx.send(result);
+        });
+
+        // 处理结果
+        let tab_id_for_result = tab_id.clone();
+        let dialog_for_result = self.sftp_new_file_dialog.clone();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                if let Some(result) = rx.recv().await {
+                    let _ = async_cx.update(|cx| {
+                        // 更新对话框状态
+                        if let Some(dialog) = dialog_for_result.clone() {
+                            dialog.update(cx, |s, _| match &result {
+                                Ok(()) => s.close(),
+                                Err(e) => s.set_error(e.clone()),
                             });
+                        }
+
+                        // 成功后刷新目录
+                        if result.is_ok() {
+                            session_state.update(cx, |state, cx| {
+                                state.sftp_refresh(&tab_id_for_result, cx);
+                            });
+                        }
+
+                        // 推送失败通知（成功时不通知，用户可通过文件列表刷新看到）
+                        if result.is_err() {
+                            if let Some(window) = cx.active_window() {
+                                use gpui::AppContext as _;
+                                let _ = cx.update_window(window, |_, window, cx| {
+                                    use gpui::Styled;
+                                    use gpui_component::notification::{
+                                        Notification, NotificationType,
+                                    };
+                                    use gpui_component::WindowExt;
+
+                                    let lang = crate::services::storage::load_settings()
+                                        .map(|s| s.theme.language)
+                                        .unwrap_or_default();
+
+                                    let notification = Notification::new()
+                                        .message(crate::i18n::t(&lang, "sftp.new_file.failed"))
+                                        .with_type(NotificationType::Error)
+                                        .w_48()
+                                        .py_2();
+                                    window.push_notification(notification, cx);
+                                });
+                            }
                         }
                     });
                 }

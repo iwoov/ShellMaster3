@@ -8,7 +8,9 @@ mod terminal;
 mod ui_state;
 
 use crate::components::monitor::DetailDialogState;
-use crate::components::sftp::{FileListView, NewFolderDialogState, PathBarState};
+use crate::components::sftp::{
+    FileListView, NewFileDialogState, NewFolderDialogState, PathBarState,
+};
 use crate::models::monitor::MonitorState;
 use crate::models::sftp::SftpState;
 use crate::models::SnippetsConfig;
@@ -107,6 +109,8 @@ pub struct SessionState {
     pub sftp_path_bar_states: HashMap<String, Entity<PathBarState>>,
     /// SFTP 新建文件夹对话框状态
     pub sftp_new_folder_dialog: Option<Entity<NewFolderDialogState>>,
+    /// SFTP 新建文件对话框状态
+    pub sftp_new_file_dialog: Option<Entity<NewFileDialogState>>,
 }
 
 impl Default for SessionState {
@@ -127,6 +131,7 @@ impl Default for SessionState {
             sftp_file_list_views: HashMap::new(),
             sftp_path_bar_states: HashMap::new(),
             sftp_new_folder_dialog: None,
+            sftp_new_file_dialog: None,
         }
     }
 }

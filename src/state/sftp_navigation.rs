@@ -508,35 +508,30 @@ impl SessionState {
                             cx.notify();
                         });
 
-                        // 然后推送通知
-                        if let Some(window) = cx.active_window() {
-                            use gpui::AppContext as _;
-                            let _ = cx.update_window(window, |_, window, cx| {
-                                use gpui::Styled;
-                                use gpui_component::notification::{
-                                    Notification, NotificationType,
-                                };
-                                use gpui_component::WindowExt;
+                        // 推送失败通知（成功时不通知，用户可通过文件列表刷新看到）
+                        if result.is_err() {
+                            if let Some(window) = cx.active_window() {
+                                use gpui::AppContext as _;
+                                let _ = cx.update_window(window, |_, window, cx| {
+                                    use gpui::Styled;
+                                    use gpui_component::notification::{
+                                        Notification, NotificationType,
+                                    };
+                                    use gpui_component::WindowExt;
 
-                                // 加载语言设置
-                                let lang = crate::services::storage::load_settings()
-                                    .map(|s| s.theme.language)
-                                    .unwrap_or_default();
+                                    // 加载语言设置
+                                    let lang = crate::services::storage::load_settings()
+                                        .map(|s| s.theme.language)
+                                        .unwrap_or_default();
 
-                                let notification = match result {
-                                    Ok(()) => Notification::new()
-                                        .message(crate::i18n::t(&lang, "sftp.delete.success"))
-                                        .with_type(NotificationType::Success)
-                                        .w_48()
-                                        .py_2(),
-                                    Err(_) => Notification::new()
+                                    let notification = Notification::new()
                                         .message(crate::i18n::t(&lang, "sftp.delete.failed"))
                                         .with_type(NotificationType::Error)
                                         .w_48()
-                                        .py_2(),
-                                };
-                                window.push_notification(notification, cx);
-                            });
+                                        .py_2();
+                                    window.push_notification(notification, cx);
+                                });
+                            }
                         }
                     });
                 }
@@ -646,34 +641,29 @@ impl SessionState {
                             cx.notify();
                         });
 
-                        // 推送通知
-                        if let Some(window) = cx.active_window() {
-                            use gpui::AppContext as _;
-                            let _ = cx.update_window(window, |_, window, cx| {
-                                use gpui::Styled;
-                                use gpui_component::notification::{
-                                    Notification, NotificationType,
-                                };
-                                use gpui_component::WindowExt;
+                        // 推送失败通知（成功时不通知，用户可通过文件列表刷新看到）
+                        if result_clone.is_err() {
+                            if let Some(window) = cx.active_window() {
+                                use gpui::AppContext as _;
+                                let _ = cx.update_window(window, |_, window, cx| {
+                                    use gpui::Styled;
+                                    use gpui_component::notification::{
+                                        Notification, NotificationType,
+                                    };
+                                    use gpui_component::WindowExt;
 
-                                let lang = crate::services::storage::load_settings()
-                                    .map(|s| s.theme.language)
-                                    .unwrap_or_default();
+                                    let lang = crate::services::storage::load_settings()
+                                        .map(|s| s.theme.language)
+                                        .unwrap_or_default();
 
-                                let notification = match result_clone {
-                                    Ok(()) => Notification::new()
-                                        .message(crate::i18n::t(&lang, "sftp.rename.success"))
-                                        .with_type(NotificationType::Success)
-                                        .w_48()
-                                        .py_2(),
-                                    Err(_) => Notification::new()
+                                    let notification = Notification::new()
                                         .message(crate::i18n::t(&lang, "sftp.rename.failed"))
                                         .with_type(NotificationType::Error)
                                         .w_48()
-                                        .py_2(),
-                                };
-                                window.push_notification(notification, cx);
-                            });
+                                        .py_2();
+                                    window.push_notification(notification, cx);
+                                });
+                            }
                         }
                     });
                 }

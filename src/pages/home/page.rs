@@ -506,6 +506,17 @@ impl HomePage {
                         }
                     }
 
+                    // 确保 SFTP 新建文件对话框输入框已创建
+                    let new_file_dialog = session_state.read(cx).sftp_new_file_dialog.clone();
+                    if let Some(dialog) = new_file_dialog {
+                        let is_open = dialog.read(cx).is_open;
+                        if is_open {
+                            dialog.update(cx, |ds, cx| {
+                                ds.ensure_input_created(window, cx);
+                            });
+                        }
+                    }
+
                     let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
                     render_session_layout(
                         &tab,

@@ -916,17 +916,9 @@ impl Render for FileListView {
                     let paths: Vec<std::path::PathBuf> =
                         external_paths.paths().iter().cloned().collect();
                     if !paths.is_empty() {
-                        // 判断目标目录：如果选中了一个文件夹，则上传到该文件夹
-                        // 否则上传到当前目录
-                        let target_dir = if let Some(entry) = view.get_selected_file(cx) {
-                            if entry.is_dir() {
-                                entry.path.clone()
-                            } else {
-                                view.current_path.clone()
-                            }
-                        } else {
-                            view.current_path.clone()
-                        };
+                        // 拖放到文件列表容器时，始终上传到当前目录
+                        // 如果要上传到子目录，用户需要直接拖放到文件夹行上（会有高亮反馈）
+                        let target_dir = view.current_path.clone();
                         cx.emit(FileListContextMenuEvent::DropFiles { paths, target_dir });
                     }
                 }),

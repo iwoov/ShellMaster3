@@ -246,6 +246,7 @@ impl SessionState {
                                     let local_path = local_path.clone();
                                     let tab_id = tab_id_owned.clone();
                                     let _ = async_cx.update(|cx| {
+                                        let result_clone = result.clone();
                                         session_state.update(cx, |state, cx| {
                                             if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
                                                 if let Some(transfer) = tab
@@ -270,6 +271,36 @@ impl SessionState {
                                             }
                                             cx.notify();
                                         });
+                                        
+                                        // 推送通知
+                                        if let Some(window) = cx.active_window() {
+                                            use gpui::AppContext as _;
+                                            let _ = cx.update_window(window, |_, window, cx| {
+                                                use gpui::Styled;
+                                                use gpui_component::notification::{
+                                                    Notification, NotificationType,
+                                                };
+                                                use gpui_component::WindowExt;
+
+                                                let lang = crate::services::storage::load_settings()
+                                                    .map(|s| s.theme.language)
+                                                    .unwrap_or_default();
+
+                                                let notification = match result_clone {
+                                                    Ok(()) => Notification::new()
+                                                        .message(crate::i18n::t(&lang, "sftp.download.success"))
+                                                        .with_type(NotificationType::Success)
+                                                        .w_48()
+                                                        .py_2(),
+                                                    Err(_) => Notification::new()
+                                                        .message(crate::i18n::t(&lang, "sftp.download.failed"))
+                                                        .with_type(NotificationType::Error)
+                                                        .w_48()
+                                                        .py_2(),
+                                                };
+                                                window.push_notification(notification, cx);
+                                            });
+                                        }
                                     });
                                     break;
                                 }
@@ -527,6 +558,7 @@ impl SessionState {
                                     let remote_path = remote_path.clone();
                                     let tab_id = tab_id_owned.clone();
                                     let _ = async_cx.update(|cx| {
+                                        let result_clone = result.clone();
                                         session_state.update(cx, |state, cx| {
                                             if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
                                                 if let Some(transfer) = tab
@@ -551,6 +583,36 @@ impl SessionState {
                                             }
                                             cx.notify();
                                         });
+                                        
+                                        // 推送通知
+                                        if let Some(window) = cx.active_window() {
+                                            use gpui::AppContext as _;
+                                            let _ = cx.update_window(window, |_, window, cx| {
+                                                use gpui::Styled;
+                                                use gpui_component::notification::{
+                                                    Notification, NotificationType,
+                                                };
+                                                use gpui_component::WindowExt;
+
+                                                let lang = crate::services::storage::load_settings()
+                                                    .map(|s| s.theme.language)
+                                                    .unwrap_or_default();
+
+                                                let notification = match result_clone {
+                                                    Ok(()) => Notification::new()
+                                                        .message(crate::i18n::t(&lang, "sftp.upload.success"))
+                                                        .with_type(NotificationType::Success)
+                                                        .w_48()
+                                                        .py_2(),
+                                                    Err(_) => Notification::new()
+                                                        .message(crate::i18n::t(&lang, "sftp.upload.failed"))
+                                                        .with_type(NotificationType::Error)
+                                                        .w_48()
+                                                        .py_2(),
+                                                };
+                                                window.push_notification(notification, cx);
+                                            });
+                                        }
                                     });
                                     break;
                                 }
@@ -726,6 +788,7 @@ impl SessionState {
                             }
                             UploadEvent::Complete(result) => {
                                 let _ = async_cx.update(|cx| {
+                                    let result_clone = result.clone();
                                     session_state.update(cx, |state, cx| {
                                         if let Some(tab) = state
                                             .tabs
@@ -754,6 +817,36 @@ impl SessionState {
                                         }
                                         cx.notify();
                                     });
+                                    
+                                    // 推送通知
+                                    if let Some(window) = cx.active_window() {
+                                        use gpui::AppContext as _;
+                                        let _ = cx.update_window(window, |_, window, cx| {
+                                            use gpui::Styled;
+                                            use gpui_component::notification::{
+                                                Notification, NotificationType,
+                                            };
+                                            use gpui_component::WindowExt;
+
+                                            let lang = crate::services::storage::load_settings()
+                                                .map(|s| s.theme.language)
+                                                .unwrap_or_default();
+
+                                            let notification = match result_clone {
+                                                Ok(()) => Notification::new()
+                                                    .message(crate::i18n::t(&lang, "sftp.upload.success"))
+                                                    .with_type(NotificationType::Success)
+                                                    .w_48()
+                                                    .py_2(),
+                                                Err(_) => Notification::new()
+                                                    .message(crate::i18n::t(&lang, "sftp.upload.failed"))
+                                                    .with_type(NotificationType::Error)
+                                                    .w_48()
+                                                    .py_2(),
+                                            };
+                                            window.push_notification(notification, cx);
+                                        });
+                                    }
                                 });
                                 break;
                             }
@@ -1038,6 +1131,7 @@ impl SessionState {
                                         let transfer_id = transfer_id_for_events.clone();
                                         let local_path = local_path_for_events.clone();
                                         let _ = async_cx.update(|cx| {
+                                            let result_clone = result.clone();
                                             session_state_for_events.update(cx, |state, cx| {
                                                 if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
                                                     if let Some(transfer) = tab.active_transfers.iter_mut().find(|t| t.id == transfer_id) {
@@ -1055,6 +1149,36 @@ impl SessionState {
                                                 }
                                                 cx.notify();
                                             });
+                                            
+                                            // 推送通知
+                                            if let Some(window) = cx.active_window() {
+                                                use gpui::AppContext as _;
+                                                let _ = cx.update_window(window, |_, window, cx| {
+                                                    use gpui::Styled;
+                                                    use gpui_component::notification::{
+                                                        Notification, NotificationType,
+                                                    };
+                                                    use gpui_component::WindowExt;
+
+                                                    let lang = crate::services::storage::load_settings()
+                                                        .map(|s| s.theme.language)
+                                                        .unwrap_or_default();
+
+                                                    let notification = match result_clone {
+                                                        Ok(()) => Notification::new()
+                                                            .message(crate::i18n::t(&lang, "sftp.download.success"))
+                                                            .with_type(NotificationType::Success)
+                                                            .w_48()
+                                                            .py_2(),
+                                                        Err(_) => Notification::new()
+                                                            .message(crate::i18n::t(&lang, "sftp.download.failed"))
+                                                            .with_type(NotificationType::Error)
+                                                            .w_48()
+                                                            .py_2(),
+                                                    };
+                                                    window.push_notification(notification, cx);
+                                                });
+                                            }
                                         });
                                         break;
                                     }
@@ -1360,6 +1484,7 @@ impl SessionState {
                                         let tab_id = tab_id_for_events.clone();
                                         let transfer_id = transfer_id_for_events.clone();
                                         let _ = async_cx.update(|cx| {
+                                            let result_clone = result.clone();
                                             session_state_for_events.update(cx, |state, cx| {
                                                 if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
                                                     if let Some(transfer) = tab.active_transfers.iter_mut().find(|t| t.id == transfer_id) {
@@ -1377,6 +1502,36 @@ impl SessionState {
                                                 }
                                                 cx.notify();
                                             });
+                                            
+                                            // 推送通知
+                                            if let Some(window) = cx.active_window() {
+                                                use gpui::AppContext as _;
+                                                let _ = cx.update_window(window, |_, window, cx| {
+                                                    use gpui::Styled;
+                                                    use gpui_component::notification::{
+                                                        Notification, NotificationType,
+                                                    };
+                                                    use gpui_component::WindowExt;
+
+                                                    let lang = crate::services::storage::load_settings()
+                                                        .map(|s| s.theme.language)
+                                                        .unwrap_or_default();
+
+                                                    let notification = match result_clone {
+                                                        Ok(()) => Notification::new()
+                                                            .message(crate::i18n::t(&lang, "sftp.upload.success"))
+                                                            .with_type(NotificationType::Success)
+                                                            .w_48()
+                                                            .py_2(),
+                                                        Err(_) => Notification::new()
+                                                            .message(crate::i18n::t(&lang, "sftp.upload.failed"))
+                                                            .with_type(NotificationType::Error)
+                                                            .w_48()
+                                                            .py_2(),
+                                                    };
+                                                    window.push_notification(notification, cx);
+                                                });
+                                            }
                                         });
                                         break;
                                     }
@@ -1569,9 +1724,11 @@ impl SessionState {
         cx.to_async()
             .spawn(async move |async_cx| {
                 while let Some(result) = rx.recv().await {
+                    let result_clone = result.clone();
                     let _ = async_cx.update(|cx| {
+                        // 先更新 state
                         session_state.update(cx, |state, cx| {
-                            match result {
+                            match &result_clone {
                                 Ok(_) => {
                                     info!(
                                         "[SFTP] Folder created successfully: {}",
@@ -1589,12 +1746,42 @@ impl SessionState {
                                     // 显示错误
                                     if let Some(dialog) = &state.sftp_new_folder_dialog {
                                         dialog.update(cx, |s, _| {
-                                            s.set_error(e);
+                                            s.set_error(e.clone());
                                         });
                                     }
                                 }
                             }
                         });
+
+                        // 推送通知
+                        if let Some(window) = cx.active_window() {
+                            use gpui::AppContext as _;
+                            let _ = cx.update_window(window, |_, window, cx| {
+                                use gpui::Styled;
+                                use gpui_component::notification::{
+                                    Notification, NotificationType,
+                                };
+                                use gpui_component::WindowExt;
+
+                                let lang = crate::services::storage::load_settings()
+                                    .map(|s| s.theme.language)
+                                    .unwrap_or_default();
+
+                                let notification = match result_clone {
+                                    Ok(_) => Notification::new()
+                                        .message(crate::i18n::t(&lang, "sftp.new_folder.success"))
+                                        .with_type(NotificationType::Success)
+                                        .w_48()
+                                        .py_2(),
+                                    Err(_) => Notification::new()
+                                        .message(crate::i18n::t(&lang, "sftp.new_folder.failed"))
+                                        .with_type(NotificationType::Error)
+                                        .w_48()
+                                        .py_2(),
+                                };
+                                window.push_notification(notification, cx);
+                            });
+                        }
                     });
                 }
             })

@@ -269,6 +269,18 @@ fn zh_cn(key: &'static str) -> &'static str {
         "sftp.new_folder.failed" => "创建文件夹失败",
         "sftp.loading" => "加载中...",
         "sftp.not_connected" => "未连接",
+        // SFTP 删除通知
+        "sftp.delete.success" => "删除成功",
+        "sftp.delete.failed" => "删除失败",
+        // SFTP 重命名通知
+        "sftp.rename.success" => "重命名成功",
+        "sftp.rename.failed" => "重命名失败",
+        // SFTP 下载通知
+        "sftp.download.success" => "下载完成",
+        "sftp.download.failed" => "下载失败",
+        // SFTP 上传通知
+        "sftp.upload.success" => "上传完成",
+        "sftp.upload.failed" => "上传失败",
         // SFTP 右键菜单
         "sftp.context_menu.download" => "下载",
         "sftp.context_menu.download_folder" => "下载文件夹",
@@ -632,6 +644,18 @@ fn en_us(key: &'static str) -> &'static str {
         "sftp.new_folder.failed" => "Failed to create folder",
         "sftp.loading" => "Loading...",
         "sftp.not_connected" => "Not connected",
+        // SFTP Delete Notification
+        "sftp.delete.success" => "Delete successful",
+        "sftp.delete.failed" => "Delete failed",
+        // SFTP Rename Notification
+        "sftp.rename.success" => "Rename successful",
+        "sftp.rename.failed" => "Rename failed",
+        // SFTP Download Notification
+        "sftp.download.success" => "Download complete",
+        "sftp.download.failed" => "Download failed",
+        // SFTP Upload Notification
+        "sftp.upload.success" => "Upload complete",
+        "sftp.upload.failed" => "Upload failed",
         // SFTP Context Menu
         "sftp.context_menu.download" => "Download",
         "sftp.context_menu.download_folder" => "Download Folder",

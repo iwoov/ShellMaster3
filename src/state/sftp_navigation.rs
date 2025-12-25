@@ -477,17 +477,20 @@ impl SessionState {
 
         // 在 GPUI 异步上下文中处理结果
         let tab_id_for_ui = tab_id.to_string();
+        let path_display = path.clone();
         cx.to_async()
             .spawn(async move |async_cx| {
                 if let Some(result) = rx.recv().await {
                     let tab_id_clone = tab_id_for_ui.clone();
+                    let path_for_notify = path_display.clone();
                     let _ = async_cx.update(|cx| {
+                        // 先更新 state
                         session_state.update(cx, |state, cx| {
-                            match result {
+                            match &result {
                                 Ok(()) => {
                                     info!("[SFTP] Successfully deleted: {}", path);
                                     // 刷新当前目录
-                                    if let Some(current) = current_path {
+                                    if let Some(current) = current_path.clone() {
                                         state.sftp_load_directory(&tab_id_clone, current, cx);
                                     }
                                 }
@@ -504,6 +507,37 @@ impl SessionState {
                             }
                             cx.notify();
                         });
+
+                        // 然后推送通知
+                        if let Some(window) = cx.active_window() {
+                            use gpui::AppContext as _;
+                            let _ = cx.update_window(window, |_, window, cx| {
+                                use gpui::Styled;
+                                use gpui_component::notification::{
+                                    Notification, NotificationType,
+                                };
+                                use gpui_component::WindowExt;
+
+                                // 加载语言设置
+                                let lang = crate::services::storage::load_settings()
+                                    .map(|s| s.theme.language)
+                                    .unwrap_or_default();
+
+                                let notification = match result {
+                                    Ok(()) => Notification::new()
+                                        .message(crate::i18n::t(&lang, "sftp.delete.success"))
+                                        .with_type(NotificationType::Success)
+                                        .w_48()
+                                        .py_2(),
+                                    Err(_) => Notification::new()
+                                        .message(crate::i18n::t(&lang, "sftp.delete.failed"))
+                                        .with_type(NotificationType::Error)
+                                        .w_48()
+                                        .py_2(),
+                                };
+                                window.push_notification(notification, cx);
+                            });
+                        }
                     });
                 }
             })
@@ -580,16 +614,18 @@ impl SessionState {
             .spawn(async move |async_cx| {
                 if let Some(result) = rx.recv().await {
                     let tab_id_clone = tab_id_for_ui.clone();
+                    let result_clone = result.clone();
                     let _ = async_cx.update(|cx| {
+                        // 先更新 state
                         session_state.update(cx, |state, cx| {
-                            match result {
+                            match &result_clone {
                                 Ok(()) => {
                                     info!(
                                         "[SFTP] Successfully renamed: {} -> {}",
                                         old_path, new_path
                                     );
                                     // 刷新当前目录
-                                    if let Some(current) = current_path {
+                                    if let Some(current) = current_path.clone() {
                                         state.sftp_load_directory(&tab_id_clone, current, cx);
                                     }
                                 }
@@ -609,6 +645,36 @@ impl SessionState {
                             }
                             cx.notify();
                         });
+
+                        // 推送通知
+                        if let Some(window) = cx.active_window() {
+                            use gpui::AppContext as _;
+                            let _ = cx.update_window(window, |_, window, cx| {
+                                use gpui::Styled;
+                                use gpui_component::notification::{
+                                    Notification, NotificationType,
+                                };
+                                use gpui_component::WindowExt;
+
+                                let lang = crate::services::storage::load_settings()
+                                    .map(|s| s.theme.language)
+                                    .unwrap_or_default();
+
+                                let notification = match result_clone {
+                                    Ok(()) => Notification::new()
+                                        .message(crate::i18n::t(&lang, "sftp.rename.success"))
+                                        .with_type(NotificationType::Success)
+                                        .w_48()
+                                        .py_2(),
+                                    Err(_) => Notification::new()
+                                        .message(crate::i18n::t(&lang, "sftp.rename.failed"))
+                                        .with_type(NotificationType::Error)
+                                        .w_48()
+                                        .py_2(),
+                                };
+                                window.push_notification(notification, cx);
+                            });
+                        }
                     });
                 }
             })

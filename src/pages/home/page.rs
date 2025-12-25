@@ -555,6 +555,9 @@ impl HomePage {
 
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_component::notification::NotificationList;
+        use gpui_component::WindowExt;
+
         // 统一的服务器列表刷新逻辑
         let show_home = self.session_state.read(cx).show_home;
         let needs_refresh_from_dialog = self.dialog_state.read(cx).needs_refresh;
@@ -607,10 +610,31 @@ impl Render for HomePage {
 
         // 如果 show_home=true 或没有会话，显示主页
         // 如果 show_home=false 且有会话，显示会话视图
-        if show_home || !has_sessions {
+        let main_content = if show_home || !has_sessions {
             self.render_home_view(window, cx).into_any_element()
         } else {
             self.render_session_view(window, cx).into_any_element()
-        }
+        };
+
+        // 获取通知列表
+        let notifications = window.notifications(cx);
+
+        // 包装主内容和通知列表
+        div()
+            .size_full()
+            .relative()
+            .child(main_content)
+            // 通知列表覆盖层（显示在顶部中间）
+            .child(
+                div()
+                    .absolute()
+                    .top_2()
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .children(notifications.iter().map(|n| n.clone())),
+            )
     }
 }

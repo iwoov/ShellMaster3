@@ -299,13 +299,6 @@ impl FileListDelegate {
             .map(|e| e.path.clone())
     }
 
-    /// 获取指定行的文件条目
-    pub fn get_file_entry(&self, row_ix: usize) -> Option<&FileEntry> {
-        self.row_order
-            .get(row_ix)
-            .and_then(|&ix| self.file_list.get(ix))
-    }
-
     /// 获取文件列表是否为空
     pub fn is_empty(&self) -> bool {
         self.file_list.is_empty()
@@ -988,6 +981,8 @@ fn build_file_context_menu(
     let e4 = entity.clone();
     let e5 = entity.clone();
     let e6 = entity.clone();
+    let e_copy_name = entity.clone();
+    let e_copy_path = entity.clone();
 
     menu.item(
         menu_item_element(icons::DOWNLOAD, &download_label).on_click(move |_, _, cx| {
@@ -1007,16 +1002,22 @@ fn build_file_context_menu(
         })
     })
     .separator()
-    .item(
+    .item({
+        let name = name_for_copy.clone();
         menu_item_element(icons::COPY, &copy_name_label).on_click(move |_, _, cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(name_for_copy.clone()));
-        }),
-    )
-    .item(
+            e_copy_name.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::CopyName(name.clone()));
+            });
+        })
+    })
+    .item({
+        let path = path_for_copy.clone();
         menu_item_element(icons::COPY, &copy_path_label).on_click(move |_, _, cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(path_for_copy.clone()));
-        }),
-    )
+            e_copy_path.update(cx, |_, cx| {
+                cx.emit(FileListContextMenuEvent::CopyPath(path.clone()));
+            });
+        })
+    })
     .separator()
     .item({
         let path = path_for_rename.clone();

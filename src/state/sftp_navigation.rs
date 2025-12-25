@@ -477,12 +477,12 @@ impl SessionState {
 
         // 在 GPUI 异步上下文中处理结果
         let tab_id_for_ui = tab_id.to_string();
-        let path_display = path.clone();
+
         cx.to_async()
             .spawn(async move |async_cx| {
                 if let Some(result) = rx.recv().await {
                     let tab_id_clone = tab_id_for_ui.clone();
-                    let path_for_notify = path_display.clone();
+
                     let _ = async_cx.update(|cx| {
                         // 先更新 state
                         session_state.update(cx, |state, cx| {
@@ -703,7 +703,8 @@ impl SessionState {
         if is_dir {
             self.sftp_navigate_to(tab_id, path, cx);
         } else {
-            info!("[SFTP] Opening file: {} (not implemented)", path);
+            // 双击文件 → 打开编辑
+            self.sftp_edit_file(tab_id, path, cx);
         }
     }
 
@@ -980,7 +981,7 @@ impl SessionState {
 
         // 获取 SFTP 服务
         let sftp_services = self.sftp_services.clone();
-        let session_state = cx.entity().clone();
+
         let tab_id_owned = tab_id.to_string();
         let remote_path_clone = remote_path.clone();
         let local_path_clone = local_path.clone();
@@ -1106,14 +1107,13 @@ impl SessionState {
     }
 
     /// 启动文件监控事件循环
-    fn start_file_watcher_loop(&mut self, cx: &mut gpui::Context<Self>) {
+    fn start_file_watcher_loop(&mut self, _cx: &mut gpui::Context<Self>) {
         // 将 receiver 从 Option 中取出
         let receiver = match self.file_watch_receiver.take() {
             Some(r) => r,
             None => return,
         };
 
-        let session_state = cx.entity().clone();
         let sftp_services = self.sftp_services.clone();
         let file_watcher = self.file_watcher.clone();
 

@@ -177,8 +177,16 @@ impl SessionState {
                             // 编辑文件（外置编辑器）
                             this.sftp_edit_file(&tab_id, path.clone(), cx);
                         }
+                        FileListContextMenuEvent::CopyName(name) => {
+                            // 复制文件名到剪贴板
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(name.clone()));
+                        }
+                        FileListContextMenuEvent::CopyPath(path) => {
+                            // 复制完整路径到剪贴板
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(path.clone()));
+                        }
                         _ => {
-                            // 其他事件待实现 (CopyName, CopyPath, etc.)
+                            // 其他事件
                         }
                     }
                 },

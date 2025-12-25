@@ -65,6 +65,30 @@ impl SessionState {
                 info!("[SFTP] FileListView removed for closed tab {}", tab_id);
             }
 
+            // 清理该 session 的文件监控和临时文件
+            if let Some(watcher) = &self.file_watcher {
+                if let Ok(mut watcher) = watcher.lock() {
+                    // 移除该 session 的所有监控文件
+                    let _ = watcher.unwatch_session(tab_id);
+                }
+            }
+
+            // 删除该 session 的临时文件
+            crate::services::sftp::cleanup_temp_files_for_session(tab_id);
+
+            // 如果没有更多监控的文件，销毁 FileWatcher 释放资源
+            let should_destroy_watcher = self
+                .file_watcher
+                .as_ref()
+                .map(|w| w.lock().map(|w| w.is_empty()).unwrap_or(true))
+                .unwrap_or(false);
+
+            if should_destroy_watcher && self.tabs.is_empty() {
+                self.file_watcher = None;
+                self.file_watch_receiver = None;
+                info!("[FileWatcher] Destroyed (no more watched files and no active sessions)");
+            }
+
             // 关闭 SSH 会话
             let ssh_manager = crate::ssh::manager::SshManager::global();
             ssh_manager.close_session(tab_id);

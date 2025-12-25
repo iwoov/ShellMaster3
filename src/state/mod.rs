@@ -15,7 +15,7 @@ use crate::models::monitor::MonitorState;
 use crate::models::sftp::SftpState;
 use crate::models::SnippetsConfig;
 use crate::services::monitor::MonitorService;
-use crate::services::sftp::SftpService;
+use crate::services::sftp::{FileWatchEvent, FileWatcher, SftpService};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -113,6 +113,10 @@ pub struct SessionState {
     pub sftp_new_file_dialog: Option<Entity<NewFileDialogState>>,
     /// SFTP 属性对话框状态
     pub sftp_properties_dialog: Option<Entity<PropertiesDialogState>>,
+    /// 外置编辑器文件监控器
+    pub file_watcher: Option<Arc<Mutex<FileWatcher>>>,
+    /// 文件监控事件接收器
+    pub file_watch_receiver: Option<std::sync::mpsc::Receiver<FileWatchEvent>>,
 }
 
 impl Default for SessionState {
@@ -135,6 +139,8 @@ impl Default for SessionState {
             sftp_new_folder_dialog: None,
             sftp_new_file_dialog: None,
             sftp_properties_dialog: None,
+            file_watcher: None,
+            file_watch_receiver: None,
         }
     }
 }

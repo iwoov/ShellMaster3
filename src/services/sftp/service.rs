@@ -176,6 +176,37 @@ impl SftpService {
         Ok(())
     }
 
+    /// 打开远程文件（用于读取）
+    pub async fn open(&self, path: &str) -> Result<russh_sftp::client::fs::File, String> {
+        debug!("[SFTP] Opening file: {}", path);
+        self.sftp
+            .open(path)
+            .await
+            .map_err(|e| format!("Failed to open file {}: {}", path, e))
+    }
+
+    /// 写入文件内容
+    pub async fn write_file(&self, path: &str, content: &[u8]) -> Result<(), String> {
+        info!("[SFTP] Writing file: {} ({} bytes)", path, content.len());
+        use tokio::io::AsyncWriteExt;
+
+        let mut file = self
+            .sftp
+            .create(path)
+            .await
+            .map_err(|e| format!("Failed to create file {}: {}", path, e))?;
+
+        file.write_all(content)
+            .await
+            .map_err(|e| format!("Failed to write to file {}: {}", path, e))?;
+
+        file.flush()
+            .await
+            .map_err(|e| format!("Failed to flush file {}: {}", path, e))?;
+
+        Ok(())
+    }
+
     /// 读取符号链接目标
     pub async fn read_link(&self, path: &str) -> Result<String, String> {
         info!("[SFTP] Reading symlink target: {}", path);

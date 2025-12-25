@@ -173,8 +173,12 @@ impl SessionState {
                             // 显示属性对话框
                             this.sftp_open_properties_dialog(&tab_id, path.clone(), cx);
                         }
+                        FileListContextMenuEvent::EditFile(path) => {
+                            // 编辑文件（外置编辑器）
+                            this.sftp_edit_file(&tab_id, path.clone(), cx);
+                        }
                         _ => {
-                            // TODO: 其他事件待实现 (EditFile, CopyName, CopyPath, etc.)
+                            // 其他事件待实现 (CopyName, CopyPath, etc.)
                         }
                     }
                 },

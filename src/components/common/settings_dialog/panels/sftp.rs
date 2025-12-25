@@ -147,7 +147,7 @@ pub fn render_sftp_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                                 .external_editor_path_input
                                 .as_ref()
                                 .map(|input| {
-                                    render_path_row(
+                                    render_file_path_row(
                                         i18n::t(lang, "settings.sftp.external_editor_path"),
                                         i18n::t(lang, "settings.sftp.browse"),
                                         input,
@@ -301,6 +301,76 @@ fn render_path_row(
 
                                 if let Some(folder) = folder_picker.pick_folder().await {
                                     let path = folder.path().to_string_lossy().to_string();
+                                    let _ = cx.update(|cx| {
+                                        if let Some(window) = cx.active_window() {
+                                            let _ = cx.update_window(window, |_, window, cx| {
+                                                input_for_update.update(cx, |input, cx| {
+                                                    input.set_value(path.clone(), window, cx);
+                                                });
+                                                state_for_update.update(cx, |s, _| {
+                                                    s.mark_changed();
+                                                });
+                                            });
+                                        }
+                                    });
+                                }
+                            })
+                            .detach();
+                        }),
+                ),
+        )
+}
+
+/// 渲染文件路径选择行（用于选择可执行文件，如外置编辑器）
+fn render_file_path_row(
+    label: &'static str,
+    browse_label: &'static str,
+    input: &Entity<gpui_component::input::InputState>,
+    state: Entity<SettingsDialogState>,
+    cx: &App,
+) -> impl IntoElement {
+    use gpui_component::ActiveTheme;
+
+    let text_color = cx.theme().foreground;
+    let input_clone = input.clone();
+
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_3()
+        .px_4()
+        .bg(cx.theme().muted)
+        .rounded_lg()
+        .mb_2()
+        .child(
+            div()
+                .w(px(150.))
+                .text_sm()
+                .text_color(text_color)
+                .child(label),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().w(px(200.)).child(Input::new(input).appearance(true)))
+                .child(
+                    Button::new("browse-file")
+                        .outline()
+                        .child(browse_label)
+                        .on_click(move |_, _, cx| {
+                            let input_for_update = input_clone.clone();
+                            let state_for_update = state.clone();
+
+                            // 使用异步文件对话框选择文件（而非文件夹）
+                            cx.spawn(async move |cx| {
+                                let file_picker =
+                                    rfd::AsyncFileDialog::new().set_title("选择编辑器程序");
+
+                                if let Some(file) = file_picker.pick_file().await {
+                                    let path = file.path().to_string_lossy().to_string();
                                     let _ = cx.update(|cx| {
                                         if let Some(window) = cx.active_window() {
                                             let _ = cx.update_window(window, |_, window, cx| {

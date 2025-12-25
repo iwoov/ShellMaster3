@@ -37,6 +37,10 @@ russh-sftp = "2.1"
 futures = "0.3.31"
 tokio-util = { version = "0.7.17", features = ["full"] }
 
+# 外置编辑器
+open = "5"
+notify = "6"
+
 [package.metadata.bundle]
 name = "ShellMaster3"
 identifier = "com.shellmaster.app"

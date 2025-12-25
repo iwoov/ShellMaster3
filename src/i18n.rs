@@ -297,6 +297,11 @@ fn zh_cn(key: &'static str) -> &'static str {
         // SFTP 上传通知
         "sftp.upload.success" => "上传完成",
         "sftp.upload.failed" => "上传失败",
+        // SFTP 编辑通知
+        "sftp.edit.file_too_large" => "文件过大，无法编辑",
+        "sftp.edit.uploading" => "正在上传变更...",
+        "sftp.edit.upload_success" => "文件已同步",
+        "sftp.edit.upload_failed" => "同步失败",
         // SFTP 右键菜单
         "sftp.context_menu.download" => "下载",
         "sftp.context_menu.download_folder" => "下载文件夹",
@@ -703,6 +708,11 @@ fn en_us(key: &'static str) -> &'static str {
         // SFTP Upload Notification
         "sftp.upload.success" => "Upload complete",
         "sftp.upload.failed" => "Upload failed",
+        // SFTP Edit Notification
+        "sftp.edit.file_too_large" => "File too large to edit",
+        "sftp.edit.uploading" => "Uploading changes...",
+        "sftp.edit.upload_success" => "File synced",
+        "sftp.edit.upload_failed" => "Sync failed",
         // SFTP Context Menu
         "sftp.context_menu.download" => "Download",
         "sftp.context_menu.download_folder" => "Download Folder",

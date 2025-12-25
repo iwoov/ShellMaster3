@@ -869,4 +869,352 @@ impl SessionState {
 
         cx.notify();
     }
+
+    /// 编辑远程文件（外置编辑器）
+    /// 1. 下载文件到本地临时目录
+    /// 2. 注册文件监控
+    /// 3. 启动外置编辑器
+    pub fn sftp_edit_file(
+        &mut self,
+        tab_id: &str,
+        remote_path: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        use crate::services::sftp::{
+            ensure_temp_dir, open_in_external_editor, temp_file_path, FileWatchEvent, FileWatcher,
+            WatchedFile,
+        };
+        use std::sync::{Arc, Mutex};
+
+        info!("[Editor] Edit file: {} for tab {}", remote_path, tab_id);
+
+        // 加载设置
+        let settings = crate::services::storage::load_settings().unwrap_or_default();
+        let use_builtin = settings.sftp.use_builtin_editor;
+        let editor_path = settings.sftp.external_editor_path.clone();
+        let max_size_kb = settings.sftp.max_edit_file_size_kb;
+
+        // 检查是否使用内置编辑器
+        if use_builtin {
+            info!("[Editor] Using built-in editor (not implemented yet)");
+            // TODO: 打开内置编辑器
+            return;
+        }
+
+        // 获取文件大小
+        let file_size = {
+            let tab = self.tabs.iter().find(|t| t.id == tab_id);
+            match tab.and_then(|t| t.sftp_state.as_ref()) {
+                Some(state) => state
+                    .file_list
+                    .iter()
+                    .find(|e| e.path == remote_path)
+                    .map(|e| e.size),
+                None => return,
+            }
+        };
+
+        // 检查文件大小限制
+        if let Some(size) = file_size {
+            let max_size_bytes = (max_size_kb as u64) * 1024;
+            if size > max_size_bytes {
+                error!(
+                    "[Editor] File too large: {} bytes (max: {} bytes)",
+                    size, max_size_bytes
+                );
+                // 显示通知
+                if let Some(window) = cx.active_window() {
+                    use gpui::AppContext as _;
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        use gpui::Styled;
+                        use gpui_component::notification::{Notification, NotificationType};
+                        use gpui_component::WindowExt;
+
+                        let lang = crate::services::storage::load_settings()
+                            .map(|s| s.theme.language)
+                            .unwrap_or_default();
+
+                        let notification = Notification::new()
+                            .message(format!(
+                                "{}: {}",
+                                crate::i18n::t(&lang, "sftp.edit.file_too_large"),
+                                format_file_size(size)
+                            ))
+                            .with_type(NotificationType::Warning)
+                            .w_64()
+                            .py_2();
+                        window.push_notification(notification, cx);
+                    });
+                }
+                return;
+            }
+        }
+
+        // 确保临时目录存在
+        if let Err(e) = ensure_temp_dir() {
+            error!("[Editor] Failed to create temp dir: {}", e);
+            return;
+        }
+
+        // 生成临时文件路径
+        let local_path = temp_file_path(tab_id, &remote_path);
+        info!("[Editor] Temp file path: {:?}", local_path);
+
+        // 初始化文件监控器（如果尚未初始化）
+        if self.file_watcher.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel::<FileWatchEvent>();
+            match FileWatcher::new(tx) {
+                Ok(watcher) => {
+                    self.file_watcher = Some(Arc::new(Mutex::new(watcher)));
+                    self.file_watch_receiver = Some(rx);
+                    info!("[Editor] FileWatcher initialized");
+
+                    // 启动文件监控事件循环
+                    self.start_file_watcher_loop(cx);
+                }
+                Err(e) => {
+                    error!("[Editor] Failed to create FileWatcher: {}", e);
+                }
+            }
+        }
+
+        // 获取 SFTP 服务
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+        let remote_path_clone = remote_path.clone();
+        let local_path_clone = local_path.clone();
+        let file_watcher = self.file_watcher.clone();
+        let editor_path_clone = editor_path.clone();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<(), String>>();
+
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    return;
+                }
+            };
+            match guard.get(&tab_id_owned) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    return;
+                }
+            }
+        };
+
+        // 在 tokio 运行时中下载文件
+        let tab_id_for_download = tab_id_owned.clone();
+        ssh_manager.runtime().spawn(async move {
+            use tokio::io::AsyncReadExt;
+
+            info!("[Editor] Downloading file: {}", remote_path_clone);
+
+            // 打开远程文件
+            let mut remote_file = match service.open(&remote_path_clone).await {
+                Ok(f) => f,
+                Err(e) => {
+                    let _ = tx.send(Err(format!("Failed to open remote file: {}", e)));
+                    return;
+                }
+            };
+
+            // 读取文件内容
+            let mut content = Vec::new();
+            if let Err(e) = remote_file.read_to_end(&mut content).await {
+                let _ = tx.send(Err(format!("Failed to read remote file: {}", e)));
+                return;
+            }
+
+            // 写入本地临时文件
+            if let Err(e) = std::fs::write(&local_path_clone, &content) {
+                let _ = tx.send(Err(format!("Failed to write temp file: {}", e)));
+                return;
+            }
+
+            info!(
+                "[Editor] Downloaded {} bytes to {:?}",
+                content.len(),
+                local_path_clone
+            );
+
+            // 注册文件监控
+            if let Some(watcher) = &file_watcher {
+                if let Ok(mut watcher) = watcher.lock() {
+                    let watched_file = WatchedFile {
+                        local_path: local_path_clone.clone(),
+                        remote_path: remote_path_clone.clone(),
+                        session_id: tab_id_for_download.clone(),
+                        last_modified: std::time::SystemTime::now(),
+                    };
+                    if let Err(e) = watcher.watch(watched_file) {
+                        error!("[Editor] Failed to watch file: {}", e);
+                    }
+                }
+            }
+
+            // 启动外置编辑器
+            let editor_path_opt = if editor_path_clone.is_empty() {
+                None
+            } else {
+                Some(editor_path_clone.as_str())
+            };
+
+            if let Err(e) = open_in_external_editor(&local_path_clone, editor_path_opt) {
+                let _ = tx.send(Err(format!("Failed to open editor: {}", e)));
+                return;
+            }
+
+            let _ = tx.send(Ok(()));
+        });
+
+        // 在 GPUI 异步上下文中处理结果
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                if let Some(result) = rx.recv().await {
+                    let _ = async_cx.update(|cx| {
+                        if let Err(e) = result {
+                            error!("[Editor] Edit file failed: {}", e);
+                            // 显示错误通知
+                            if let Some(window) = cx.active_window() {
+                                use gpui::AppContext as _;
+                                let _ = cx.update_window(window, |_, window, cx| {
+                                    use gpui::Styled;
+                                    use gpui_component::notification::{
+                                        Notification, NotificationType,
+                                    };
+                                    use gpui_component::WindowExt;
+
+                                    let notification = Notification::new()
+                                        .message(e)
+                                        .with_type(NotificationType::Error)
+                                        .w_64()
+                                        .py_2();
+                                    window.push_notification(notification, cx);
+                                });
+                            }
+                        }
+                    });
+                }
+            })
+            .detach();
+    }
+
+    /// 启动文件监控事件循环
+    fn start_file_watcher_loop(&mut self, cx: &mut gpui::Context<Self>) {
+        // 将 receiver 从 Option 中取出
+        let receiver = match self.file_watch_receiver.take() {
+            Some(r) => r,
+            None => return,
+        };
+
+        let session_state = cx.entity().clone();
+        let sftp_services = self.sftp_services.clone();
+        let file_watcher = self.file_watcher.clone();
+
+        // 使用 std::thread 而不是 tokio，因为 std::sync::mpsc::Receiver 不是 async 的
+        std::thread::spawn(move || {
+            info!("[FileWatcher] Event loop started");
+
+            while let Ok(event) = receiver.recv() {
+                match event {
+                    crate::services::sftp::FileWatchEvent::Modified {
+                        session_id,
+                        local_path,
+                        remote_path,
+                    } => {
+                        info!(
+                            "[FileWatcher] File modified: {:?} -> {}",
+                            local_path, remote_path
+                        );
+
+                        // 读取本地文件内容
+                        let content = match std::fs::read(&local_path) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!("[FileWatcher] Failed to read file: {}", e);
+                                continue;
+                            }
+                        };
+
+                        // 获取 SFTP 服务
+                        let service = {
+                            let guard = match sftp_services.lock() {
+                                Ok(g) => g,
+                                Err(e) => {
+                                    error!("[FileWatcher] Failed to lock sftp_services: {}", e);
+                                    continue;
+                                }
+                            };
+                            match guard.get(&session_id) {
+                                Some(s) => s.clone(),
+                                None => {
+                                    error!(
+                                        "[FileWatcher] No SFTP service for session {}",
+                                        session_id
+                                    );
+                                    continue;
+                                }
+                            }
+                        };
+
+                        // 获取 SSH manager 的 runtime
+                        let ssh_manager = crate::ssh::manager::SshManager::global();
+                        let remote_path_clone = remote_path.clone();
+                        let local_path_clone = local_path.clone();
+                        let file_watcher_clone = file_watcher.clone();
+
+                        // 在 tokio 运行时中上传文件
+                        ssh_manager.runtime().spawn(async move {
+                            info!("[FileWatcher] Uploading file to {}", remote_path_clone);
+
+                            match service.write_file(&remote_path_clone, &content).await {
+                                Ok(()) => {
+                                    info!(
+                                        "[FileWatcher] Successfully uploaded {} bytes to {}",
+                                        content.len(),
+                                        remote_path_clone
+                                    );
+
+                                    // 更新最后修改时间
+                                    if let Some(watcher) = &file_watcher_clone {
+                                        if let Ok(mut watcher) = watcher.lock() {
+                                            watcher.update_last_modified(&local_path_clone);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "[FileWatcher] Failed to upload file {}: {}",
+                                        remote_path_clone, e
+                                    );
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+
+            info!("[FileWatcher] Event loop ended");
+        });
+    }
+}
+
+/// 格式化文件大小（内部辅助函数）
+fn format_file_size(size: u64) -> String {
+    let size_f = size as f64;
+    if size_f >= 1_073_741_824.0 {
+        format!("{:.1} GB", size_f / 1_073_741_824.0)
+    } else if size_f >= 1_048_576.0 {
+        format!("{:.1} MB", size_f / 1_048_576.0)
+    } else if size_f >= 1_024.0 {
+        format!("{:.1} KB", size_f / 1_024.0)
+    } else {
+        format!("{} B", size)
+    }
 }

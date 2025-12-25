@@ -803,4 +803,70 @@ impl SessionState {
             })
             .detach();
     }
+
+    /// 在终端中打开目录 (cd 到指定路径)
+    pub fn sftp_open_in_terminal(
+        &mut self,
+        tab_id: &str,
+        path: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        info!("[SFTP] Open in terminal: {} for tab {}", path, tab_id);
+
+        // 获取当前激活的终端实例的 PTY 通道
+        let pty_channel = {
+            let tab = match self.tabs.iter().find(|t| t.id == tab_id) {
+                Some(t) => t,
+                None => {
+                    error!("[SFTP] No tab found: {}", tab_id);
+                    return;
+                }
+            };
+
+            let terminal_id = match &tab.active_terminal_id {
+                Some(id) => id.clone(),
+                None => {
+                    error!("[SFTP] No active terminal for tab {}", tab_id);
+                    return;
+                }
+            };
+
+            let terminal = match tab.terminals.iter().find(|t| t.id == terminal_id) {
+                Some(t) => t,
+                None => {
+                    error!(
+                        "[SFTP] Terminal {} not found in tab {}",
+                        terminal_id, tab_id
+                    );
+                    return;
+                }
+            };
+
+            match &terminal.pty_channel {
+                Some(ch) => ch.clone(),
+                None => {
+                    error!("[SFTP] No PTY channel for terminal {}", terminal_id);
+                    return;
+                }
+            }
+        };
+
+        // 构建 cd 命令（处理路径中的特殊字符）
+        let command = format!("cd '{}'\n", path.replace("'", "'\\''"));
+
+        // 在 tokio 运行时中发送命令
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        ssh_manager.runtime().spawn(async move {
+            match pty_channel.write(command.as_bytes()).await {
+                Ok(()) => {
+                    info!("[SFTP] cd command sent successfully");
+                }
+                Err(e) => {
+                    error!("[SFTP] Failed to send cd command: {:?}", e);
+                }
+            }
+        });
+
+        cx.notify();
+    }
 }

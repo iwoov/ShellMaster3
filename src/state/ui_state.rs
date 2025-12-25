@@ -165,6 +165,10 @@ impl SessionState {
                             // 新建文件
                             this.sftp_open_new_file_dialog(&tab_id, cx);
                         }
+                        FileListContextMenuEvent::OpenInTerminal(path) => {
+                            // 在终端中打开目录
+                            this.sftp_open_in_terminal(&tab_id, path.clone(), cx);
+                        }
                         _ => {
                             // TODO: 其他事件待实现 (EditFile, CopyName, CopyPath, Properties, etc.)
                         }

@@ -575,6 +575,205 @@ impl SessionState {
             .detach();
     }
 
+    /// 直接上传单个文件到远程目录（无文件选择器，用于拖放上传）
+    pub fn sftp_upload_file_direct(
+        &mut self,
+        tab_id: &str,
+        local_path: std::path::PathBuf,
+        remote_dir: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let file_name = local_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
+        let file_name = match file_name {
+            Some(n) => n,
+            None => {
+                error!("[SFTP] Invalid file path for upload: {:?}", local_path);
+                return;
+            }
+        };
+
+        let file_size = match std::fs::metadata(&local_path) {
+            Ok(m) => m.len(),
+            Err(e) => {
+                error!("[SFTP] Failed to get file size for {:?}: {}", local_path, e);
+                return;
+            }
+        };
+
+        info!(
+            "[SFTP] Direct upload: {:?} -> {}/{} for tab {}",
+            local_path, remote_dir, file_name, tab_id
+        );
+
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+
+        // 尝试获取 SFTP 服务
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    return;
+                }
+            };
+            match guard.get(&tab_id_owned) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    return;
+                }
+            }
+        };
+
+        // 获取 SSH manager 的 runtime
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        let runtime = ssh_manager.runtime();
+
+        // 使用 GPUI 异步上下文执行上传
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                // 构建远程路径
+                let remote_path = if remote_dir == "/" {
+                    format!("/{}", file_name)
+                } else {
+                    format!("{}/{}", remote_dir.trim_end_matches('/'), file_name)
+                };
+
+                info!("[SFTP] Uploading {:?} to {}", local_path, remote_path);
+
+                // 创建传输项
+                let transfer_item = crate::models::sftp::TransferItem::new_upload(
+                    local_path.clone(),
+                    remote_path.clone(),
+                    file_size,
+                );
+                let transfer_id = transfer_item.id.clone();
+
+                // 添加传输项到列表
+                let tab_id_for_transfer = tab_id_owned.clone();
+                let _ = async_cx.update(|cx| {
+                    session_state.update(cx, |state, cx| {
+                        if let Some(tab) =
+                            state.tabs.iter_mut().find(|t| t.id == tab_id_for_transfer)
+                        {
+                            tab.active_transfers.push(transfer_item);
+                        }
+                        state.set_sidebar_panel(super::SidebarPanel::Transfer);
+                        cx.notify();
+                    });
+                });
+
+                // 创建 channel 用于进度通知
+                enum UploadEvent {
+                    Progress(u64, u64, u64),
+                    Complete(Result<(), String>),
+                }
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UploadEvent>();
+
+                // 在 SSH 运行时中执行上传
+                let local_path_clone = local_path.clone();
+                let remote_path_clone = remote_path.clone();
+                let tx_progress = tx.clone();
+
+                runtime.spawn(async move {
+                    let result = service
+                        .upload_file(
+                            &local_path_clone,
+                            &remote_path_clone,
+                            move |transferred, total, speed| {
+                                let _ = tx_progress.send(UploadEvent::Progress(
+                                    transferred,
+                                    total,
+                                    speed,
+                                ));
+                            },
+                        )
+                        .await;
+
+                    let _ = tx.send(UploadEvent::Complete(result.map_err(|e| e.to_string())));
+                });
+
+                // 处理上传事件
+                let transfer_id_clone = transfer_id.clone();
+                let tab_id_for_update = tab_id_owned.clone();
+                loop {
+                    match rx.recv().await {
+                        Some(event) => match event {
+                            UploadEvent::Progress(transferred, total, speed) => {
+                                let _ = async_cx.update(|cx| {
+                                    session_state.update(cx, |state, cx| {
+                                        if let Some(tab) = state
+                                            .tabs
+                                            .iter_mut()
+                                            .find(|t| t.id == tab_id_for_update)
+                                        {
+                                            if let Some(transfer) = tab
+                                                .active_transfers
+                                                .iter_mut()
+                                                .find(|t| t.id == transfer_id_clone)
+                                            {
+                                                transfer.update_progress(transferred, total, speed);
+                                            }
+                                        }
+                                        cx.notify();
+                                    });
+                                });
+                            }
+                            UploadEvent::Complete(result) => {
+                                let _ = async_cx.update(|cx| {
+                                    session_state.update(cx, |state, cx| {
+                                        if let Some(tab) = state
+                                            .tabs
+                                            .iter_mut()
+                                            .find(|t| t.id == tab_id_for_update)
+                                        {
+                                            if let Some(transfer) = tab
+                                                .active_transfers
+                                                .iter_mut()
+                                                .find(|t| t.id == transfer_id_clone)
+                                            {
+                                                match &result {
+                                                    Ok(()) => {
+                                                        transfer.set_completed();
+                                                        info!(
+                                                            "[SFTP] Upload completed: {}",
+                                                            remote_path
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        transfer.set_failed(e.clone());
+                                                        error!("[SFTP] Upload failed: {}", e);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        cx.notify();
+                                    });
+                                });
+                                break;
+                            }
+                        },
+                        None => break,
+                    }
+                }
+
+                // 上传完成后自动刷新目录
+                info!("[SFTP] Direct upload completed, refreshing directory");
+                let tab_id_for_refresh = tab_id_owned.clone();
+                let _ = async_cx.update(|cx| {
+                    session_state.update(cx, |state, cx| {
+                        state.sftp_refresh(&tab_id_for_refresh, cx);
+                    });
+                });
+            })
+            .detach();
+    }
+
     /// 下载远程文件夹到本地（带文件选择器）
     ///
     /// 如果设置了默认下载路径则直接使用，否则打开文件选择器让用户选择保存位置

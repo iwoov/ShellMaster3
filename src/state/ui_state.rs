@@ -135,6 +135,28 @@ impl SessionState {
                                 this.sftp_upload_folder_with_picker(&tab_id, current_path, cx);
                             }
                         }
+                        FileListContextMenuEvent::DropFiles { paths, target_dir } => {
+                            // 拖放上传 - 根据路径类型调用不同的上传方法
+                            for path in paths {
+                                if path.is_dir() {
+                                    // 上传文件夹
+                                    this.sftp_upload_folder(
+                                        &tab_id,
+                                        path.clone(),
+                                        target_dir.clone(),
+                                        cx,
+                                    );
+                                } else if path.is_file() {
+                                    // 上传单个文件
+                                    this.sftp_upload_file_direct(
+                                        &tab_id,
+                                        path.clone(),
+                                        target_dir.clone(),
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
                         _ => {
                             // TODO: 其他事件待实现 (EditFile, CopyName, CopyPath, Properties, etc.)
                         }

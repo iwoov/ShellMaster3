@@ -42,8 +42,17 @@ pub enum FileListContextMenuEvent {
     SelectAll,
 
     // 重命名确认/取消
-    RenameConfirmed { old_path: String, new_name: String },
+    RenameConfirmed {
+        old_path: String,
+        new_name: String,
+    },
     RenameCancelled,
+
+    // 拖放上传
+    DropFiles {
+        paths: Vec<std::path::PathBuf>, // 本地文件/文件夹路径
+        target_dir: String,             // 目标远程目录
+    },
 }
 
 /// 图标尺寸
@@ -55,6 +64,10 @@ const COL_PERMISSIONS: usize = 1;
 const COL_OWNER: usize = 2;
 const COL_SIZE: usize = 3;
 const COL_MODIFIED: usize = 4;
+
+/// 行拖放回调类型
+pub type RowDropCallback =
+    std::sync::Arc<dyn Fn(Vec<std::path::PathBuf>, String) + Send + Sync + 'static>;
 
 /// 文件列表 Delegate - 实现 TableDelegate trait
 pub struct FileListDelegate {
@@ -78,6 +91,8 @@ pub struct FileListDelegate {
     pub editing_path: Option<String>,
     /// 重命名输入框状态（用于内联编辑）
     pub rename_input: Option<Entity<gpui_component::input::InputState>>,
+    /// 行拖放回调（当文件拖放到文件夹行上时调用）
+    pub on_row_drop: Option<RowDropCallback>,
 }
 
 impl FileListDelegate {
@@ -95,6 +110,7 @@ impl FileListDelegate {
             current_sort: ColumnSort::Ascending,
             editing_path: None,
             rename_input: None,
+            on_row_drop: None,
         };
         delegate.sync_column_sort_state();
         delegate
@@ -513,13 +529,41 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
-        let row_id = self
+        // 获取当前行的文件信息
+        let entry = self
             .row_order
             .get(row_ix)
-            .and_then(|&ix| self.file_list.get(ix))
-            .map(|entry| hash_row_id(&entry.path))
-            .unwrap_or(row_ix as u64);
-        div().id(("file-row", row_id))
+            .and_then(|&ix| self.file_list.get(ix));
+
+        let row_id = entry.map(|e| hash_row_id(&e.path)).unwrap_or(row_ix as u64);
+
+        let is_dir = entry.map(|e| e.is_dir()).unwrap_or(false);
+        let folder_path = entry.map(|e| e.path.clone());
+        let on_row_drop = self.on_row_drop.clone();
+
+        let base_div = div().id(("file-row", row_id));
+
+        // 如果是文件夹，添加拖放处理器
+        if is_dir {
+            base_div
+                .drag_over::<ExternalPaths>(|this, _, _, cx| {
+                    // 文件夹行高亮 - 使用明显的背景色
+                    this.bg(cx.theme().info.opacity(0.3))
+                })
+                .on_drop(move |external_paths: &ExternalPaths, _window, _cx| {
+                    if let Some(ref callback) = on_row_drop {
+                        if let Some(ref target_folder) = folder_path {
+                            let paths: Vec<std::path::PathBuf> =
+                                external_paths.paths().iter().cloned().collect();
+                            if !paths.is_empty() {
+                                callback(paths, target_folder.clone());
+                            }
+                        }
+                    }
+                })
+        } else {
+            base_div
+        }
     }
 
     fn render_empty(
@@ -558,6 +602,10 @@ pub struct FileListView {
     rename_input: Option<Entity<gpui_component::input::InputState>>,
     /// 正在编辑的文件路径
     editing_path: Option<String>,
+    /// 当前远程路径（用于拖放上传）
+    current_path: String,
+    /// 待处理的行拖放事件队列
+    pending_row_drops: std::sync::Arc<std::sync::Mutex<Vec<(Vec<std::path::PathBuf>, String)>>>,
 }
 
 impl FileListView {
@@ -567,7 +615,19 @@ impl FileListView {
             .map(|s| s.theme.language)
             .unwrap_or_default();
 
-        let delegate = FileListDelegate::new(lang.clone());
+        // 创建共享事件队列
+        let pending_row_drops: std::sync::Arc<
+            std::sync::Mutex<Vec<(Vec<std::path::PathBuf>, String)>>,
+        > = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let pending_row_drops_for_callback = pending_row_drops.clone();
+
+        // 创建 delegate 并设置回调
+        let mut delegate = FileListDelegate::new(lang.clone());
+        delegate.on_row_drop = Some(std::sync::Arc::new(move |paths, target_dir| {
+            if let Ok(mut queue) = pending_row_drops_for_callback.lock() {
+                queue.push((paths, target_dir));
+            }
+        }));
 
         let table_state = cx.new(|cx| {
             TableState::new(delegate, window, cx)
@@ -601,6 +661,8 @@ impl FileListView {
             last_group_cache_revision: 0,
             rename_input: None,
             editing_path: None,
+            current_path: String::new(),
+            pending_row_drops,
         }
     }
 
@@ -631,6 +693,10 @@ impl FileListView {
                 if !self.connected {
                     self.connected = true;
                     needs_notify = true;
+                }
+                // 同步当前路径
+                if self.current_path != state.current_path {
+                    self.current_path = state.current_path.clone();
                 }
                 if self.loading != state.loading {
                     self.loading = state.loading;
@@ -779,6 +845,13 @@ impl EventEmitter<FileListContextMenuEvent> for FileListView {}
 
 impl Render for FileListView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 处理待处理的行拖放事件
+        if let Ok(mut queue) = self.pending_row_drops.lock() {
+            for (paths, target_dir) in queue.drain(..) {
+                cx.emit(FileListContextMenuEvent::DropFiles { paths, target_dir });
+            }
+        }
+
         let bg_color = crate::theme::sidebar_color(cx);
         let muted_foreground = cx.theme().muted_foreground;
         let lang = self.lang.clone();
@@ -830,6 +903,34 @@ impl Render for FileListView {
             .size_full()
             .relative()
             .child(table)
+            // 拖放上传支持
+            .drag_over::<ExternalPaths>(|this, _, _, cx| {
+                // 拖动悬停时显示视觉反馈 - 使用明显的背景色和边框
+                this.bg(cx.theme().drop_target)
+                    .border_2()
+                    .border_color(cx.theme().primary)
+            })
+            .on_drop(
+                cx.listener(move |view, external_paths: &ExternalPaths, _window, cx| {
+                    // 获取拖放的文件路径
+                    let paths: Vec<std::path::PathBuf> =
+                        external_paths.paths().iter().cloned().collect();
+                    if !paths.is_empty() {
+                        // 判断目标目录：如果选中了一个文件夹，则上传到该文件夹
+                        // 否则上传到当前目录
+                        let target_dir = if let Some(entry) = view.get_selected_file(cx) {
+                            if entry.is_dir() {
+                                entry.path.clone()
+                            } else {
+                                view.current_path.clone()
+                            }
+                        } else {
+                            view.current_path.clone()
+                        };
+                        cx.emit(FileListContextMenuEvent::DropFiles { paths, target_dir });
+                    }
+                }),
+            )
             .context_menu(move |menu, _window, cx| {
                 // 读取当前选中的文件条目
                 let selected_entry = this.read(cx).get_selected_file(cx);

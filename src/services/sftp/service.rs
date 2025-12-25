@@ -223,6 +223,95 @@ impl SftpService {
         Ok(entry)
     }
 
+    /// 递归读取目录，返回所有文件条目（包含完整路径）
+    ///
+    /// # Arguments
+    /// * `path` - 要遍历的目录路径
+    ///
+    /// # Returns
+    /// * `Ok(Vec<FileEntry>)` - 所有文件和目录的列表（深度优先）
+    /// * `Err(String)` - 读取失败
+    pub async fn read_dir_recursive(&self, path: &str) -> Result<Vec<FileEntry>, String> {
+        info!("[SFTP] Reading directory recursively: {}", path);
+
+        let mut all_entries = Vec::new();
+        let mut dirs_to_process = vec![path.to_string()];
+
+        while let Some(current_dir) = dirs_to_process.pop() {
+            let entries = self.read_dir(&current_dir).await?;
+
+            for entry in entries {
+                if entry.is_dir() {
+                    // 将子目录加入待处理队列
+                    dirs_to_process.push(entry.path.clone());
+                }
+                all_entries.push(entry);
+            }
+        }
+
+        info!(
+            "[SFTP] Found {} entries recursively in {}",
+            all_entries.len(),
+            path
+        );
+        Ok(all_entries)
+    }
+
+    /// 递归创建目录（确保父目录存在）
+    ///
+    /// # Arguments
+    /// * `path` - 要创建的目录路径
+    ///
+    /// # Returns
+    /// * `Ok(())` - 创建成功
+    /// * `Err(String)` - 创建失败
+    pub async fn mkdir_recursive(&self, path: &str) -> Result<(), String> {
+        info!("[SFTP] Creating directory recursively: {}", path);
+
+        // 收集需要创建的所有路径段
+        let mut paths_to_create = Vec::new();
+        let mut current = path.to_string();
+
+        // 从目标路径向上遍历，找出所有不存在的目录
+        while !current.is_empty() && current != "/" {
+            // 检查目录是否存在
+            match self.sftp.metadata(&current).await {
+                Ok(attrs) => {
+                    if attrs.is_dir() {
+                        // 目录已存在，停止向上遍历
+                        break;
+                    } else {
+                        return Err(format!("Path {} exists but is not a directory", current));
+                    }
+                }
+                Err(_) => {
+                    // 目录不存在，需要创建
+                    paths_to_create.push(current.clone());
+                }
+            }
+
+            // 向上移动到父目录
+            if let Some(parent) = current.rsplit_once('/').map(|(p, _)| p) {
+                current = if parent.is_empty() {
+                    "/".to_string()
+                } else {
+                    parent.to_string()
+                };
+            } else {
+                break;
+            }
+        }
+
+        // 从上往下创建目录
+        paths_to_create.reverse();
+        for dir_path in paths_to_create {
+            debug!("[SFTP] Creating directory: {}", dir_path);
+            self.mkdir(&dir_path).await?;
+        }
+
+        Ok(())
+    }
+
     /// 下载文件到本地
     ///
     /// # Arguments

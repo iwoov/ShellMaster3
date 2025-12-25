@@ -566,6 +566,610 @@ impl SessionState {
             .detach();
     }
 
+    /// 下载远程文件夹到本地（带文件选择器）
+    ///
+    /// 打开文件选择器让用户选择保存位置，然后调用 sftp_download_folder 执行下载
+    pub fn sftp_download_folder_with_picker(
+        &mut self,
+        tab_id: &str,
+        remote_folder: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        info!(
+            "[SFTP] Download folder with picker: {} for tab {}",
+            remote_folder, tab_id
+        );
+
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+        let remote_folder_clone = remote_folder.clone();
+
+        // 使用 GPUI 异步上下文执行文件选择
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                // 打开文件夹选择对话框
+                let folder_picker = rfd::AsyncFileDialog::new().set_title("选择下载保存位置");
+
+                if let Some(folder_handle) = folder_picker.pick_folder().await {
+                    let local_dir = folder_handle.path().to_path_buf();
+
+                    // 在主线程调用下载方法
+                    let _ = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            state.sftp_download_folder(
+                                &tab_id_owned,
+                                remote_folder_clone,
+                                local_dir,
+                                cx,
+                            );
+                        });
+                    });
+                } else {
+                    info!("[SFTP] Folder download cancelled by user");
+                }
+            })
+            .detach();
+    }
+
+    /// 下载远程文件夹到本地（递归）
+    ///
+    /// 递归遍历远程目录，收集所有文件，然后逐个下载
+    pub fn sftp_download_folder(
+        &mut self,
+        tab_id: &str,
+        remote_folder: String,
+        local_dir: std::path::PathBuf,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        info!(
+            "[SFTP] Download folder: {} -> {:?} for tab {}",
+            remote_folder, local_dir, tab_id
+        );
+
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+
+        // 尝试获取 SFTP 服务
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    return;
+                }
+            };
+            match guard.get(&tab_id_owned) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    return;
+                }
+            }
+        };
+
+        // 获取 SSH manager 的 runtime
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        let runtime = ssh_manager.runtime();
+
+        // 自动切换到传输面板
+        self.set_sidebar_panel(super::SidebarPanel::Transfer);
+        cx.notify();
+
+        // 使用 GPUI 异步上下文执行
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                // 1. 递归读取远程目录，获取所有文件
+                info!("[SFTP] Collecting files from remote folder: {}", remote_folder);
+
+                // 在 tokio 运行时中执行递归读取
+                let (tx_files, mut rx_files) = tokio::sync::mpsc::unbounded_channel();
+                let service_for_list = service.clone();
+                let remote_folder_clone = remote_folder.clone();
+
+                runtime.spawn(async move {
+                    let result = service_for_list.read_dir_recursive(&remote_folder_clone).await;
+                    let _ = tx_files.send(result);
+                });
+
+                // 等待目录列表结果
+                let entries = match rx_files.recv().await {
+                    Some(Ok(entries)) => entries,
+                    Some(Err(e)) => {
+                        error!("[SFTP] Failed to list remote folder: {}", e);
+                        return;
+                    }
+                    None => {
+                        error!("[SFTP] Channel closed unexpectedly");
+                        return;
+                    }
+                };
+
+                // 2. 过滤出文件（跳过目录条目）
+                let files: Vec<_> = entries
+                    .into_iter()
+                    .filter(|e| !e.is_dir())
+                    .collect();
+
+                if files.is_empty() {
+                    info!("[SFTP] No files to download in folder: {}", remote_folder);
+                    return;
+                }
+
+                info!("[SFTP] Found {} files to download", files.len());
+
+                // 3. 获取远程文件夹的名称作为本地根目录
+                let folder_name = remote_folder
+                    .rsplit('/')
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("download");
+                let local_root = local_dir.join(folder_name);
+
+                // 4. 为每个文件创建独立的下载任务
+                for file_entry in files {
+                    // 计算相对路径
+                    let relative_path = file_entry.path
+                        .strip_prefix(&remote_folder)
+                        .unwrap_or(&file_entry.path)
+                        .trim_start_matches('/');
+
+                    let local_file_path = local_root.join(relative_path);
+
+                    // 创建本地父目录
+                    if let Some(parent) = local_file_path.parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            error!("[SFTP] Failed to create local directory {:?}: {}", parent, e);
+                            continue;
+                        }
+                    }
+
+                    // 创建传输项
+                    let transfer_item = crate::models::sftp::TransferItem::new_download(
+                        file_entry.path.clone(),
+                        local_file_path.clone(),
+                        file_entry.size,
+                    );
+                    let transfer_id = transfer_item.id.clone();
+                    let cancel_token = transfer_item.cancel_token.clone();
+
+                    // 添加传输项到列表
+                    let tab_id_for_add = tab_id_owned.clone();
+                    let _ = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_add) {
+                                tab.active_transfers.push(transfer_item);
+                            }
+                            cx.notify();
+                        });
+                    });
+
+                    // 创建事件通道
+                    enum DownloadEvent {
+                        Progress(u64, u64, u64),
+                        Complete(Result<(), String>),
+                    }
+                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DownloadEvent>();
+
+                    // 在 tokio 运行时中启动下载任务
+                    let service_for_download = service.clone();
+                    let remote_path = file_entry.path.clone();
+                    let local_path = local_file_path.clone();
+                    let tx_progress = tx.clone();
+
+                    runtime.spawn(async move {
+                        let result = service_for_download
+                            .download_file(&remote_path, &local_path, move |transferred, total, speed| {
+                                let _ = tx_progress.send(DownloadEvent::Progress(transferred, total, speed));
+                            })
+                            .await;
+                        let _ = tx.send(DownloadEvent::Complete(result));
+                    });
+
+                    // 处理进度和结果事件 - 这个循环在 GPUI 异步上下文中运行
+                    let session_state_for_events = session_state.clone();
+                    let tab_id_for_events = tab_id_owned.clone();
+                    let transfer_id_for_events = transfer_id.clone();
+                    let local_path_for_events = local_file_path.clone();
+
+                    // 由于我们需要并行处理多个文件，我们使用 spawn 来处理每个文件的事件
+                    // 注意：这里不能使用 async_cx.clone()，因为它不能跨任务共享
+                    // 所以我们在主循环中处理事件
+                    loop {
+                        tokio::select! {
+                            _ = cancel_token.cancelled() => {
+                                info!("[SFTP] Download cancelled: {}", transfer_id_for_events);
+                                let _ = std::fs::remove_file(&local_path_for_events);
+                                let tab_id = tab_id_for_events.clone();
+                                let transfer_id = transfer_id_for_events.clone();
+                                let _ = async_cx.update(|cx| {
+                                    session_state_for_events.update(cx, |state, cx| {
+                                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                            if let Some(transfer) = tab.active_transfers.iter_mut().find(|t| t.id == transfer_id) {
+                                                transfer.status = crate::models::sftp::TransferStatus::Cancelled;
+                                                transfer.error = Some("用户取消".to_string());
+                                            }
+                                        }
+                                        cx.notify();
+                                    });
+                                });
+                                break;
+                            }
+                            event = rx.recv() => {
+                                match event {
+                                    Some(DownloadEvent::Progress(transferred, total, speed)) => {
+                                        let tab_id = tab_id_for_events.clone();
+                                        let transfer_id = transfer_id_for_events.clone();
+                                        let _ = async_cx.update(|cx| {
+                                            session_state_for_events.update(cx, |state, cx| {
+                                                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                                    if let Some(transfer) = tab.active_transfers.iter_mut().find(|t| t.id == transfer_id) {
+                                                        transfer.update_progress(transferred, total, speed);
+                                                    }
+                                                }
+                                                cx.notify();
+                                            });
+                                        });
+                                    }
+                                    Some(DownloadEvent::Complete(result)) => {
+                                        let tab_id = tab_id_for_events.clone();
+                                        let transfer_id = transfer_id_for_events.clone();
+                                        let local_path = local_path_for_events.clone();
+                                        let _ = async_cx.update(|cx| {
+                                            session_state_for_events.update(cx, |state, cx| {
+                                                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                                    if let Some(transfer) = tab.active_transfers.iter_mut().find(|t| t.id == transfer_id) {
+                                                        match &result {
+                                                            Ok(()) => {
+                                                                transfer.set_completed();
+                                                                info!("[SFTP] Download completed: {:?}", local_path);
+                                                            }
+                                                            Err(e) => {
+                                                                transfer.set_failed(e.clone());
+                                                                error!("[SFTP] Download failed: {}", e);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                cx.notify();
+                                            });
+                                        });
+                                        break;
+                                    }
+                                    None => {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .detach();
+    }
+
+    /// 上传本地文件夹到远程服务器（带文件选择器）
+    ///
+    /// 打开文件选择器让用户选择要上传的文件夹，然后调用 sftp_upload_folder 执行上传
+    pub fn sftp_upload_folder_with_picker(
+        &mut self,
+        tab_id: &str,
+        remote_dir: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        info!(
+            "[SFTP] Upload folder with picker: remote dir {} for tab {}",
+            remote_dir, tab_id
+        );
+
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+        let remote_dir_clone = remote_dir.clone();
+
+        // 使用 GPUI 异步上下文执行文件选择
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                // 打开文件夹选择对话框
+                let folder_picker = rfd::AsyncFileDialog::new().set_title("选择要上传的文件夹");
+
+                if let Some(folder_handle) = folder_picker.pick_folder().await {
+                    let local_folder = folder_handle.path().to_path_buf();
+
+                    // 在主线程调用上传方法
+                    let _ = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            state.sftp_upload_folder(
+                                &tab_id_owned,
+                                local_folder,
+                                remote_dir_clone,
+                                cx,
+                            );
+                        });
+                    });
+                } else {
+                    info!("[SFTP] Folder upload cancelled by user");
+                }
+            })
+            .detach();
+    }
+
+    /// 上传本地文件夹到远程服务器（递归）
+    ///
+    /// 递归遍历本地目录，收集所有文件，然后逐个上传
+    pub fn sftp_upload_folder(
+        &mut self,
+        tab_id: &str,
+        local_folder: std::path::PathBuf,
+        remote_dir: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        info!(
+            "[SFTP] Upload folder: {:?} -> {} for tab {}",
+            local_folder, remote_dir, tab_id
+        );
+
+        let sftp_services = self.sftp_services.clone();
+        let session_state = cx.entity().clone();
+        let tab_id_owned = tab_id.to_string();
+
+        // 尝试获取 SFTP 服务
+        let service = {
+            let guard = match sftp_services.lock() {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    return;
+                }
+            };
+            match guard.get(&tab_id_owned) {
+                Some(s) => s.clone(),
+                None => {
+                    error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    return;
+                }
+            }
+        };
+
+        // 获取 SSH manager 的 runtime
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        let runtime = ssh_manager.runtime();
+
+        // 自动切换到传输面板
+        self.set_sidebar_panel(super::SidebarPanel::Transfer);
+        cx.notify();
+
+        // 使用 GPUI 异步上下文执行
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                // 1. 递归遍历本地文件夹，收集所有文件
+                info!("[SFTP] Collecting files from local folder: {:?}", local_folder);
+
+                fn collect_local_files(
+                    dir: &std::path::Path,
+                    base: &std::path::Path,
+                ) -> std::io::Result<Vec<std::path::PathBuf>> {
+                    let mut files = Vec::new();
+
+                    for entry in std::fs::read_dir(dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+
+                        if path.is_dir() {
+                            files.extend(collect_local_files(&path, base)?);
+                        } else if path.is_file() {
+                            files.push(path);
+                        }
+                    }
+
+                    Ok(files)
+                }
+
+                let files = match collect_local_files(&local_folder, &local_folder) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        error!("[SFTP] Failed to collect local files: {}", e);
+                        return;
+                    }
+                };
+
+                if files.is_empty() {
+                    info!("[SFTP] No files to upload in folder: {:?}", local_folder);
+                    return;
+                }
+
+                info!("[SFTP] Found {} files to upload", files.len());
+
+                // 2. 获取本地文件夹的名称作为远程根目录
+                let folder_name = local_folder
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "upload".to_string());
+                let remote_root = if remote_dir == "/" {
+                    format!("/{}", folder_name)
+                } else {
+                    format!("{}/{}", remote_dir.trim_end_matches('/'), folder_name)
+                };
+
+                // 3. 收集需要创建的远程目录
+                let mut remote_dirs_to_create = std::collections::HashSet::new();
+                for file in &files {
+                    if let Ok(relative) = file.strip_prefix(&local_folder) {
+                        if let Some(parent) = relative.parent() {
+                            if !parent.as_os_str().is_empty() {
+                                let remote_parent = format!(
+                                    "{}/{}",
+                                    remote_root,
+                                    parent.to_string_lossy().replace("\\", "/")
+                                );
+                                remote_dirs_to_create.insert(remote_parent);
+                            }
+                        }
+                    }
+                }
+
+                // 确保远程根目录存在
+                remote_dirs_to_create.insert(remote_root.clone());
+
+                // 4. 在远程创建目录结构
+                let mut sorted_dirs: Vec<_> = remote_dirs_to_create.into_iter().collect();
+                sorted_dirs.sort_by_key(|p| p.matches('/').count()); // 按深度排序
+
+                for dir in sorted_dirs {
+                    let service_clone = service.clone();
+                    let dir_clone = dir.clone();
+                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+                    runtime.spawn(async move {
+                        let result = service_clone.mkdir_recursive(&dir_clone).await;
+                        let _ = tx.send(result);
+                    });
+
+                    // 等待目录创建结果
+                    if let Some(result) = rx.recv().await {
+                        if let Err(e) = result {
+                            error!("[SFTP] Failed to create remote directory {}: {}", dir, e);
+                            // 继续尝试其他目录
+                        }
+                    }
+                }
+
+                // 5. 为每个文件创建独立的上传任务
+                for local_file_path in files {
+                    // 计算相对路径和远程路径
+                    let relative_path = match local_file_path.strip_prefix(&local_folder) {
+                        Ok(r) => r.to_string_lossy().replace("\\", "/"),
+                        Err(_) => continue,
+                    };
+
+                    let remote_path = format!("{}/{}", remote_root, relative_path);
+
+                    // 获取文件大小
+                    let file_size = match std::fs::metadata(&local_file_path) {
+                        Ok(m) => m.len(),
+                        Err(e) => {
+                            error!("[SFTP] Failed to get file size for {:?}: {}", local_file_path, e);
+                            continue;
+                        }
+                    };
+
+                    // 创建传输项
+                    let transfer_item = crate::models::sftp::TransferItem::new_upload(
+                        local_file_path.clone(),
+                        remote_path.clone(),
+                        file_size,
+                    );
+                    let transfer_id = transfer_item.id.clone();
+                    let cancel_token = transfer_item.cancel_token.clone();
+
+                    // 添加传输项到列表
+                    let tab_id_for_add = tab_id_owned.clone();
+                    let _ = async_cx.update(|cx| {
+                        session_state.update(cx, |state, cx| {
+                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_add) {
+                                tab.active_transfers.push(transfer_item);
+                            }
+                            cx.notify();
+                        });
+                    });
+
+                    // 创建事件通道
+                    enum UploadEvent {
+                        Progress(u64, u64, u64),
+                        Complete(Result<(), String>),
+                    }
+                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UploadEvent>();
+
+                    // 在 tokio 运行时中启动上传任务
+                    let service_for_upload = service.clone();
+                    let local_path = local_file_path.clone();
+                    let remote = remote_path.clone();
+                    let tx_progress = tx.clone();
+
+                    runtime.spawn(async move {
+                        let result = service_for_upload
+                            .upload_file(&local_path, &remote, move |transferred, total, speed| {
+                                let _ = tx_progress.send(UploadEvent::Progress(transferred, total, speed));
+                            })
+                            .await;
+                        let _ = tx.send(UploadEvent::Complete(result));
+                    });
+
+                    // 处理进度和结果事件 - 这个循环在 GPUI 异步上下文中运行
+                    let session_state_for_events = session_state.clone();
+                    let tab_id_for_events = tab_id_owned.clone();
+                    let transfer_id_for_events = transfer_id.clone();
+
+                    loop {
+                        tokio::select! {
+                            _ = cancel_token.cancelled() => {
+                                info!("[SFTP] Upload cancelled: {}", transfer_id_for_events);
+                                let tab_id = tab_id_for_events.clone();
+                                let transfer_id = transfer_id_for_events.clone();
+                                let _ = async_cx.update(|cx| {
+                                    session_state_for_events.update(cx, |state, cx| {
+                                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                            if let Some(transfer) = tab.active_transfers.iter_mut().find(|t| t.id == transfer_id) {
+                                                transfer.status = crate::models::sftp::TransferStatus::Cancelled;
+                                                transfer.error = Some("用户取消".to_string());
+                                            }
+                                        }
+                                        cx.notify();
+                                    });
+                                });
+                                break;
+                            }
+                            event = rx.recv() => {
+                                match event {
+                                    Some(UploadEvent::Progress(transferred, total, speed)) => {
+                                        let tab_id = tab_id_for_events.clone();
+                                        let transfer_id = transfer_id_for_events.clone();
+                                        let _ = async_cx.update(|cx| {
+                                            session_state_for_events.update(cx, |state, cx| {
+                                                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                                    if let Some(transfer) = tab.active_transfers.iter_mut().find(|t| t.id == transfer_id) {
+                                                        transfer.update_progress(transferred, total, speed);
+                                                    }
+                                                }
+                                                cx.notify();
+                                            });
+                                        });
+                                    }
+                                    Some(UploadEvent::Complete(result)) => {
+                                        let tab_id = tab_id_for_events.clone();
+                                        let transfer_id = transfer_id_for_events.clone();
+                                        let _ = async_cx.update(|cx| {
+                                            session_state_for_events.update(cx, |state, cx| {
+                                                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                                    if let Some(transfer) = tab.active_transfers.iter_mut().find(|t| t.id == transfer_id) {
+                                                        match &result {
+                                                            Ok(()) => {
+                                                                transfer.set_completed();
+                                                                info!("[SFTP] Upload completed: {}", remote_path);
+                                                            }
+                                                            Err(e) => {
+                                                                transfer.set_failed(e.clone());
+                                                                error!("[SFTP] Upload failed: {}", e);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                cx.notify();
+                                            });
+                                        });
+                                        break;
+                                    }
+                                    None => {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .detach();
+    }
+
     /// 取消传输任务
     ///
     /// 标记传输为已取消状态并触发取消令牌

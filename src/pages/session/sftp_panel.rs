@@ -56,15 +56,23 @@ pub fn render_sftp_panel(
                     .and_then(|t| t.sftp_state.as_ref())
                     .map(|s| s.current_path.clone())
                 {
-                    state.sftp_upload_file(&tab_id_for_toolbar, current_path, cx);
+                    // 打开文件夹选择器进行上传
+                    state.sftp_upload_folder_with_picker(&tab_id_for_toolbar, current_path, cx);
                 }
             }
             SftpToolbarEvent::Download => {
-                // 获取选中的文件
+                // 获取选中的文件或文件夹
                 if let Some(ref file_list) = file_list_for_toolbar {
                     if let Some(file) = file_list.read(cx).get_selected_file(cx) {
-                        // 只允许下载文件，不支持目录
-                        if file.file_type != FileType::Directory {
+                        if file.file_type == FileType::Directory {
+                            // 下载文件夹 - 调用带文件选择器的方法
+                            state.sftp_download_folder_with_picker(
+                                &tab_id_for_toolbar,
+                                file.path.clone(),
+                                cx,
+                            );
+                        } else {
+                            // 下载单个文件
                             state.sftp_download_file(
                                 &tab_id_for_toolbar,
                                 file.path.clone(),

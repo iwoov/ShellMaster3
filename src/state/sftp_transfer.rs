@@ -562,13 +562,22 @@ impl SessionState {
                         }
                     }
                 }
+
+                // 上传完成后自动刷新目录
+                info!("[SFTP] Upload completed, refreshing directory");
+                let tab_id_for_refresh = tab_id_owned.clone();
+                let _ = async_cx.update(|cx| {
+                    session_state.update(cx, |state, cx| {
+                        state.sftp_refresh(&tab_id_for_refresh, cx);
+                    });
+                });
             })
             .detach();
     }
 
     /// 下载远程文件夹到本地（带文件选择器）
     ///
-    /// 打开文件选择器让用户选择保存位置，然后调用 sftp_download_folder 执行下载
+    /// 如果设置了默认下载路径则直接使用，否则打开文件选择器让用户选择保存位置
     pub fn sftp_download_folder_with_picker(
         &mut self,
         tab_id: &str,
@@ -580,6 +589,11 @@ impl SessionState {
             remote_folder, tab_id
         );
 
+        // 尝试获取默认下载路径
+        let default_path = crate::services::storage::load_settings()
+            .map(|s| s.sftp.local_default_path.clone())
+            .unwrap_or_default();
+
         let session_state = cx.entity().clone();
         let tab_id_owned = tab_id.to_string();
         let remote_folder_clone = remote_folder.clone();
@@ -587,26 +601,35 @@ impl SessionState {
         // 使用 GPUI 异步上下文执行文件选择
         cx.to_async()
             .spawn(async move |async_cx| {
-                // 打开文件夹选择对话框
-                let folder_picker = rfd::AsyncFileDialog::new().set_title("选择下载保存位置");
-
-                if let Some(folder_handle) = folder_picker.pick_folder().await {
-                    let local_dir = folder_handle.path().to_path_buf();
-
-                    // 在主线程调用下载方法
-                    let _ = async_cx.update(|cx| {
-                        session_state.update(cx, |state, cx| {
-                            state.sftp_download_folder(
-                                &tab_id_owned,
-                                remote_folder_clone,
-                                local_dir,
-                                cx,
-                            );
-                        });
-                    });
+                // 确定保存路径：优先使用默认路径，否则打开文件选择器
+                let local_dir = if !default_path.is_empty() {
+                    // 使用默认下载路径
+                    let path = std::path::PathBuf::from(&default_path);
+                    info!("[SFTP] Using default download path for folder: {:?}", path);
+                    path
                 } else {
-                    info!("[SFTP] Folder download cancelled by user");
-                }
+                    // 打开文件夹选择对话框
+                    let folder_picker = rfd::AsyncFileDialog::new().set_title("选择下载保存位置");
+
+                    if let Some(folder_handle) = folder_picker.pick_folder().await {
+                        folder_handle.path().to_path_buf()
+                    } else {
+                        info!("[SFTP] Folder download cancelled by user");
+                        return;
+                    }
+                };
+
+                // 在主线程调用下载方法
+                let _ = async_cx.update(|cx| {
+                    session_state.update(cx, |state, cx| {
+                        state.sftp_download_folder(
+                            &tab_id_owned,
+                            remote_folder_clone,
+                            local_dir,
+                            cx,
+                        );
+                    });
+                });
             })
             .detach();
     }
@@ -1166,6 +1189,15 @@ impl SessionState {
                         }
                     }
                 }
+
+                // 所有文件上传完成后自动刷新目录
+                info!("[SFTP] All folder uploads completed, refreshing directory");
+                let tab_id_for_refresh = tab_id_owned.clone();
+                let _ = async_cx.update(|cx| {
+                    session_state.update(cx, |state, cx| {
+                        state.sftp_refresh(&tab_id_for_refresh, cx);
+                    });
+                });
             })
             .detach();
     }

@@ -89,8 +89,54 @@ impl SessionState {
                         FileListContextMenuEvent::RenameConfirmed { old_path, new_name } => {
                             this.sftp_rename(&tab_id, old_path.clone(), new_name.clone(), cx);
                         }
+                        FileListContextMenuEvent::Download(path) => {
+                            // 下载单个文件 - 需要获取文件信息
+                            if let Some(tab) = this.tabs.iter().find(|t| t.id == tab_id) {
+                                if let Some(sftp_state) = &tab.sftp_state {
+                                    if let Some(file) =
+                                        sftp_state.file_list.iter().find(|e| e.path == *path)
+                                    {
+                                        this.sftp_download_file(
+                                            &tab_id,
+                                            file.path.clone(),
+                                            file.name.clone(),
+                                            file.size,
+                                            cx,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        FileListContextMenuEvent::DownloadFolder(path) => {
+                            // 下载文件夹
+                            this.sftp_download_folder_with_picker(&tab_id, path.clone(), cx);
+                        }
+                        FileListContextMenuEvent::UploadFile => {
+                            // 上传单个文件到当前目录
+                            if let Some(current_path) = this
+                                .tabs
+                                .iter()
+                                .find(|t| t.id == tab_id)
+                                .and_then(|t| t.sftp_state.as_ref())
+                                .map(|s| s.current_path.clone())
+                            {
+                                this.sftp_upload_file(&tab_id, current_path, cx);
+                            }
+                        }
+                        FileListContextMenuEvent::UploadFolder => {
+                            // 上传文件夹到当前目录
+                            if let Some(current_path) = this
+                                .tabs
+                                .iter()
+                                .find(|t| t.id == tab_id)
+                                .and_then(|t| t.sftp_state.as_ref())
+                                .map(|s| s.current_path.clone())
+                            {
+                                this.sftp_upload_folder_with_picker(&tab_id, current_path, cx);
+                            }
+                        }
                         _ => {
-                            // TODO: 其他事件待实现
+                            // TODO: 其他事件待实现 (EditFile, CopyName, CopyPath, Properties, etc.)
                         }
                     }
                 },

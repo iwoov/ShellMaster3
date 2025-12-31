@@ -15,6 +15,15 @@ struct KeyBindingItem {
     shortcut_other: &'static str,
 }
 
+/// 获取全局快捷键列表
+fn get_global_keybindings() -> Vec<KeyBindingItem> {
+    vec![KeyBindingItem {
+        action: "settings.keybindings.quit",
+        shortcut_mac: "⌘Q",
+        shortcut_other: "Ctrl+Q",
+    }]
+}
+
 /// 获取终端快捷键列表
 fn get_terminal_keybindings() -> Vec<KeyBindingItem> {
     vec![
@@ -39,20 +48,18 @@ pub fn render_keybindings_panel(state: Entity<SettingsDialogState>, cx: &App) ->
     let text_color = cx.theme().foreground;
     let bg_hover = cx.theme().secondary;
 
-    let bindings = get_terminal_keybindings();
-
     // 根据平台选择不同的快捷键显示
     #[cfg(target_os = "macos")]
     let is_mac = true;
     #[cfg(not(target_os = "macos"))]
     let is_mac = false;
 
-    div()
-        .flex()
-        .flex_col()
-        .gap_4()
-        .child(
-            // 终端快捷键分组
+    let global_bindings = get_global_keybindings();
+    let terminal_bindings = get_terminal_keybindings();
+
+    // 渲染快捷键分组的辅助闭包
+    let render_keybinding_section =
+        |title_key: &'static str, bindings: Vec<KeyBindingItem>| -> Div {
             div()
                 .flex()
                 .flex_col()
@@ -63,7 +70,7 @@ pub fn render_keybindings_panel(state: Entity<SettingsDialogState>, cx: &App) ->
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(text_color)
-                        .child(i18n::t(lang, "settings.keybindings.terminal_title")),
+                        .child(i18n::t(lang, title_key)),
                 )
                 // 快捷键列表
                 .child(
@@ -72,7 +79,7 @@ pub fn render_keybindings_panel(state: Entity<SettingsDialogState>, cx: &App) ->
                         .border_1()
                         .border_color(border_color)
                         .overflow_hidden()
-                        .children(bindings.iter().enumerate().map(|(idx, item)| {
+                        .children(bindings.into_iter().enumerate().map(|(idx, item)| {
                             let shortcut = if is_mac {
                                 item.shortcut_mac
                             } else {
@@ -106,8 +113,23 @@ pub fn render_keybindings_panel(state: Entity<SettingsDialogState>, cx: &App) ->
                                         .child(shortcut),
                                 )
                         })),
-                ),
-        )
+                )
+        };
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_4()
+        // 全局快捷键分组
+        .child(render_keybinding_section(
+            "settings.keybindings.global_title",
+            global_bindings,
+        ))
+        // 终端快捷键分组
+        .child(render_keybinding_section(
+            "settings.keybindings.terminal_title",
+            terminal_bindings,
+        ))
         // 底部提示
         .child(
             div()

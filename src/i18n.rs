@@ -56,6 +56,8 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.terminal.scrollback" => "滚动缓冲区",
 
         // 按键绑定
+        "settings.keybindings.global_title" => "全局快捷键",
+        "settings.keybindings.quit" => "退出应用",
         "settings.keybindings.terminal_title" => "终端快捷键",
         "settings.keybindings.copy" => "复制",
         "settings.keybindings.paste" => "粘贴",
@@ -463,6 +465,8 @@ fn en_us(key: &'static str) -> &'static str {
         "settings.terminal.scrollback" => "Scrollback Lines",
 
         // Key Bindings
+        "settings.keybindings.global_title" => "Global Shortcuts",
+        "settings.keybindings.quit" => "Quit Application",
         "settings.keybindings.terminal_title" => "Terminal Shortcuts",
         "settings.keybindings.copy" => "Copy",
         "settings.keybindings.paste" => "Paste",

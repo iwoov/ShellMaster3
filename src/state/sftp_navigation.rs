@@ -414,30 +414,37 @@ impl SessionState {
         }
     }
 
-    /// SFTP 删除文件或目录
+    /// SFTP 删除文件或目录（乐观更新：立即从列表移除，失败时恢复）
     pub fn sftp_delete(&mut self, tab_id: &str, path: String, cx: &mut gpui::Context<Self>) {
         info!("[SFTP] Delete: {} for tab {}", path, tab_id);
 
-        // 获取当前目录路径用于刷新
+        // 获取当前目录路径用于缓存失效
         let current_path = {
             let tab = self.tabs.iter().find(|t| t.id == tab_id);
             tab.and_then(|t| t.sftp_state.as_ref())
                 .map(|s| s.current_path.clone())
         };
 
-        // 判断是文件还是目录
-        let is_dir = {
-            let tab = self.tabs.iter().find(|t| t.id == tab_id);
-            match tab.and_then(|t| t.sftp_state.as_ref()) {
-                Some(state) => state
-                    .file_list
-                    .iter()
-                    .find(|e| e.path == path)
-                    .map(|e| e.is_dir())
-                    .unwrap_or(false),
+        // 判断是文件还是目录，并执行乐观更新（立即从列表移除）
+        let (is_dir, removed_entry) = {
+            let tab = self.tabs.iter_mut().find(|t| t.id == tab_id);
+            match tab.and_then(|t| t.sftp_state.as_mut()) {
+                Some(state) => {
+                    let is_dir = state
+                        .file_list
+                        .iter()
+                        .find(|e| e.path == path)
+                        .map(|e| e.is_dir())
+                        .unwrap_or(false);
+                    // 乐观更新：立即从列表移除
+                    let removed = state.remove_file_from_list(&path);
+                    (is_dir, removed)
+                }
                 None => return,
             }
         };
+        // 通知 UI 更新（文件已从列表移除）
+        cx.notify();
 
         let sftp_services = self.sftp_services.clone();
         let session_state = cx.entity().clone();
@@ -453,6 +460,15 @@ impl SessionState {
                 Ok(g) => g,
                 Err(e) => {
                     error!("[SFTP] Failed to lock sftp_services: {}", e);
+                    // 恢复被删除的文件
+                    if let Some((index, entry)) = removed_entry {
+                        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                            if let Some(ref mut sftp_state) = tab.sftp_state {
+                                sftp_state.restore_file_to_list(index, entry);
+                            }
+                        }
+                        cx.notify();
+                    }
                     return;
                 }
             };
@@ -460,6 +476,15 @@ impl SessionState {
                 Some(s) => s.clone(),
                 None => {
                     error!("[SFTP] No SFTP service for tab {}", tab_id_owned);
+                    // 恢复被删除的文件
+                    if let Some((index, entry)) = removed_entry {
+                        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                            if let Some(ref mut sftp_state) = tab.sftp_state {
+                                sftp_state.restore_file_to_list(index, entry);
+                            }
+                        }
+                        cx.notify();
+                    }
                     return;
                 }
             }
@@ -484,23 +509,32 @@ impl SessionState {
                     let tab_id_clone = tab_id_for_ui.clone();
 
                     let _ = async_cx.update(|cx| {
-                        // 先更新 state
                         session_state.update(cx, |state, cx| {
                             match &result {
                                 Ok(()) => {
                                     info!("[SFTP] Successfully deleted: {}", path);
-                                    // 刷新当前目录
-                                    if let Some(current) = current_path.clone() {
-                                        state.sftp_load_directory(&tab_id_clone, current, cx);
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("[SFTP] Failed to delete {}: {}", path, e);
+                                    // 使当前目录缓存失效（下次进入时会重新加载）
                                     if let Some(tab) =
                                         state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
                                     {
                                         if let Some(ref mut sftp_state) = tab.sftp_state {
-                                            sftp_state.set_error(format!("删除失败: {}", e));
+                                            if let Some(ref current) = current_path {
+                                                sftp_state.invalidate_cache(current);
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[SFTP] Failed to delete {}: {}", path, e);
+                                    // 删除失败，恢复文件到列表
+                                    if let Some((index, entry)) = removed_entry.clone() {
+                                        if let Some(tab) =
+                                            state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
+                                        {
+                                            if let Some(ref mut sftp_state) = tab.sftp_state {
+                                                sftp_state.restore_file_to_list(index, entry);
+                                                sftp_state.set_error(format!("删除失败: {}", e));
+                                            }
                                         }
                                     }
                                 }
@@ -508,7 +542,7 @@ impl SessionState {
                             cx.notify();
                         });
 
-                        // 推送失败通知（成功时不通知，用户可通过文件列表刷新看到）
+                        // 推送失败通知
                         if result.is_err() {
                             if let Some(window) = cx.active_window() {
                                 use gpui::AppContext as _;

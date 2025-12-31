@@ -194,6 +194,25 @@ impl SftpState {
         self.file_list_revision = self.file_list_revision.wrapping_add(1);
     }
 
+    /// 从文件列表中移除指定路径的文件（乐观更新）
+    /// 返回被移除的文件条目及其索引（用于失败时恢复）
+    pub fn remove_file_from_list(&mut self, path: &str) -> Option<(usize, FileEntry)> {
+        if let Some(index) = self.file_list.iter().position(|e| e.path == path) {
+            let entry = self.file_list.remove(index);
+            self.file_list_revision = self.file_list_revision.wrapping_add(1);
+            Some((index, entry))
+        } else {
+            None
+        }
+    }
+
+    /// 在指定位置恢复文件条目（删除失败时使用）
+    pub fn restore_file_to_list(&mut self, index: usize, entry: FileEntry) {
+        let insert_index = index.min(self.file_list.len());
+        self.file_list.insert(insert_index, entry);
+        self.file_list_revision = self.file_list_revision.wrapping_add(1);
+    }
+
     /// 切换显示隐藏文件
     pub fn toggle_show_hidden(&mut self) {
         self.show_hidden = !self.show_hidden;

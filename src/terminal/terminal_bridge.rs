@@ -8,6 +8,7 @@ use tracing::{debug, error, trace, warn};
 
 use crate::models::settings::TerminalSettings;
 use crate::ssh::session::{PtyRequest, TerminalChannel};
+use crate::state::{SessionState, SessionStatus};
 use crate::terminal::{TerminalState, TERMINAL_PADDING_LEFT};
 
 /// 使用 GPUI text_system 精确计算终端尺寸
@@ -75,10 +76,19 @@ pub fn create_pty_request(cols: u32, rows: u32, pix_width: f32, pix_height: f32)
 
 /// 启动 PTY 读取循环 (fire-and-forget)
 /// 读取循环会持续运行直到通道关闭
-pub fn start_pty_reader(channel: Arc<TerminalChannel>, terminal: Entity<TerminalState>, cx: &App) {
+pub fn start_pty_reader(
+    channel: Arc<TerminalChannel>,
+    terminal: Entity<TerminalState>,
+    session_state: Entity<SessionState>,
+    tab_id: String,
+    terminal_id: String,
+    cx: &App,
+) {
     // 使用与 connector.rs 相同的 spawn 模式
     cx.spawn(async move |async_cx| {
         debug!("[PTY Reader] Started");
+
+        let mut disconnect_reason: Option<String> = None;
 
         loop {
             // 读取 PTY 输出
@@ -104,13 +114,51 @@ pub fn start_pty_reader(channel: Arc<TerminalChannel>, terminal: Entity<Terminal
                 }
                 Ok(None) => {
                     debug!("[PTY Reader] Channel closed");
+                    disconnect_reason = Some("terminal.disconnected".to_string());
                     break;
                 }
                 Err(e) => {
                     error!("[PTY Reader] Error: {:?}", e);
+                    disconnect_reason = Some(format!("{:?}", e));
                     break;
                 }
             }
+        }
+
+        // 更新会话状态为断开并发送通知
+        if disconnect_reason.is_some() {
+            let tab_id_clone = tab_id.clone();
+            let _ = async_cx.update(|cx| {
+                session_state.update(cx, |state, cx| {
+                    // 只更新会话状态为 Disconnected，不设置 pty_error
+                    // 这样终端历史内容会被保留
+                    if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone) {
+                        tab.status = SessionStatus::Disconnected;
+                    }
+                    cx.notify();
+                });
+
+                // 推送断开通知
+                if let Some(window) = cx.active_window() {
+                    use gpui::AppContext as _;
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        use gpui::Styled;
+                        use gpui_component::notification::{Notification, NotificationType};
+                        use gpui_component::WindowExt;
+
+                        let lang = crate::services::storage::load_settings()
+                            .map(|s| s.theme.language)
+                            .unwrap_or_default();
+
+                        let notification = Notification::new()
+                            .message(crate::i18n::t(&lang, "terminal.disconnected"))
+                            .with_type(NotificationType::Warning)
+                            .w_48()
+                            .py_2();
+                        window.push_notification(notification, cx);
+                    });
+                }
+            });
         }
 
         debug!("[PTY Reader] Stopped");

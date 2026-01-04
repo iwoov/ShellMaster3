@@ -527,8 +527,20 @@ impl HomePage {
                     )
                     .into_any_element()
                 }
-                SessionStatus::Error(_) | SessionStatus::Disconnected => {
-                    // 错误或断开状态也使用连接页面显示
+                SessionStatus::Disconnected => {
+                    // 断开状态继续显示终端布局，终端区域会显示断开提示
+                    let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
+                    render_session_layout(
+                        &tab,
+                        sidebar_collapsed,
+                        session_state.clone(),
+                        window,
+                        cx,
+                    )
+                    .into_any_element()
+                }
+                SessionStatus::Error(_) => {
+                    // 错误状态使用连接页面显示
                     let progress_state = self
                         .connecting_progress
                         .entry(tab.id.clone())

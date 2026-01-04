@@ -12,7 +12,7 @@ use crate::pages::connecting::page::ConnectionDetails;
 use crate::pages::connecting::ConnectingProgress;
 use crate::state::{SessionState, SessionStatus};
 
-use super::config::{AuthMethod, SshConfig};
+use super::config::{AuthMethod, KeepaliveConfig, SshConfig};
 use super::event::{ConnectionEvent, ConnectionStage, LogEntry};
 
 /// 从 ServerData 构建 SshConfig
@@ -28,15 +28,26 @@ fn build_ssh_config(server: &ServerData) -> SshConfig {
         },
     };
 
+    // 从用户设置中读取连接配置
+    let settings = crate::services::storage::load_settings().unwrap_or_default();
+    let connection_settings = &settings.connection;
+
+    // 构建心跳配置
+    let keepalive = KeepaliveConfig {
+        enabled: connection_settings.keepalive_interval_secs > 0,
+        interval: connection_settings.keepalive_interval_secs as u64,
+        max_retries: 3,
+    };
+
     SshConfig {
         host: server.host.clone(),
         port: server.port,
         username: server.username.clone(),
         auth,
-        connect_timeout: 30,
+        connect_timeout: connection_settings.connection_timeout_secs as u64,
         jump_host: None, // TODO: 从 server.jump_host_id 加载
         proxy: None,     // TODO: 从 server.proxy 转换
-        keepalive: Default::default(),
+        keepalive,
     }
 }
 

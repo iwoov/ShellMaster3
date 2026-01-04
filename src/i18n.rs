@@ -338,6 +338,8 @@ fn zh_cn(key: &'static str) -> &'static str {
         "session.terminal.simulated" => "模拟终端区域",
         "session.terminal.command_placeholder" => "输入命令...",
         "session.terminal.tab_label" => "终端",
+        "terminal.disconnected" => "连接已断开",
+        "terminal.error" => "终端错误",
 
         // Monitor 面板详细
         "monitor.system_info" => "系统信息",
@@ -751,6 +753,8 @@ fn en_us(key: &'static str) -> &'static str {
         "session.terminal.simulated" => "Simulated Terminal",
         "session.terminal.command_placeholder" => "Enter command...",
         "session.terminal.tab_label" => "Terminal",
+        "terminal.disconnected" => "Connection lost",
+        "terminal.error" => "Terminal Error",
 
         // Monitor Panel Detail
         "monitor.system_info" => "System Info",

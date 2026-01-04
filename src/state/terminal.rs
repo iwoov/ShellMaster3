@@ -167,8 +167,18 @@ impl SessionState {
                         });
 
                         // 启动 PTY 读取循环
+                        let session_state_for_reader = session_state_for_task.clone();
+                        let session_id_for_reader = session_id.clone();
+                        let terminal_id_for_reader = terminal_id_for_task.clone();
                         let _ = async_cx.update(|cx| {
-                            crate::terminal::start_pty_reader(channel, terminal_for_task, cx);
+                            crate::terminal::start_pty_reader(
+                                channel,
+                                terminal_for_task,
+                                session_state_for_reader,
+                                session_id_for_reader,
+                                terminal_id_for_reader,
+                                cx,
+                            );
                         });
 
                         debug!(

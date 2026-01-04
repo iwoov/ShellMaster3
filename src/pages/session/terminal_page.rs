@@ -13,7 +13,7 @@ use alacritty_terminal::term::TermMode;
 
 use crate::constants::icons;
 use crate::ssh::session::TerminalChannel;
-use crate::state::{SessionState, SessionTab};
+use crate::state::{SessionState, SessionStatus, SessionTab};
 use crate::terminal::{
     hex_to_hsla, keystroke_to_escape, render_terminal_view, SendDown, SendEnter, SendEscape,
     SendLeft, SendRight, SendTab, SendUp, TerminalCopy, TerminalPaste, TerminalState,
@@ -659,7 +659,29 @@ fn render_error_terminal(
     _cx: &App,
 ) -> Div {
     let bg_color = hex_to_hsla(&settings.background_color);
-    let error_color = Hsla::from(rgb(0xef4444)); // red-500
+
+    // 获取语言设置
+    let lang = crate::services::storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or_default();
+
+    // 判断是否是断开连接
+    let is_disconnected = error == "terminal.disconnected";
+
+    // 根据类型选择颜色和图标
+    let (color, icon, message) = if is_disconnected {
+        (
+            Hsla::from(rgb(0xf59e0b)), // 橙色 (amber-500)
+            icons::CIRCLE,
+            crate::i18n::t(&lang, "terminal.disconnected").to_string(),
+        )
+    } else {
+        (
+            Hsla::from(rgb(0xef4444)), // 红色 (red-500)
+            icons::X,
+            format!("{}: {}", crate::i18n::t(&lang, "terminal.error"), error),
+        )
+    };
 
     div()
         .size_full()
@@ -673,13 +695,8 @@ fn render_error_terminal(
                 .flex_col()
                 .items_center()
                 .gap_2()
-                .child(svg().path(icons::X).size(px(32.)).text_color(error_color))
-                .child(
-                    div()
-                        .text_color(error_color)
-                        .text_sm()
-                        .child(format!("PTY Error: {}", error)),
-                ),
+                .child(svg().path(icon).size(px(32.)).text_color(color))
+                .child(div().text_color(color).text_sm().child(message)),
         )
 }
 

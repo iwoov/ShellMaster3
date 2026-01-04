@@ -26,6 +26,7 @@ pub mod icons {
     pub const LOADER: &str = "icons/loader.svg";
     pub const CHECK: &str = "icons/check.svg";
     pub const X: &str = "icons/x.svg";
+    pub const CIRCLE: &str = "icons/circle.svg";
     pub const PAUSE: &str = "icons/pause.svg";
     pub const PLAY: &str = "icons/play.svg";
     // 会话页面图标

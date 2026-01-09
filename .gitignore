@@ -28,3 +28,7 @@ Thumbs.db
 .env.local
 target/*
 docs/*
+
+openspec/
+AGENTS.md
+CLAUDE.md

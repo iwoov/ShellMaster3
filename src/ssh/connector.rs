@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::models::server::ProxyType;
+use crate::models::server::ProxyType as ModelProxyType;
 use crate::models::ServerData;
 use crate::pages::connecting::page::ConnectionDetails;
 use crate::pages::connecting::ConnectingProgress;
 use crate::state::{SessionState, SessionStatus};
 
-use super::config::{AuthMethod, KeepaliveConfig, SshConfig};
+use super::config::{AuthMethod, KeepaliveConfig, ProxyConfig, ProxyType, SshConfig};
 use super::event::{ConnectionEvent, ConnectionStage, LogEntry};
 
 /// 从 ServerData 构建 SshConfig
@@ -39,6 +39,26 @@ fn build_ssh_config(server: &ServerData) -> SshConfig {
         max_retries: 3,
     };
 
+    // 构建代理配置
+    let proxy = server.proxy.as_ref().and_then(|p| {
+        if p.enabled {
+            Some(ProxyConfig {
+                proxy_type: match p.proxy_type {
+                    ModelProxyType::Http => ProxyType::Http,
+                    ModelProxyType::Socks5 => ProxyType::Socks5,
+                },
+                host: p.host.clone(),
+                port: p.port,
+                auth: match (&p.username, &p.password_encrypted) {
+                    (Some(u), Some(pw)) if !u.is_empty() => Some((u.clone(), pw.clone())),
+                    _ => None,
+                },
+            })
+        } else {
+            None
+        }
+    });
+
     SshConfig {
         host: server.host.clone(),
         port: server.port,
@@ -46,7 +66,7 @@ fn build_ssh_config(server: &ServerData) -> SshConfig {
         auth,
         connect_timeout: connection_settings.connection_timeout_secs as u64,
         jump_host: None, // TODO: 从 server.jump_host_id 加载
-        proxy: None,     // TODO: 从 server.proxy 转换
+        proxy,
         keepalive,
     }
 }
@@ -102,8 +122,8 @@ pub fn start_ssh_connection(
     if let Some(proxy) = &server.proxy {
         if proxy.enabled {
             let type_str = match proxy.proxy_type {
-                ProxyType::Http => "HTTP",
-                ProxyType::Socks5 => "SOCKS5",
+                ModelProxyType::Http => "HTTP",
+                ModelProxyType::Socks5 => "SOCKS5",
             };
             details.proxy_desc = Some(format!(
                 "{} Proxy ({}:{})",
@@ -134,6 +154,7 @@ pub fn start_ssh_connection(
     let session_state_for_result = session_state.clone();
     let tab_id_for_result = tab_id.clone();
     let server_label_for_log = server_label.clone();
+    let server_for_reconnect = server.clone();
 
     // 启动 GPUI 任务：先延迟，再启动连接，再轮询状态
     cx.spawn(async move |async_cx| {
@@ -278,9 +299,15 @@ pub fn start_ssh_connection(
 
                     // 阶段5: 更新会话状态为已连接，触发跳转到session
                     let tab_id_clone = tab_id_for_result.clone();
+                    let server_data_clone = server_for_reconnect.clone();
                     let _ = async_cx.update(|cx| {
                         session_state_for_result.update(cx, |state, cx| {
                             state.update_tab_status(&tab_id_clone, SessionStatus::Connected);
+
+                            // 存储 server_data 用于重连
+                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone) {
+                                tab.server_data = Some(server_data_clone);
+                            }
 
                             // 启动 Monitor 服务（收集服务器监控数据）
                             state.start_monitor_service(tab_id_clone.clone(), cx);

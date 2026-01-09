@@ -16,6 +16,8 @@ pub mod error;
 pub mod event;
 pub mod handler;
 pub mod manager;
+pub mod proxy;
+pub mod reconnect;
 pub mod session;
 
 // 公开导出
@@ -25,6 +27,7 @@ pub use connector::start_ssh_connection;
 pub use error::SshError;
 pub use event::{ConnectionEvent, ConnectionStage, LogEntry, LogLevel};
 pub use manager::SshManager;
+pub use reconnect::{start_manual_reconnection, start_reconnection};
 pub use session::{
     CommandOutput, ExecChannel, PtyRequest, SftpChannel, SshSession, TerminalChannel,
 };

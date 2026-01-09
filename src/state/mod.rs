@@ -12,6 +12,7 @@ use crate::components::sftp::{
     FileListView, NewFileDialogState, NewFolderDialogState, PathBarState, PropertiesDialogState,
 };
 use crate::models::monitor::MonitorState;
+use crate::models::server::ServerData;
 use crate::models::sftp::SftpState;
 use crate::models::SnippetsConfig;
 use crate::services::monitor::MonitorService;
@@ -30,6 +31,8 @@ pub enum SessionStatus {
     Connected,
     Error(String),
     Disconnected,
+    /// 重连中，包含当前尝试次数和最大尝试次数
+    Reconnecting { attempt: u32, max_attempts: u32 },
 }
 
 /// 单个终端实例
@@ -57,6 +60,8 @@ pub struct SessionTab {
     pub server_id: String,
     pub server_label: String,
     pub status: SessionStatus,
+    /// 服务器连接数据（用于重连）
+    pub server_data: Option<ServerData>,
     /// 多终端实例列表
     pub terminals: Vec<TerminalInstance>,
     /// 当前激活的终端 ID

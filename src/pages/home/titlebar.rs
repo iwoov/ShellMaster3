@@ -128,8 +128,12 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
                             SessionStatus::Connected => Some((icons::CHECK, primary)),
                             SessionStatus::Error(_) => Some((icons::X, Hsla::from(rgb(0xef4444)))),
                             SessionStatus::Disconnected => {
-                                Some((icons::CIRCLE, Hsla::from(rgb(0xf59e0b))))
-                                // 橙色圆圈
+                                Some((icons::LOADER, Hsla::from(rgb(0xf59e0b))))
+                                // 橙色加载图标
+                            }
+                            SessionStatus::Reconnecting { .. } => {
+                                Some((icons::LOADER, Hsla::from(rgb(0xf59e0b))))
+                                // 橙色加载图标
                             }
                         };
 

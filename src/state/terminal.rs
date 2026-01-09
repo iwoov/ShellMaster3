@@ -21,8 +21,8 @@ impl SessionState {
         // 查找 tab 并检查状态
         let tab_id_owned = tab_id.to_string();
 
-        // 获取需要初始化的终端实例 ID
-        let terminal_instance_id = {
+        // 获取需要初始化的终端实例 ID 和现有终端状态（如果有）
+        let (terminal_instance_id, existing_terminal) = {
             let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) else {
                 return;
             };
@@ -38,12 +38,15 @@ impl SessionState {
             if instance.pty_initialized {
                 return;
             }
-            active_id.clone()
+            // 获取现有终端状态（用于重连时保留历史）
+            (active_id.clone(), instance.terminal.clone())
         };
 
         info!(
-            "[Terminal] Initializing PTY for tab {} terminal {}",
-            tab_id, terminal_instance_id
+            "[Terminal] Initializing PTY for tab {} terminal {}{}",
+            tab_id,
+            terminal_instance_id,
+            if existing_terminal.is_some() { " (reconnecting, preserving history)" } else { "" }
         );
         debug!(
             "[Terminal] Area size: {}x{} pixels",
@@ -55,8 +58,13 @@ impl SessionState {
             .unwrap_or_default()
             .terminal;
 
-        // 创建 TerminalState
-        let terminal_state = cx.new(|_cx| crate::terminal::TerminalState::new(settings.clone()));
+        // 重用现有 TerminalState（保留历史）或创建新的
+        let terminal_state = if let Some(existing) = existing_terminal {
+            info!("[Terminal] Reusing existing terminal state (preserving scrollback history)");
+            existing
+        } else {
+            cx.new(|_cx| crate::terminal::TerminalState::new(settings.clone()))
+        };
 
         // 计算终端尺寸
         let (cols, rows, cell_width, line_height) = crate::terminal::calculate_terminal_size(

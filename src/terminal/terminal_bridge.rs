@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use gpui::*;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::models::settings::TerminalSettings;
 use crate::ssh::session::{PtyRequest, TerminalChannel};
@@ -125,45 +125,93 @@ pub fn start_pty_reader(
             }
         }
 
-        // 更新会话状态为断开并发送通知
+        // 断开连接后处理
         if disconnect_reason.is_some() {
-            let tab_id_clone = tab_id.clone();
-            let _ = async_cx.update(|cx| {
-                session_state.update(cx, |state, cx| {
-                    // 只更新会话状态为 Disconnected，不设置 pty_error
-                    // 这样终端历史内容会被保留
-                    if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone) {
-                        tab.status = SessionStatus::Disconnected;
-                    }
-                    cx.notify();
-                });
+            // 读取设置和 server_data
+            let (auto_reconnect, server_data) = async_cx
+                .update(|cx| {
+                    let settings = crate::services::storage::load_settings().unwrap_or_default();
+                    let server_data = session_state
+                        .read(cx)
+                        .tabs
+                        .iter()
+                        .find(|t| t.id == tab_id)
+                        .and_then(|t| t.server_data.clone());
+                    (settings.connection.auto_reconnect, server_data)
+                })
+                .unwrap_or((false, None));
 
-                // 推送断开通知
-                if let Some(window) = cx.active_window() {
-                    use gpui::AppContext as _;
-                    let _ = cx.update_window(window, |_, window, cx| {
-                        use gpui::Styled;
-                        use gpui_component::notification::{Notification, NotificationType};
-                        use gpui_component::WindowExt;
+            if auto_reconnect {
+                if let Some(server) = server_data {
+                    info!(
+                        "[PTY Reader] Connection lost, starting auto-reconnect for {}",
+                        server.label
+                    );
 
-                        let lang = crate::services::storage::load_settings()
-                            .map(|s| s.theme.language)
-                            .unwrap_or_default();
-
-                        let notification = Notification::new()
-                            .message(crate::i18n::t(&lang, "terminal.disconnected"))
-                            .with_type(NotificationType::Warning)
-                            .w_48()
-                            .py_2();
-                        window.push_notification(notification, cx);
+                    // 启动自动重连
+                    let tab_id_clone = tab_id.clone();
+                    let terminal_id_clone = terminal_id.clone();
+                    let _ = async_cx.update(|cx| {
+                        crate::ssh::start_reconnection(
+                            server,
+                            tab_id_clone,
+                            terminal_id_clone,
+                            session_state.clone(),
+                            cx,
+                        );
                     });
+                } else {
+                    warn!("[PTY Reader] No server_data available for reconnection");
+                    set_disconnected_status(&async_cx, &session_state, &tab_id);
                 }
-            });
+            } else {
+                info!("[PTY Reader] Auto-reconnect disabled, setting status to Disconnected");
+                set_disconnected_status(&async_cx, &session_state, &tab_id);
+            }
         }
 
         debug!("[PTY Reader] Stopped");
     })
     .detach();
+}
+
+/// 设置会话状态为断开并发送通知
+fn set_disconnected_status(
+    async_cx: &AsyncApp,
+    session_state: &Entity<SessionState>,
+    tab_id: &str,
+) {
+    let tab_id_clone = tab_id.to_string();
+    let session_state_clone = session_state.clone();
+    let _ = async_cx.update(|cx| {
+        session_state_clone.update(cx, |state, cx| {
+            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone) {
+                tab.status = SessionStatus::Disconnected;
+            }
+            cx.notify();
+        });
+
+        // 推送断开通知
+        if let Some(window) = cx.active_window() {
+            use gpui::AppContext as _;
+            let _ = cx.update_window(window, |_, window, cx| {
+                use gpui::Styled;
+                use gpui_component::notification::{Notification, NotificationType};
+                use gpui_component::WindowExt;
+
+                let lang = crate::services::storage::load_settings()
+                    .map(|s| s.theme.language)
+                    .unwrap_or_default();
+
+                let notification = Notification::new()
+                    .message(crate::i18n::t(&lang, "terminal.disconnected"))
+                    .with_type(NotificationType::Warning)
+                    .w_48()
+                    .py_2();
+                window.push_notification(notification, cx);
+            });
+        }
+    });
 }
 
 /// 发送数据到 PTY

@@ -14,6 +14,7 @@ use super::config::{AuthMethod, SshConfig};
 use super::error::SshError;
 use super::event::{ConnectionEvent, ConnectionStage, HostKeyAction, LogEntry};
 use super::handler::SshClientHandler;
+use super::proxy::connect_via_proxy;
 use super::session::SshSession;
 
 /// SSH 客户端
@@ -62,25 +63,59 @@ impl SshClient {
             self.config.username, self.config.host, self.config.port
         )));
 
-        // 解析地址
-        let addr = format!("{}:{}", self.config.host, self.config.port);
-        let socket_addr = addr
-            .to_socket_addrs()
-            .map_err(|e| SshError::Config(format!("Failed to resolve address: {}", e)))?
-            .next()
-            .ok_or_else(|| SshError::Config("No valid address found".to_string()))?;
-
-        // 阶段 2: TCP 连接
-        self.emit_stage(ConnectionStage::ConnectingHost);
-        self.log(LogEntry::info(format!("Connecting to {}...", socket_addr)));
-
         let connect_timeout = Duration::from_secs(self.config.connect_timeout);
-        let tcp_stream = timeout(connect_timeout, TcpStream::connect(socket_addr))
-            .await
-            .map_err(|_| SshError::Timeout(self.config.connect_timeout))?
-            .map_err(SshError::Io)?;
 
-        self.log(LogEntry::info("TCP connection established"));
+        // 阶段 2: TCP 连接（通过代理或直连）
+        let tcp_stream = if let Some(proxy) = &self.config.proxy {
+            // 通过代理连接
+            self.emit_stage(ConnectionStage::ConnectingProxy);
+            let proxy_type = match proxy.proxy_type {
+                super::config::ProxyType::Http => "HTTP",
+                super::config::ProxyType::Socks5 => "SOCKS5",
+            };
+            self.log(LogEntry::info(format!(
+                "Connecting via {} proxy {}:{}...",
+                proxy_type, proxy.host, proxy.port
+            )));
+
+            let stream = connect_via_proxy(
+                proxy,
+                &self.config.host,
+                self.config.port,
+                connect_timeout,
+            )
+            .await?;
+
+            self.log(LogEntry::info("Proxy tunnel established"));
+
+            // 发出连接主机阶段（隧道已建立，现在进行 SSH）
+            self.emit_stage(ConnectionStage::ConnectingHost);
+            self.log(LogEntry::info(format!(
+                "Connected to {}:{} via proxy",
+                self.config.host, self.config.port
+            )));
+
+            stream
+        } else {
+            // 直接连接
+            let addr = format!("{}:{}", self.config.host, self.config.port);
+            let socket_addr = addr
+                .to_socket_addrs()
+                .map_err(|e| SshError::Config(format!("Failed to resolve address: {}", e)))?
+                .next()
+                .ok_or_else(|| SshError::Config("No valid address found".to_string()))?;
+
+            self.emit_stage(ConnectionStage::ConnectingHost);
+            self.log(LogEntry::info(format!("Connecting to {}...", socket_addr)));
+
+            let stream = timeout(connect_timeout, TcpStream::connect(socket_addr))
+                .await
+                .map_err(|_| SshError::Timeout(self.config.connect_timeout))?
+                .map_err(SshError::Io)?;
+
+            self.log(LogEntry::info("TCP connection established"));
+            stream
+        };
 
         // 阶段 3: SSH 握手
         self.emit_stage(ConnectionStage::Handshaking);

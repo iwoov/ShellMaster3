@@ -27,6 +27,7 @@ impl SessionState {
             server_id,
             server_label,
             status: SessionStatus::Connecting,
+            server_data: None,
             terminals: vec![first_terminal],
             active_terminal_id: Some(first_terminal_id),
             terminal_counter: 1,

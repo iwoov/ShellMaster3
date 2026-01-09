@@ -340,6 +340,11 @@ fn zh_cn(key: &'static str) -> &'static str {
         "session.terminal.tab_label" => "终端",
         "terminal.disconnected" => "连接已断开",
         "terminal.error" => "终端错误",
+        "terminal.reconnecting" => "正在重连...",
+        "terminal.reconnect" => "重新连接",
+        "terminal.reconnect_attempt" => "尝试",
+        "terminal.reconnected" => "重连成功",
+        "terminal.reconnect_failed" => "重连失败",
 
         // Monitor 面板详细
         "monitor.system_info" => "系统信息",
@@ -755,6 +760,11 @@ fn en_us(key: &'static str) -> &'static str {
         "session.terminal.tab_label" => "Terminal",
         "terminal.disconnected" => "Connection lost",
         "terminal.error" => "Terminal Error",
+        "terminal.reconnecting" => "Reconnecting...",
+        "terminal.reconnect" => "Reconnect",
+        "terminal.reconnect_attempt" => "Attempt",
+        "terminal.reconnected" => "Reconnected",
+        "terminal.reconnect_failed" => "Reconnection failed",
 
         // Monitor Panel Detail
         "monitor.system_info" => "System Info",

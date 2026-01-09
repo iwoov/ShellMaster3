@@ -45,6 +45,11 @@ pub fn render_terminal_panel(
     let pty_channel = active_instance.and_then(|inst| inst.pty_channel.clone());
     let pty_error = active_instance.and_then(|inst| inst.pty_error.clone());
 
+    // 获取会话状态用于显示重连/断开状态
+    let session_status = tab.status.clone();
+    let tab_id_for_reconnect = tab.id.clone();
+    let terminal_id_for_reconnect = active_terminal_id.clone().unwrap_or_default();
+
     // 创建终端显示区域的基础 div
     // 使用 key_context("Terminal") 建立终端专用键盘上下文，用于支持自定义快捷键
     let mut terminal_display = div()
@@ -474,7 +479,38 @@ pub fn render_terminal_panel(
         render_error_terminal(&terminal_settings, &error, cx).into_any_element()
     } else if let Some(ref terminal) = terminal_entity {
         // 有终端实例 - 渲染真实终端内容
-        render_terminal_content(terminal.clone(), &terminal_settings, cx).into_any_element()
+        // 如果处于重连或断开状态，在终端内容上叠加状态覆盖层
+        let terminal_content =
+            render_terminal_content(terminal.clone(), &terminal_settings, cx).into_any_element();
+
+        match &session_status {
+            SessionStatus::Reconnecting { attempt, max_attempts } => {
+                // 重连中 - 显示终端历史 + 重连覆盖层
+                render_terminal_with_overlay(
+                    terminal_content,
+                    &terminal_settings,
+                    render_reconnecting_overlay(*attempt, *max_attempts, cx),
+                    cx,
+                )
+                .into_any_element()
+            }
+            SessionStatus::Disconnected => {
+                // 断开连接 - 显示终端历史 + 断开覆盖层 + 重连按钮
+                render_terminal_with_overlay(
+                    terminal_content,
+                    &terminal_settings,
+                    render_disconnected_overlay(
+                        tab_id_for_reconnect.clone(),
+                        terminal_id_for_reconnect.clone(),
+                        session_state.clone(),
+                        cx,
+                    ),
+                    cx,
+                )
+                .into_any_element()
+            }
+            _ => terminal_content,
+        }
     } else {
         // 等待初始化 - 显示加载提示
         render_loading_terminal(&terminal_settings, cx).into_any_element()
@@ -724,6 +760,134 @@ fn render_loading_terminal(settings: &crate::models::settings::TerminalSettings,
                         .text_sm()
                         .child("Initializing terminal..."),
                 ),
+        )
+}
+
+/// 渲染终端内容 + 覆盖层
+fn render_terminal_with_overlay(
+    terminal_content: AnyElement,
+    _settings: &crate::models::settings::TerminalSettings,
+    overlay: impl IntoElement,
+    _cx: &App,
+) -> Div {
+    div()
+        .size_full()
+        .relative()
+        // 终端内容层（底层，半透明）
+        .child(
+            div()
+                .size_full()
+                .opacity(0.6)
+                .child(terminal_content),
+        )
+        // 覆盖层（顶层）
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(overlay),
+        )
+}
+
+/// 渲染重连中覆盖层
+fn render_reconnecting_overlay(attempt: u32, max_attempts: u32, _cx: &App) -> Div {
+    let lang = crate::services::storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or_default();
+
+    let amber_color = Hsla::from(rgb(0xf59e0b));
+
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_3()
+        .p_6()
+        .rounded_lg()
+        .bg(Hsla::from(rgb(0x000000)).opacity(0.7))
+        .child(svg().path(icons::LOADER).size(px(32.)).text_color(amber_color))
+        .child(
+            div()
+                .text_color(amber_color)
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .child(crate::i18n::t(&lang, "terminal.reconnecting")),
+        )
+        .child(
+            div()
+                .text_color(Hsla::from(rgb(0xffffff)).opacity(0.6))
+                .text_xs()
+                .child(format!(
+                    "{} {}/{}",
+                    crate::i18n::t(&lang, "terminal.reconnect_attempt"),
+                    attempt,
+                    max_attempts
+                )),
+        )
+}
+
+/// 渲染断开连接覆盖层（带重连按钮）
+fn render_disconnected_overlay(
+    tab_id: String,
+    terminal_id: String,
+    session_state: Entity<SessionState>,
+    cx: &App,
+) -> Div {
+    let lang = crate::services::storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or_default();
+
+    let amber_color = Hsla::from(rgb(0xf59e0b));
+    let primary = cx.theme().primary;
+
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_3()
+        .p_6()
+        .rounded_lg()
+        .bg(Hsla::from(rgb(0x000000)).opacity(0.7))
+        .child(svg().path(icons::LOADER).size(px(32.)).text_color(amber_color))
+        .child(
+            div()
+                .text_color(amber_color)
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .child(crate::i18n::t(&lang, "terminal.disconnected")),
+        )
+        // 重连按钮
+        .child(
+            div()
+                .id("reconnect-btn")
+                .mt_2()
+                .px_4()
+                .py_2()
+                .rounded_md()
+                .bg(primary)
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.9))
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(svg().path(icons::REFRESH).size(px(14.)).text_color(Hsla::from(rgb(0xffffff))))
+                .child(
+                    div()
+                        .text_color(Hsla::from(rgb(0xffffff)))
+                        .text_sm()
+                        .child(crate::i18n::t(&lang, "terminal.reconnect")),
+                )
+                .on_click(move |_, _, cx| {
+                    crate::ssh::start_manual_reconnection(
+                        tab_id.clone(),
+                        terminal_id.clone(),
+                        session_state.clone(),
+                        cx,
+                    );
+                }),
         )
 }
 

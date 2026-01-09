@@ -147,11 +147,12 @@ pub fn start_reconnection(
                         if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone) {
                             tab.status = SessionStatus::Connected;
 
+                            // 重置服务启动标志，让 PTY 创建时重新启动服务
+                            tab.services_started = false;
+
                             // 重置终端的 PTY 状态，等待重新初始化
-                            if let Some(terminal) = tab
-                                .terminals
-                                .iter_mut()
-                                .find(|t| t.id == terminal_id_clone)
+                            if let Some(terminal) =
+                                tab.terminals.iter_mut().find(|t| t.id == terminal_id_clone)
                             {
                                 terminal.pty_channel = None;
                                 terminal.pty_initialized = false;
@@ -159,9 +160,7 @@ pub fn start_reconnection(
                             }
                         }
 
-                        // 重启服务
-                        state.start_monitor_service(tab_id_clone.clone(), cx);
-                        state.start_sftp_service(tab_id_clone.clone(), cx);
+                        // Monitor 和 SFTP 服务将在终端 PTY 创建成功后启动
 
                         cx.notify();
                     });

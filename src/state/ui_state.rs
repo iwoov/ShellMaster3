@@ -291,7 +291,7 @@ impl SessionState {
     }
 
     /// 启动 Monitor 服务
-    /// 在 SSH 连接成功后调用，开始收集服务器监控数据
+    /// 在终端 PTY 创建成功后调用，开始收集服务器监控数据
     pub fn start_monitor_service(&self, tab_id: String, cx: &mut gpui::Context<Self>) {
         info!("[Monitor] Starting monitor service for tab {}", tab_id);
 

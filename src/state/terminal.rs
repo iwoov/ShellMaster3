@@ -46,7 +46,11 @@ impl SessionState {
             "[Terminal] Initializing PTY for tab {} terminal {}{}",
             tab_id,
             terminal_instance_id,
-            if existing_terminal.is_some() { " (reconnecting, preserving history)" } else { "" }
+            if existing_terminal.is_some() {
+                " (reconnecting, preserving history)"
+            } else {
+                ""
+            }
         );
         debug!(
             "[Terminal] Area size: {}x{} pixels",
@@ -159,7 +163,7 @@ impl SessionState {
                         let session_id_for_state = session_id.clone();
                         let terminal_id_for_state = terminal_id_for_task.clone();
                         let _ = async_cx.update(|cx| {
-                            session_state_for_task.update(cx, |state, _| {
+                            session_state_for_task.update(cx, |state, cx| {
                                 if let Some(tab) =
                                     state.tabs.iter_mut().find(|t| t.id == session_id_for_state)
                                 {
@@ -169,6 +173,16 @@ impl SessionState {
                                         .find(|t| t.id == terminal_id_for_state)
                                     {
                                         instance.pty_channel = Some(channel_for_state);
+                                    }
+
+                                    // 只有首次 PTY 创建时才启动 Monitor 和 SFTP 服务
+                                    if !tab.services_started {
+                                        tab.services_started = true;
+                                        state.start_monitor_service(
+                                            session_id_for_state.clone(),
+                                            cx,
+                                        );
+                                        state.start_sftp_service(session_id_for_state.clone(), cx);
                                     }
                                 }
                             });

@@ -305,15 +305,13 @@ pub fn start_ssh_connection(
                             state.update_tab_status(&tab_id_clone, SessionStatus::Connected);
 
                             // 存储 server_data 用于重连
-                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone) {
+                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
+                            {
                                 tab.server_data = Some(server_data_clone);
                             }
 
-                            // 启动 Monitor 服务（收集服务器监控数据）
-                            state.start_monitor_service(tab_id_clone.clone(), cx);
-
-                            // 启动 SFTP 服务（初始化 SFTP 子系统并加载用户主目录）
-                            state.start_sftp_service(tab_id_clone.clone(), cx);
+                            // Monitor 和 SFTP 服务将在终端 PTY 创建成功后启动
+                            // 这样可以保证 PTY 通道是第一个创建的，能收到服务器欢迎信息
 
                             cx.notify();
                         });

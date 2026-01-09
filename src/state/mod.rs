@@ -32,7 +32,10 @@ pub enum SessionStatus {
     Error(String),
     Disconnected,
     /// 重连中，包含当前尝试次数和最大尝试次数
-    Reconnecting { attempt: u32, max_attempts: u32 },
+    Reconnecting {
+        attempt: u32,
+        max_attempts: u32,
+    },
 }
 
 /// 单个终端实例
@@ -74,6 +77,8 @@ pub struct SessionTab {
     pub sftp_state: Option<SftpState>,
     /// 活动传输列表（上传/下载任务）
     pub active_transfers: Vec<crate::models::sftp::TransferItem>,
+    /// 服务是否已启动（Monitor/SFTP，只在首次 PTY 创建时启动）
+    pub services_started: bool,
 }
 
 /// 侧边栏面板类型

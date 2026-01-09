@@ -7,7 +7,7 @@ use tracing::{error, info};
 
 impl SessionState {
     /// 启动 SFTP 服务
-    /// 在 SSH 连接成功后调用，初始化 SFTP 子系统并加载用户主目录
+    /// 在终端 PTY 创建成功后调用，初始化 SFTP 子系统并加载用户主目录
     pub fn start_sftp_service(&mut self, tab_id: String, cx: &mut gpui::Context<Self>) {
         let session_state = cx.entity().clone();
 

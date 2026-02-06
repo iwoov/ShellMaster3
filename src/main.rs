@@ -82,6 +82,11 @@ fn main() {
         // 初始化全局快捷键（Cmd+Q / Ctrl+Q 退出等）
         crate::keybindings::init(cx);
 
+        // 迁移旧的私钥路径到新的密钥目录
+        if let Err(e) = storage::migrate_legacy_private_keys() {
+            tracing::warn!("私钥迁移失败: {}", e);
+        }
+
         // 根据保存的设置初始化主题模式
         if let Ok(settings) = storage::load_settings() {
             match settings.theme.mode {

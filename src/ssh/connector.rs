@@ -22,10 +22,26 @@ fn build_ssh_config(server: &ServerData) -> SshConfig {
             // 密码需要解密（暂时直接使用加密的值，后续实现解密）
             AuthMethod::Password(server.password_encrypted.clone().unwrap_or_default())
         }
-        crate::models::server::AuthType::PublicKey => AuthMethod::PublicKey {
-            key_path: server.private_key_path.clone().unwrap_or_default().into(),
-            passphrase: server.key_passphrase_encrypted.clone(),
-        },
+        crate::models::server::AuthType::PublicKey => {
+            // 优先使用新字段 private_key_filename，从keys目录构建完整路径
+            // 如果不存在则回退到旧字段 private_key_path（向后兼容）
+            let key_path = if let Some(filename) = &server.private_key_filename {
+                // 新格式：从文件名构建完整路径
+                crate::services::storage::get_keys_dir()
+                    .map(|dir| dir.join(filename))
+                    .unwrap_or_else(|_| filename.into())
+            } else if let Some(old_path) = &server.private_key_path {
+                // 旧格式：直接使用完整路径
+                old_path.into()
+            } else {
+                "".into()
+            };
+
+            AuthMethod::PublicKey {
+                key_path,
+                passphrase: server.key_passphrase_encrypted.clone(),
+            }
+        }
     };
 
     // 从用户设置中读取连接配置

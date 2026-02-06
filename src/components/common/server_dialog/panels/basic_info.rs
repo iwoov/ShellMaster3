@@ -260,17 +260,23 @@ pub fn render_basic_info_form(state: Entity<ServerDialogState>, cx: &App) -> imp
                                                         if let Ok(Ok(Some(paths))) = receiver.await
                                                         {
                                                             if let Some(path) = paths.first() {
-                                                                let path_str = path
-                                                                    .to_string_lossy()
-                                                                    .to_string();
-                                                                // 设置待应用的私钥路径，下次渲染时会应用
-                                                                let _ = cx.update(|app| {
-                                                                    state.update(app, |s, _| {
-                                                                        s.pending_private_key_path =
-                                                                            Some(path_str);
-                                                                        s.needs_refresh = true;
-                                                                    });
-                                                                });
+                                                                // 复制密钥到keys目录
+                                                                match crate::services::storage::store_private_key(path) {
+                                                                    Ok(filename) => {
+                                                                        // 设置待应用的私钥文件名（而非完整路径）
+                                                                        let _ = cx.update(|app| {
+                                                                            state.update(app, |s, _| {
+                                                                                s.pending_private_key_path =
+                                                                                    Some(filename);
+                                                                                s.needs_refresh = true;
+                                                                            });
+                                                                        });
+                                                                    }
+                                                                    Err(err) => {
+                                                                        eprintln!("Failed to store private key: {}", err);
+                                                                        // TODO: 显示错误提示给用户
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     })

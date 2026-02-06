@@ -20,6 +20,118 @@ pub fn get_config_dir() -> Result<PathBuf> {
     Ok(config_dir)
 }
 
+/// 获取密钥存储目录路径
+/// macOS: ~/Library/Application Support/shellmaster/keys
+/// Linux: ~/.config/shellmaster/keys
+/// Windows: C:\Users\<用户名>\AppData\Roaming\shellmaster\keys
+pub fn get_keys_dir() -> Result<PathBuf> {
+    let keys_dir = get_config_dir()?.join("keys");
+
+    if !keys_dir.exists() {
+        fs::create_dir_all(&keys_dir).context("无法创建密钥目录")?;
+    }
+
+    // 设置目录权限为仅用户可读写 (Unix)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(&keys_dir) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o700); // rwx------
+            let _ = fs::set_permissions(&keys_dir, perms);
+        }
+    }
+
+    Ok(keys_dir)
+}
+
+/// 存储私钥文件到应用密钥目录
+/// 返回存储后的文件名（非完整路径）
+pub fn store_private_key(source_path: &std::path::Path) -> Result<String> {
+    let keys_dir = get_keys_dir()?;
+
+    // 读取源文件
+    let key_content =
+        fs::read(source_path).with_context(|| format!("无法读取密钥文件: {:?}", source_path))?;
+
+    // 生成唯一文件名：使用时间戳 + 原始文件名
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let original_name = source_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("id_rsa");
+
+    let stored_filename = format!("{}_{}", timestamp, original_name);
+    let stored_path = keys_dir.join(&stored_filename);
+
+    // 写入密钥文件
+    fs::write(&stored_path, key_content)
+        .with_context(|| format!("无法写入密钥文件: {:?}", stored_path))?;
+
+    // 设置文件权限为仅用户可读写 (Unix)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(&stored_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o600); // rw-------
+            let _ = fs::set_permissions(&stored_path, perms);
+        }
+    }
+
+    Ok(stored_filename)
+}
+
+/// 迁移旧的私钥路径到新的密钥目录
+/// 应用启动时调用，将所有使用完整路径的私钥迁移到keys目录
+pub fn migrate_legacy_private_keys() -> Result<()> {
+    let mut config = load_servers()?;
+    let mut updated = false;
+
+    for server in &mut config.servers {
+        // 如果已有新字段，跳过迁移
+        if server.private_key_filename.is_some() {
+            continue;
+        }
+
+        // 如果有旧的完整路径，尝试迁移
+        if let Some(old_path_str) = server.private_key_path.clone() {
+            let old_path = std::path::Path::new(&old_path_str);
+
+            // 判断是否是完整路径（绝对路径）且文件存在
+            if old_path.is_absolute() && old_path.exists() {
+                match store_private_key(old_path) {
+                    Ok(filename) => {
+                        server.private_key_filename = Some(filename);
+                        server.private_key_path = None; // 清除旧字段
+                        updated = true;
+                        tracing::info!("已迁移服务器 {} 的私钥: {}", server.label, old_path_str);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "无法迁移服务器 {} 的私钥: {} - 错误: {}",
+                            server.label,
+                            old_path_str,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if updated {
+        save_servers(&config)?;
+        tracing::info!("私钥迁移完成");
+    }
+
+    Ok(())
+}
+
 /// 获取服务器配置文件路径
 pub fn get_servers_file() -> Result<PathBuf> {
     Ok(get_config_dir()?.join("servers.json"))

@@ -71,7 +71,15 @@ pub struct ServerData {
     pub username: String,
     pub auth_type: AuthType,
     pub password_encrypted: Option<String>,
+
+    // 新字段：存储keys目录下的文件名（而非完整路径）
+    #[serde(default)]
+    pub private_key_filename: Option<String>,
+
+    // 旧字段：向后兼容，存储完整路径（将在数据迁移后废弃）
+    #[serde(default)]
     pub private_key_path: Option<String>,
+
     pub key_passphrase_encrypted: Option<String>,
     pub description: Option<String>,
     pub jump_host_id: Option<String>,
@@ -92,6 +100,7 @@ impl Default for ServerData {
             username: String::new(),
             auth_type: AuthType::Password,
             password_encrypted: None,
+            private_key_filename: None,
             private_key_path: None,
             key_passphrase_encrypted: None,
             description: None,

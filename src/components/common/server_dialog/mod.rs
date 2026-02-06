@@ -265,9 +265,14 @@ impl ServerDialogState {
                                 input.update(cx, |s, cx| s.set_value(pwd.clone(), window, cx));
                             }
                         }
-                        if let Some(key_path) = &server_data.private_key_path {
+                        // 优先使用新字段 private_key_filename，如果不存在则回退到旧字段 private_key_path（向后兼容）
+                        let key_to_load = server_data
+                            .private_key_filename
+                            .as_ref()
+                            .or(server_data.private_key_path.as_ref());
+                        if let Some(key) = key_to_load {
                             if let Some(input) = &self.private_key_input {
-                                input.update(cx, |s, cx| s.set_value(key_path.clone(), window, cx));
+                                input.update(cx, |s, cx| s.set_value(key.clone(), window, cx));
                             }
                         }
                         if let Some(passphrase) = &server_data.key_passphrase_encrypted {
@@ -440,11 +445,14 @@ impl ServerDialogState {
             } else {
                 None
             },
-            private_key_path: if self.auth_type == AuthType::PublicKey && !private_key.is_empty() {
+            private_key_filename: if self.auth_type == AuthType::PublicKey
+                && !private_key.is_empty()
+            {
                 Some(private_key)
             } else {
                 None
             },
+            private_key_path: None, // 不再使用完整路径
             key_passphrase_encrypted: if self.auth_type == AuthType::PublicKey
                 && !passphrase.is_empty()
             {

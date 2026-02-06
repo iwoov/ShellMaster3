@@ -130,9 +130,10 @@ impl SshConfig {
         // 更大的窗口允许更多数据在等待确认前发送，提高高带宽连接的吞吐量
         config.window_size = 16 * 1024 * 1024; // 16MB
 
-        // 增大最大包大小到 256KB
-        // 更大的包减少每字节的协议开销
-        config.maximum_packet_size = 256 * 1024; // 256KB
+        // NOTE:
+        // SSH packet size must not exceed protocol/u16 bound (65535).
+        // Setting 256KB triggers runtime errors in russh.
+        config.maximum_packet_size = 32 * 1024; // 32KB
 
         // 增大通道缓冲区大小
         // 更大的缓冲区可以平滑数据流，防止瓶颈

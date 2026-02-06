@@ -17,10 +17,24 @@ fn build_ssh_config(server: &ServerData) -> SshConfig {
         crate::models::server::AuthType::Password => {
             AuthMethod::Password(server.password_encrypted.clone().unwrap_or_default())
         }
-        crate::models::server::AuthType::PublicKey => AuthMethod::PublicKey {
-            key_path: server.private_key_path.clone().unwrap_or_default().into(),
-            passphrase: server.key_passphrase_encrypted.clone(),
-        },
+        crate::models::server::AuthType::PublicKey => {
+            // Keep key-path resolution aligned with initial connection logic:
+            // prefer filename under managed keys dir, fallback to legacy absolute path.
+            let key_path = if let Some(filename) = &server.private_key_filename {
+                crate::services::storage::get_keys_dir()
+                    .map(|dir| dir.join(filename))
+                    .unwrap_or_else(|_| filename.into())
+            } else if let Some(old_path) = &server.private_key_path {
+                old_path.into()
+            } else {
+                "".into()
+            };
+
+            AuthMethod::PublicKey {
+                key_path,
+                passphrase: server.key_passphrase_encrypted.clone(),
+            }
+        }
     };
 
     let settings = crate::services::storage::load_settings().unwrap_or_default();

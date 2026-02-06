@@ -32,3 +32,8 @@ docs/*
 openspec/
 AGENTS.md
 CLAUDE.md
+
+# Temporarily ignore markdown files, keep README
+*.md
+!README.md
+!readme.md

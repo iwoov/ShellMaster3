@@ -409,6 +409,12 @@ impl HomePage {
                         state.ensure_command_input_created(window, cx);
                     });
 
+                    // 确保 AI 对话输入框已创建
+                    let tab_id_for_ai = tab.id.clone();
+                    session_state.update(cx, |state, cx| {
+                        state.ensure_ai_chat_input(&tab_id_for_ai, window, cx);
+                    });
+
                     // 确保 SFTP 文件列表视图已创建并同步数据
                     let tab_id_for_sftp = tab.id.clone();
                     session_state.update(cx, |state, cx| {

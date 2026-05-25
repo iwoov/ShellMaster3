@@ -7,11 +7,12 @@ use gpui::*;
 use gpui_component::input::InputState;
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::ActiveTheme;
+use std::collections::HashMap;
 
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
 use crate::i18n;
-use crate::models::settings::AppSettings;
+use crate::models::settings::{AiProviderId, AppSettings};
 use crate::services::storage;
 
 // 导入辅助函数
@@ -20,10 +21,27 @@ use helpers::create_int_number_input;
 
 // 导入面板函数
 use panels::{
-    render_about_panel, render_connection_panel, render_keybindings_panel, render_monitor_panel,
-    render_sftp_panel, render_sync_panel, render_system_panel, render_terminal_panel,
-    render_theme_panel,
+    render_about_panel, render_ai_panel, render_connection_panel, render_keybindings_panel,
+    render_monitor_panel, render_sftp_panel, render_sync_panel, render_system_panel,
+    render_terminal_panel, render_theme_panel,
 };
+
+/// AI 供应商连通性测试状态
+#[derive(Clone, Debug)]
+pub enum AiTestStatus {
+    Untested,
+    Testing,
+    Pass,
+    Fail(String),
+}
+
+/// 单个 AI 供应商在弹窗内的输入控件集合
+#[derive(Default)]
+pub struct AiProviderInputs {
+    pub api_key: Option<Entity<InputState>>,
+    pub base_url: Option<Entity<InputState>>,
+    pub model: Option<Entity<InputState>>,
+}
 
 /// 设置导航区域类型
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -37,6 +55,7 @@ pub enum SettingsSection {
     Connection,
     Sync,
     System,
+    Ai,
     About,
 }
 
@@ -51,6 +70,7 @@ impl SettingsSection {
             SettingsSection::Connection => "settings.nav.connection",
             SettingsSection::Sync => "settings.nav.sync",
             SettingsSection::System => "settings.nav.system",
+            SettingsSection::Ai => "settings.nav.ai",
             SettingsSection::About => "settings.nav.about",
         }
     }
@@ -65,6 +85,7 @@ impl SettingsSection {
             SettingsSection::Connection => icons::LINK,
             SettingsSection::Sync => icons::CLOUD,
             SettingsSection::System => icons::SETTINGS,
+            SettingsSection::Ai => icons::SPARKLES,
             SettingsSection::About => icons::USER,
         }
     }
@@ -121,6 +142,18 @@ pub struct SettingsDialogState {
 
     // ============ 系统设置输入 ============
     pub log_retention_input: Option<Entity<InputState>>,
+
+    // ============ AI 设置 ============
+    pub ai_inputs: HashMap<AiProviderId, AiProviderInputs>,
+    pub ai_test_statuses: HashMap<AiProviderId, AiTestStatus>,
+    /// 已通过测试时的输入快照 (api_key, base_url, model)，用于检测用户在通过后是否又改了
+    pub ai_tested_snapshots: HashMap<AiProviderId, (String, String, String)>,
+    /// 保存校验失败时的错误信息（如某供应商有 key 但未通过测试）
+    pub ai_save_error: Option<String>,
+    /// AI 面板当前编辑/查看的供应商（横向图标切换）
+    pub ai_active_provider: AiProviderId,
+    /// 系统提示词输入框
+    pub ai_system_prompt_input: Option<Entity<InputState>>,
 }
 
 impl Default for SettingsDialogState {
@@ -167,6 +200,13 @@ impl Default for SettingsDialogState {
             webdav_path_input: None,
             // 系统
             log_retention_input: None,
+            // AI
+            ai_inputs: HashMap::new(),
+            ai_test_statuses: HashMap::new(),
+            ai_tested_snapshots: HashMap::new(),
+            ai_save_error: None,
+            ai_active_provider: AiProviderId::OpenAi,
+            ai_system_prompt_input: None,
         }
     }
 }
@@ -178,8 +218,22 @@ impl SettingsDialogState {
         self.visible = true;
         self.current_section = SettingsSection::Theme;
         self.has_changes = false;
+        self.ai_save_error = None;
         // 清除输入状态以便重新加载
         self.reset_inputs();
+        // 根据持久化的 verified 标志，预填 AI 测试状态
+        self.ai_test_statuses.clear();
+        self.ai_tested_snapshots.clear();
+        for id in AiProviderId::ALL {
+            let cfg = self.settings.ai.get(id);
+            if cfg.verified && !cfg.api_key.is_empty() {
+                self.ai_test_statuses.insert(id, AiTestStatus::Pass);
+                self.ai_tested_snapshots
+                    .insert(id, (cfg.api_key.clone(), cfg.base_url.clone(), cfg.model.clone()));
+            } else {
+                self.ai_test_statuses.insert(id, AiTestStatus::Untested);
+            }
+        }
     }
 
     /// 重置所有输入框状态
@@ -213,6 +267,8 @@ impl SettingsDialogState {
         self.webdav_password_input = None;
         self.webdav_path_input = None;
         self.log_retention_input = None;
+        self.ai_inputs.clear();
+        self.ai_system_prompt_input = None;
     }
 
     pub fn close(&mut self) {
@@ -421,6 +477,80 @@ impl SettingsDialogState {
             let value = self.settings.system.log_retention_days.to_string();
             self.log_retention_input = Some(create_int_number_input(value, 1, 365, 1, window, cx));
         }
+
+        // AI 设置
+        for id in AiProviderId::ALL {
+            let entry = self.ai_inputs.entry(id).or_default();
+            let cfg = self.settings.ai.get(id);
+            if entry.api_key.is_none() {
+                let value = cfg.api_key.clone();
+                entry.api_key = Some(cx.new(|cx| {
+                    let mut state = InputState::new(window, cx)
+                        .placeholder("API Key")
+                        .masked(true);
+                    state.set_value(value, window, cx);
+                    state
+                }));
+            }
+            if entry.base_url.is_none() {
+                let value = cfg.base_url.clone();
+                let placeholder = id.default_base_url();
+                entry.base_url = Some(cx.new(|cx| {
+                    let mut state = InputState::new(window, cx).placeholder(placeholder);
+                    state.set_value(value, window, cx);
+                    state
+                }));
+            }
+            if entry.model.is_none() {
+                let value = cfg.model.clone();
+                let placeholder = id.default_model();
+                entry.model = Some(cx.new(|cx| {
+                    let mut state = InputState::new(window, cx).placeholder(placeholder);
+                    state.set_value(value, window, cx);
+                    state
+                }));
+            }
+        }
+
+        // 系统提示词
+        if self.ai_system_prompt_input.is_none() {
+            let value = self.settings.ai.system_prompt.clone();
+            self.ai_system_prompt_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx)
+                    .placeholder("系统提示词…")
+                    .auto_grow(3, 12);
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+    }
+
+    /// 从 AI 输入框读取当前值，构造一个 AiProviderConfig（不修改 settings）
+    pub fn build_ai_config_from_inputs(
+        &self,
+        id: AiProviderId,
+        cx: &App,
+    ) -> crate::models::settings::AiProviderConfig {
+        let cfg = self.settings.ai.get(id);
+        let inputs = self.ai_inputs.get(&id);
+        let api_key = inputs
+            .and_then(|i| i.api_key.as_ref())
+            .map(|s| s.read(cx).value().to_string())
+            .unwrap_or(cfg.api_key);
+        let base_url = inputs
+            .and_then(|i| i.base_url.as_ref())
+            .map(|s| s.read(cx).value().to_string())
+            .unwrap_or(cfg.base_url);
+        let model = inputs
+            .and_then(|i| i.model.as_ref())
+            .map(|s| s.read(cx).value().to_string())
+            .unwrap_or(cfg.model);
+        crate::models::settings::AiProviderConfig {
+            api_key,
+            base_url,
+            model,
+            verified: false,
+        }
     }
 
     /// 从 InputState 同步值到 settings
@@ -560,6 +690,52 @@ impl SettingsDialogState {
                 self.settings.system.log_retention_days = v;
             }
         }
+
+        // AI - 系统提示词
+        if let Some(input) = &self.ai_system_prompt_input {
+            self.settings.ai.system_prompt = input.read(cx).value().to_string();
+        }
+        // AI - 各供应商
+        for id in AiProviderId::ALL {
+            let mut cfg = self.build_ai_config_from_inputs(id, cx);
+            // 根据测试状态与快照决定 verified
+            let snapshot = self.ai_tested_snapshots.get(&id);
+            let pass = matches!(self.ai_test_statuses.get(&id), Some(AiTestStatus::Pass));
+            let matches_snapshot = snapshot
+                .map(|(k, b, m)| {
+                    *k == cfg.api_key && *b == cfg.base_url && *m == cfg.model
+                })
+                .unwrap_or(false);
+            cfg.verified = !cfg.api_key.is_empty() && pass && matches_snapshot;
+            self.settings.ai.set(id, cfg);
+        }
+    }
+
+    /// 检查 AI 设置是否可以保存：每个填了 api_key 的供应商都必须通过测试且未被修改
+    /// 返回 Err(供应商列表) 表示哪些供应商未通过校验
+    pub fn validate_ai_for_save(&self, cx: &App) -> Result<(), Vec<AiProviderId>> {
+        let mut failing = Vec::new();
+        for id in AiProviderId::ALL {
+            let cfg = self.build_ai_config_from_inputs(id, cx);
+            if cfg.api_key.trim().is_empty() {
+                continue;
+            }
+            let snapshot = self.ai_tested_snapshots.get(&id);
+            let pass = matches!(self.ai_test_statuses.get(&id), Some(AiTestStatus::Pass));
+            let matches_snapshot = snapshot
+                .map(|(k, b, m)| {
+                    *k == cfg.api_key && *b == cfg.base_url && *m == cfg.model
+                })
+                .unwrap_or(false);
+            if !pass || !matches_snapshot {
+                failing.push(id);
+            }
+        }
+        if failing.is_empty() {
+            Ok(())
+        } else {
+            Err(failing)
+        }
     }
 }
 
@@ -640,6 +816,7 @@ fn render_left_nav(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoEle
         SettingsSection::Monitor,
         SettingsSection::Connection,
         SettingsSection::Sync,
+        SettingsSection::Ai,
         SettingsSection::System,
         SettingsSection::About,
     ];
@@ -765,6 +942,7 @@ fn render_section_content(state: Entity<SettingsDialogState>, cx: &App) -> impl 
         SettingsSection::Monitor => render_monitor_panel(state, cx).into_any_element(),
         SettingsSection::Connection => render_connection_panel(state, cx).into_any_element(),
         SettingsSection::Sync => render_sync_panel(state, cx).into_any_element(),
+        SettingsSection::Ai => render_ai_panel(state, cx).into_any_element(),
         SettingsSection::System => render_system_panel(state, cx).into_any_element(),
         SettingsSection::About => render_about_panel(state, cx).into_any_element(),
     }
@@ -829,6 +1007,23 @@ fn render_footer_buttons(
                 .hover(move |s| s.bg(primary_hover))
                 .on_click(move |_, _, cx| {
                     state_for_save.update(cx, |s, cx| {
+                        // AI 设置校验：填了 key 必须先通过测试
+                        let app: &App = cx;
+                        if let Err(failing) = s.validate_ai_for_save(app) {
+                            let lang = &s.settings.theme.language;
+                            let names: Vec<&'static str> =
+                                failing.iter().map(|id| id.label()).collect();
+                            let msg = format!(
+                                "{}: {}",
+                                i18n::t(lang, "settings.ai.save_blocked"),
+                                names.join(", ")
+                            );
+                            s.ai_save_error = Some(msg);
+                            s.current_section = SettingsSection::Ai;
+                            cx.notify();
+                            return;
+                        }
+                        s.ai_save_error = None;
                         s.sync_from_inputs(cx);
                         s.save();
                         s.close();

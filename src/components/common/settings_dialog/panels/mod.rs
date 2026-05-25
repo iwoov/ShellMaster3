@@ -1,6 +1,7 @@
 // 面板模块导出
 
 pub mod about;
+pub mod ai;
 pub mod connection;
 pub mod keybindings;
 pub mod monitor;
@@ -11,6 +12,7 @@ pub mod terminal;
 pub mod theme;
 
 pub use about::render_about_panel;
+pub use ai::render_ai_panel;
 pub use connection::render_connection_panel;
 pub use keybindings::render_keybindings_panel;
 pub use monitor::render_monitor_panel;

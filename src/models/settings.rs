@@ -14,6 +14,8 @@ pub struct AppSettings {
     pub connection: ConnectionSettings,
     pub sync: SyncSettings,
     pub system: SystemSettings,
+    #[serde(default)]
+    pub ai: AiSettings,
 }
 
 impl Default for AppSettings {
@@ -26,7 +28,158 @@ impl Default for AppSettings {
             connection: ConnectionSettings::default(),
             sync: SyncSettings::default(),
             system: SystemSettings::default(),
+            ai: AiSettings::default(),
         }
+    }
+}
+
+// ======================== AI 设置 ========================
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum AiProviderId {
+    OpenAi,
+    Gemini,
+    Claude,
+    DeepSeek,
+}
+
+impl AiProviderId {
+    pub const ALL: [AiProviderId; 4] = [
+        AiProviderId::OpenAi,
+        AiProviderId::Gemini,
+        AiProviderId::Claude,
+        AiProviderId::DeepSeek,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            AiProviderId::OpenAi => "OpenAI",
+            AiProviderId::Gemini => "Gemini",
+            AiProviderId::Claude => "Claude",
+            AiProviderId::DeepSeek => "DeepSeek",
+        }
+    }
+
+    pub fn key(&self) -> &'static str {
+        match self {
+            AiProviderId::OpenAi => "openai",
+            AiProviderId::Gemini => "gemini",
+            AiProviderId::Claude => "claude",
+            AiProviderId::DeepSeek => "deepseek",
+        }
+    }
+
+    pub fn default_base_url(&self) -> &'static str {
+        match self {
+            AiProviderId::OpenAi => "https://api.openai.com/v1",
+            AiProviderId::Gemini => "https://generativelanguage.googleapis.com/v1beta",
+            AiProviderId::Claude => "https://api.anthropic.com/v1",
+            AiProviderId::DeepSeek => "https://api.deepseek.com/v1",
+        }
+    }
+
+    pub fn default_model(&self) -> &'static str {
+        match self {
+            AiProviderId::OpenAi => "gpt-4o-mini",
+            AiProviderId::Gemini => "gemini-1.5-flash",
+            AiProviderId::Claude => "claude-3-5-haiku-latest",
+            AiProviderId::DeepSeek => "deepseek-chat",
+        }
+    }
+
+    pub fn icon_path(&self) -> &'static str {
+        match self {
+            AiProviderId::OpenAi => crate::constants::icons::AI_OPENAI,
+            AiProviderId::Gemini => crate::constants::icons::AI_GEMINI,
+            AiProviderId::Claude => crate::constants::icons::AI_CLAUDE,
+            AiProviderId::DeepSeek => crate::constants::icons::AI_DEEPSEEK,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AiProviderConfig {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub model: String,
+    /// 是否已通过连通性测试，仅通过后才允许保存
+    #[serde(default)]
+    pub verified: bool,
+}
+
+impl AiProviderConfig {
+    pub fn for_provider(id: AiProviderId) -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: id.default_base_url().to_string(),
+            model: id.default_model().to_string(),
+            verified: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AiSettings {
+    /// 默认对话使用的供应商
+    pub default_provider: AiProviderId,
+    /// 各供应商配置（按 provider key 存储）
+    pub providers: std::collections::HashMap<String, AiProviderConfig>,
+    /// 全局系统提示词（每次对话注入到 history 首部）
+    #[serde(default = "AiSettings::default_system_prompt")]
+    pub system_prompt: String,
+}
+
+impl Default for AiSettings {
+    fn default() -> Self {
+        let mut providers = std::collections::HashMap::new();
+        for id in AiProviderId::ALL {
+            providers.insert(id.key().to_string(), AiProviderConfig::for_provider(id));
+        }
+        Self {
+            default_provider: AiProviderId::OpenAi,
+            providers,
+            system_prompt: Self::default_system_prompt(),
+        }
+    }
+}
+
+impl AiSettings {
+    pub fn default_system_prompt() -> String {
+        "你是一名专业的 Linux 终端助手，专注于帮助用户解决 Shell / SSH / 服务器运维相关的问题。请遵循以下原则：\n\
+1. 回复尽量精炼，先给出结论或可执行的命令，再附简要解释；\n\
+2. 所有命令使用 Markdown 代码块包裹，并标注语言（如 ```bash），多步骤命令分块给出；\n\
+3. 若命令具有破坏性（rm/mkfs/dd/chmod 777 等），必须在命令前用一句话明确警告；\n\
+4. 不确定的环境差异（发行版/内核版本/权限）请先询问或在回答里列出假设；\n\
+5. 优先给出 POSIX 通用方案，必要时再补充 GNU/BSD 差异；\n\
+6. 中文提问用中文回答，英文提问用英文回答。"
+            .to_string()
+    }
+
+    pub fn get(&self, id: AiProviderId) -> AiProviderConfig {
+        self.providers
+            .get(id.key())
+            .cloned()
+            .unwrap_or_else(|| AiProviderConfig::for_provider(id))
+    }
+
+    pub fn set(&mut self, id: AiProviderId, cfg: AiProviderConfig) {
+        self.providers.insert(id.key().to_string(), cfg);
+    }
+
+    /// 返回已通过连通性测试的供应商列表
+    pub fn verified_providers(&self) -> Vec<AiProviderId> {
+        AiProviderId::ALL
+            .into_iter()
+            .filter(|id| {
+                self.providers
+                    .get(id.key())
+                    .map(|c| c.verified && !c.api_key.is_empty())
+                    .unwrap_or(false)
+            })
+            .collect()
     }
 }
 

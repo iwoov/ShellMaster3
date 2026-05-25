@@ -35,6 +35,7 @@ impl SessionState {
             sftp_state: None,
             active_transfers: Vec::new(),
             services_started: false,
+            ai_chat: super::AiChatState::default(),
         };
         // 新标签插入到最前面
         self.tabs.insert(0, tab);
@@ -66,6 +67,9 @@ impl SessionState {
             if self.sftp_file_list_views.remove(tab_id).is_some() {
                 info!("[SFTP] FileListView removed for closed tab {}", tab_id);
             }
+
+            // 移除 AI 对话输入框
+            self.ai_chat_inputs.remove(tab_id);
 
             // 清理该 session 的文件监控和临时文件
             if let Some(watcher) = &self.file_watcher {

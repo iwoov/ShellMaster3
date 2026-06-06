@@ -1031,15 +1031,21 @@ fn render_ai_chat_panel(
                 })
         };
 
-        // 发送按钮：仅图标
+        // 发送按钮：仅图标、无背景
+        let send_disabled = pending || !has_any || !has_input;
+        let send_icon_color = if send_disabled {
+            muted_foreground
+        } else {
+            primary
+        };
         let send_btn = Button::new("ai-chat-send")
-            .primary()
-            .disabled(pending || !has_any || !has_input)
+            .ghost()
+            .disabled(send_disabled)
             .child(
                 svg()
                     .path(icons::SEND)
-                    .size(px(15.))
-                    .text_color(cx.theme().primary_foreground),
+                    .size(px(16.))
+                    .text_color(send_icon_color),
             )
             .on_click(move |_, window, cx| {
                 session_for_send.update(cx, |s, cx| {

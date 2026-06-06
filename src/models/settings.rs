@@ -79,11 +79,20 @@ impl AiProviderId {
     }
 
     pub fn default_model(&self) -> &'static str {
+        self.default_models()[0]
+    }
+
+    /// 各供应商预置的常见模型列表（首项作为默认模型）
+    pub fn default_models(&self) -> &'static [&'static str] {
         match self {
-            AiProviderId::OpenAi => "gpt-4o-mini",
-            AiProviderId::Gemini => "gemini-1.5-flash",
-            AiProviderId::Claude => "claude-3-5-haiku-latest",
-            AiProviderId::DeepSeek => "deepseek-chat",
+            AiProviderId::OpenAi => &["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+            AiProviderId::Gemini => &["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"],
+            AiProviderId::Claude => &[
+                "claude-3-5-haiku-latest",
+                "claude-3-5-sonnet-latest",
+                "claude-3-7-sonnet-latest",
+            ],
+            AiProviderId::DeepSeek => &["deepseek-chat", "deepseek-reasoner"],
         }
     }
 
@@ -103,8 +112,12 @@ pub struct AiProviderConfig {
     pub api_key: String,
     #[serde(default)]
     pub base_url: String,
+    /// 当前/默认使用的模型（= models 列表第一项）
     #[serde(default)]
     pub model: String,
+    /// 该供应商可选的模型列表（侧边栏下拉用）
+    #[serde(default)]
+    pub models: Vec<String>,
     /// 是否已通过连通性测试，仅通过后才允许保存
     #[serde(default)]
     pub verified: bool,
@@ -112,11 +125,24 @@ pub struct AiProviderConfig {
 
 impl AiProviderConfig {
     pub fn for_provider(id: AiProviderId) -> Self {
+        let models: Vec<String> = id.default_models().iter().map(|s| s.to_string()).collect();
         Self {
             api_key: String::new(),
             base_url: id.default_base_url().to_string(),
             model: id.default_model().to_string(),
+            models,
             verified: false,
+        }
+    }
+
+    /// 返回可选模型列表：models 非空则用之，否则回退到单个 model
+    pub fn model_list(&self) -> Vec<String> {
+        if !self.models.is_empty() {
+            self.models.clone()
+        } else if !self.model.is_empty() {
+            vec![self.model.clone()]
+        } else {
+            Vec::new()
         }
     }
 }

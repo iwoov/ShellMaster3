@@ -748,7 +748,7 @@ fn render_ai_chat_panel(
     cx: &mut App,
 ) -> impl IntoElement {
     use gpui::Corner;
-    use gpui_component::button::Button;
+    use gpui_component::button::{Button, ButtonVariants};
     use gpui_component::input::Input;
     use gpui_component::menu::{DropdownMenu, PopupMenuItem};
     use gpui_component::Disableable;
@@ -758,6 +758,7 @@ fn render_ai_chat_panel(
     let foreground = cx.theme().foreground;
     let muted_foreground = cx.theme().muted_foreground;
     let border = cx.theme().border;
+    let primary = cx.theme().primary;
 
     // 当前选中供应商；未选则用 default
     let settings = crate::services::storage::load_settings().unwrap_or_default();
@@ -768,22 +769,23 @@ fn render_ai_chat_panel(
     // 输入框（如果存在）
     let input_entity = session_state.read(cx).get_ai_chat_input(&tab_id);
 
-    // 头部：供应商下拉 + 清空按钮
+    // ===== 顶部：供应商选择 + 清空 =====
     let header = {
         let session_for_clear = session_state.clone();
         let tab_id_for_clear = tab_id.clone();
-        let lang_for_clear = lang.clone();
         let providers = verified_list.clone();
         let tab_id_for_pick = tab_id.clone();
         let session_for_pick = session_state.clone();
+        let clear_tooltip = crate::i18n::t(lang, "ai_chat.clear");
 
         div()
-            .h(px(36.))
+            .h(px(44.))
             .flex_shrink_0()
             .flex()
             .items_center()
             .justify_between()
-            .px_2()
+            .px_3()
+            .gap_2()
             .border_b_1()
             .border_color(border)
             .child({
@@ -800,15 +802,19 @@ fn render_ai_chat_panel(
                         div()
                             .flex()
                             .items_center()
-                            .gap_1()
-                            .children(trigger_icon.map(|p| {
-                                img(p).w(px(14.)).h(px(14.))
-                            }))
-                            .child(div().text_xs().text_color(trigger_color).child(trigger_label))
+                            .gap(px(6.))
+                            .children(trigger_icon.map(|p| img(p).w(px(16.)).h(px(16.))))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_medium()
+                                    .text_color(trigger_color)
+                                    .child(trigger_label),
+                            )
                             .child(render_icon(icons::CHEVRON_DOWN, muted_foreground.into())),
                     )
                     .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
-                        let mut menu = menu.min_w(px(160.));
+                        let mut menu = menu.min_w(px(180.));
                         for id in &providers {
                             let provider_id = *id;
                             let label: SharedString = id.label().into();
@@ -829,16 +835,19 @@ fn render_ai_chat_panel(
             .child(
                 div()
                     .id("ai-chat-clear")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(28.))
+                    .rounded(px(6.))
                     .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .rounded(px(4.))
-                    .hover(|s| s.bg(muted_foreground.opacity(0.15)))
+                    .hover(|s| s.bg(muted_foreground.opacity(0.12)))
+                    .tooltip(move |window, cx| Tooltip::new(clear_tooltip).build(window, cx))
                     .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted_foreground)
-                            .child(crate::i18n::t(&lang_for_clear, "ai_chat.clear")),
+                        svg()
+                            .path(icons::TRASH)
+                            .size(px(15.))
+                            .text_color(muted_foreground),
                     )
                     .on_click(move |_, _, cx| {
                         session_for_clear.update(cx, |s, cx| {
@@ -848,7 +857,7 @@ fn render_ai_chat_panel(
             )
     };
 
-    // 消息列表
+    // ===== 中部：消息列表 =====
     let messages_view = if chat.messages.is_empty() && !chat.pending {
         div()
             .id("ai-chat-empty")
@@ -857,11 +866,21 @@ fn render_ai_chat_panel(
             .flex_col()
             .items_center()
             .justify_center()
-            .gap_2()
-            .child(render_icon(icons::SPARKLES, muted_foreground.into()))
+            .gap_3()
+            .child(
+                // 圆形渐隐图标容器，空状态更精致
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(52.))
+                    .rounded_full()
+                    .bg(primary.opacity(0.1))
+                    .child(svg().path(icons::SPARKLES).size(px(24.)).text_color(primary)),
+            )
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(muted_foreground)
                     .child(crate::i18n::t(lang, "ai_chat.empty")),
             )
@@ -872,10 +891,11 @@ fn render_ai_chat_panel(
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .p_2()
+            .px_2()
+            .py_3()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_3()
             .children(chat.messages.iter().enumerate().map(|(idx, msg)| {
                 render_ai_chat_message(
                     idx,
@@ -899,56 +919,169 @@ fn render_ai_chat_panel(
                         .unwrap_or(true),
                 |this| {
                     this.child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .text_xs()
-                            .text_color(muted_foreground)
-                            .child(crate::i18n::t(lang, "ai_chat.thinking")),
+                        // 思考中：带图标的占位气泡（左对齐，不撑满宽度）
+                        div().flex().child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .px_3()
+                                .py_2()
+                                .rounded(px(10.))
+                                .bg(cx.theme().muted)
+                                .child(
+                                    svg()
+                                        .path(icons::SPARKLES)
+                                        .size(px(13.))
+                                        .text_color(primary),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(muted_foreground)
+                                        .child(crate::i18n::t(lang, "ai_chat.thinking")),
+                                ),
+                        ),
                     )
                 },
             )
             .into_any_element()
     };
 
-    // 输入区
+    // ===== 底部：合并式输入框（内嵌模型下拉 + 发送图标） =====
     let input_area = {
         let session_for_send = session_state.clone();
         let tab_id_for_send = tab_id.clone();
-        let send_label = crate::i18n::t(lang, "ai_chat.send");
         let pending = chat.pending;
         let has_input = input_entity.is_some();
+
+        // 当前供应商的可选模型列表 + 当前生效模型
+        let model_list: Vec<String> = if has_any {
+            settings.ai.get(active_provider).model_list()
+        } else {
+            Vec::new()
+        };
+        let current_model: SharedString = {
+            let sel = chat
+                .selected_model
+                .as_ref()
+                .filter(|m| model_list.iter().any(|x| x == *m));
+            match sel {
+                Some(m) => SharedString::from(m.clone()),
+                None => model_list
+                    .first()
+                    .cloned()
+                    .map(SharedString::from)
+                    .unwrap_or_else(|| {
+                        if has_any {
+                            SharedString::from(active_provider.default_model())
+                        } else {
+                            SharedString::from("—")
+                        }
+                    }),
+            }
+        };
+
+        // 模型下拉触发器
+        let model_dropdown = {
+            let models = model_list.clone();
+            let session_for_model = session_state.clone();
+            let tab_id_for_model = tab_id.clone();
+            let label_color = if has_any { foreground } else { muted_foreground };
+            Button::new("ai-chat-model-btn")
+                .ghost()
+                .disabled(!has_any || model_list.is_empty())
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(5.))
+                        .min_w_0()
+                        .child(
+                            svg()
+                                .path(icons::CPU)
+                                .size(px(13.))
+                                .flex_shrink_0()
+                                .text_color(muted_foreground),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(label_color)
+                                .overflow_hidden()
+                                .child(current_model.clone()),
+                        )
+                        .child(render_icon(icons::CHEVRON_DOWN, muted_foreground.into())),
+                )
+                .dropdown_menu_with_anchor(Corner::BottomLeft, move |menu, _, _| {
+                    let mut menu = menu.min_w(px(180.));
+                    for m in &models {
+                        let model_owned = m.clone();
+                        let label: SharedString = SharedString::from(m.clone());
+                        let session = session_for_model.clone();
+                        let tab_id_owned = tab_id_for_model.clone();
+                        menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                            session.update(cx, |s, cx| {
+                                s.set_ai_chat_model(&tab_id_owned, model_owned.clone());
+                                cx.notify();
+                            });
+                        }));
+                    }
+                    menu
+                })
+        };
+
+        // 发送按钮：仅图标
+        let send_btn = Button::new("ai-chat-send")
+            .primary()
+            .disabled(pending || !has_any || !has_input)
+            .child(
+                svg()
+                    .path(icons::SEND)
+                    .size(px(15.))
+                    .text_color(cx.theme().primary_foreground),
+            )
+            .on_click(move |_, window, cx| {
+                session_for_send.update(cx, |s, cx| {
+                    s.send_ai_chat_message(&tab_id_for_send, window, cx);
+                });
+            });
 
         div()
             .flex_shrink_0()
             .border_t_1()
             .border_color(border)
             .p_2()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .children(
-                input_entity
-                    .as_ref()
-                    .map(|input| Input::new(input).appearance(true)),
-            )
             .child(
+                // 合并式 composer 容器
                 div()
                     .flex()
-                    .justify_end()
+                    .flex_col()
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(border)
+                    .bg(cx.theme().background)
+                    .overflow_hidden()
+                    // 多行输入（去掉自带边框/背景，融入容器）
                     .child(
-                        Button::new("ai-chat-send")
-                            .disabled(pending || !has_any || !has_input)
-                            .child(if pending {
-                                crate::i18n::t(lang, "ai_chat.thinking")
-                            } else {
-                                send_label
-                            })
-                            .on_click(move |_, window, cx| {
-                                session_for_send.update(cx, |s, cx| {
-                                    s.send_ai_chat_message(&tab_id_for_send, window, cx);
-                                });
-                            }),
+                        div().px_2().pt_2().children(
+                            input_entity
+                                .as_ref()
+                                .map(|input| Input::new(input).appearance(false)),
+                        ),
+                    )
+                    // 底部工具条：模型下拉 + 发送
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .px_2()
+                            .pb_2()
+                            .pt_1()
+                            .child(model_dropdown)
+                            .child(send_btn),
                     ),
             )
     };
@@ -1123,12 +1256,17 @@ fn render_ai_chat_message(
     // overflow_hidden 兜底：极窄场景下宽代码块直接裁掉，不破坏布局或触发 TextView 零尺寸渲染。
     let bubble = div()
         .id(SharedString::from(format!("ai-msg-{}", idx)))
-        .p_2()
-        .rounded(px(8.))
+        .px_3()
+        .py_2()
+        .rounded(px(10.))
         .bg(bg)
         .flex()
         .flex_col()
         .overflow_hidden()
+        // 助手气泡加一圈淡边框，与背景区分；用户气泡保持纯色块
+        .when(!is_user && !msg.error, |this| {
+            this.border_1().border_color(border)
+        })
         .when(is_user, |this| this.max_w(relative(0.85)))
         .when(!is_user, |this| this.w_full())
         .children(reasoning_block)

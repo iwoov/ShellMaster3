@@ -233,7 +233,7 @@ fn render_provider_block(
             render_kv_row(i18n::t(lang, "settings.ai.base_url"), input, cx)
         }))
         .children(model_input.as_ref().map(|input| {
-            render_kv_row(i18n::t(lang, "settings.ai.model"), input, cx)
+            render_models_field(lang, input, cx)
         }))
         .child(
             div().flex().justify_end().mt_1().child(
@@ -274,6 +274,35 @@ fn render_kv_row(
                 .child(label),
         )
         .child(div().flex_1().child(Input::new(input).appearance(true)))
+}
+
+/// 模型列表编辑（多行文本框，每行一个模型，首行为默认）
+fn render_models_field(
+    lang: &crate::models::settings::Language,
+    input: &Entity<InputState>,
+    cx: &App,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .py_2()
+        .px_3()
+        .bg(cx.theme().muted)
+        .rounded_md()
+        .child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child(i18n::t(lang, "settings.ai.models")),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(i18n::t(lang, "settings.ai.models_hint")),
+        )
+        .child(Input::new(input).appearance(true))
 }
 
 fn render_status_pill(

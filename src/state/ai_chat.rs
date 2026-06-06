@@ -37,7 +37,36 @@ impl SessionState {
     pub fn set_ai_chat_provider(&mut self, tab_id: &str, provider: AiProviderId) {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
             tab.ai_chat.selected_provider = Some(provider);
+            // 供应商变了，已选模型可能不再属于新供应商，重置为默认
+            tab.ai_chat.selected_model = None;
         }
+    }
+
+    /// 设置底部选择的模型
+    pub fn set_ai_chat_model(&mut self, tab_id: &str, model: String) {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.ai_chat.selected_model = Some(model);
+        }
+    }
+
+    /// 解析当前 tab 实际使用的模型名
+    pub fn resolve_ai_model(&self, tab_id: &str, provider: AiProviderId) -> String {
+        let settings = crate::services::storage::load_settings().unwrap_or_default();
+        let cfg = settings.ai.get(provider);
+        let list = cfg.model_list();
+        // 用户已选且仍在该供应商列表内 → 用之
+        if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
+            if let Some(sel) = &tab.ai_chat.selected_model {
+                if list.iter().any(|m| m == sel) {
+                    return sel.clone();
+                }
+            }
+        }
+        // 否则用供应商默认（列表首项 / model / default）
+        list.into_iter()
+            .next()
+            .filter(|m| !m.is_empty())
+            .unwrap_or_else(|| provider.default_model().to_string())
     }
 
     /// 解析当前 tab 实际使用的供应商
@@ -127,7 +156,9 @@ impl SessionState {
             Ok(s) => s,
             Err(_) => return,
         };
-        let cfg = settings.ai.get(provider);
+        let mut cfg = settings.ai.get(provider);
+        // 用底部下拉所选模型覆盖（服务层从 cfg.model 取模型）
+        cfg.model = self.resolve_ai_model(tab_id, provider);
         let system_prompt = settings.ai.system_prompt.clone();
 
         // 追加用户消息、标记 pending、清空输入

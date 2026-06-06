@@ -502,10 +502,17 @@ impl SettingsDialogState {
                 }));
             }
             if entry.model.is_none() {
-                let value = cfg.model.clone();
+                let cfg_models = cfg.model_list();
+                let value = if cfg_models.is_empty() {
+                    cfg.model.clone()
+                } else {
+                    cfg_models.join("\n")
+                };
                 let placeholder = id.default_model();
                 entry.model = Some(cx.new(|cx| {
-                    let mut state = InputState::new(window, cx).placeholder(placeholder);
+                    let mut state = InputState::new(window, cx)
+                        .placeholder(placeholder)
+                        .auto_grow(2, 8);
                     state.set_value(value, window, cx);
                     state
                 }));
@@ -532,6 +539,7 @@ impl SettingsDialogState {
         cx: &App,
     ) -> crate::models::settings::AiProviderConfig {
         let cfg = self.settings.ai.get(id);
+        let cfg_models = cfg.model_list();
         let inputs = self.ai_inputs.get(&id);
         let api_key = inputs
             .and_then(|i| i.api_key.as_ref())
@@ -541,14 +549,32 @@ impl SettingsDialogState {
             .and_then(|i| i.base_url.as_ref())
             .map(|s| s.read(cx).value().to_string())
             .unwrap_or(cfg.base_url);
-        let model = inputs
+        // 模型框为多行文本：每行一个模型，过滤空行并去重；首行为默认模型
+        let models_text = inputs
             .and_then(|i| i.model.as_ref())
-            .map(|s| s.read(cx).value().to_string())
-            .unwrap_or(cfg.model);
+            .map(|s| s.read(cx).value().to_string());
+        let models: Vec<String> = match models_text {
+            Some(text) => {
+                let mut out: Vec<String> = Vec::new();
+                for line in text.lines() {
+                    let m = line.trim();
+                    if !m.is_empty() && !out.iter().any(|e| e == m) {
+                        out.push(m.to_string());
+                    }
+                }
+                out
+            }
+            None => cfg_models,
+        };
+        let model = models
+            .first()
+            .cloned()
+            .unwrap_or_else(|| id.default_model().to_string());
         crate::models::settings::AiProviderConfig {
             api_key,
             base_url,
             model,
+            models,
             verified: false,
         }
     }

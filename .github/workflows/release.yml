@@ -1,0 +1,100 @@
+name: Release
+
+# 推送形如 v0.1.0 的 tag 时触发；也可在 Actions 页面手动触发。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write # 创建 Release / 上传产物需要
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS (Apple Silicon)
+            os: macos-14
+            formats: dmg
+          - label: macOS (Intel)
+            os: macos-13
+            formats: dmg
+          - label: Windows
+            os: windows-latest
+            formats: nsis
+          - label: Linux
+            os: ubuntu-22.04
+            formats: deb appimage
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+
+      # GPUI 在 Linux 的构建/运行依赖；AppImage 需要 FUSE。
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libfontconfig-dev \
+            libwayland-dev \
+            libxkbcommon-x11-dev \
+            libssl-dev \
+            libxcb1-dev \
+            libvulkan-dev \
+            libfuse2 \
+            cmake \
+            clang
+
+      - name: Install cargo-packager
+        uses: cargo-bins/cargo-binstall@main
+
+      - run: cargo binstall --no-confirm cargo-packager
+
+      # before-packaging-command (Cargo.toml) 会先执行 `cargo build --release`，
+      # 因此这里以 --release 运行；产物统一输出到 dist/。
+      - name: Package
+        run: cargo packager --release --formats ${{ matrix.formats }} --out-dir dist
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.msi
+            dist/*.deb
+            dist/*.AppImage
+
+      # 非 tag（手动）触发时，把产物存为 workflow artifact 方便下载验证。
+      - name: Upload build artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: shellmaster3-${{ matrix.os }}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.msi
+            dist/*.deb
+            dist/*.AppImage
+          if-no-files-found: ignore

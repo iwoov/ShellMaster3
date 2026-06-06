@@ -38,4 +38,5 @@ CLAUDE.md
 !README.md
 !readme.md
 !README.zh-CN.md
-dist/
+# cargo-packager 产物
+/dist/

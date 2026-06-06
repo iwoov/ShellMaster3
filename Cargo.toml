@@ -15,6 +15,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 dirs = "5.0"
+rust-embed = "8"
 smallvec = "1.15.1"
 chrono = "0.4"
 rfd = "0.15"
@@ -49,13 +50,36 @@ notify = "6"
 # AI 模型对话（HTTP 客户端）
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
-[package.metadata.bundle]
-name = "ShellMaster3"
+# ============================================================
+# cargo-packager 打包配置（替代旧的 cargo-bundle）
+# 安装：cargo install cargo-packager --locked  或  cargo binstall cargo-packager
+# 本地打包：cargo packager --release
+# 资源已通过 rust-embed 嵌入二进制，因此这里无需声明 resources。
+# ============================================================
+[package.metadata.packager]
+product-name = "ShellMaster3"
 identifier = "com.shellmaster.app"
-version = "0.1.0"
-icon = ["assets/AppIcon.icns"]
-resources = ["assets"]
+# 打包前先编译 release 二进制；配合 `cargo packager --release` 使用
+before-packaging-command = "cargo build --release"
+description = "SSH/SFTP 客户端"
+long-description = "一个现代化的 SSH 和 SFTP 客户端，提供终端访问和文件传输功能。"
+authors = ["ShellMaster Team"]
+publisher = "ShellMaster Team"
 copyright = "Copyright (c) 2024 ShellMaster Team. All rights reserved."
-category = "Developer Tool"
-short_description = "SSH/SFTP 客户端"
-long_description = "一个现代化的 SSH 和 SFTP 客户端，提供终端访问和文件传输功能。"
+category = "DeveloperTool"
+# 提供 1024x1024 PNG 即可，cargo-packager 会按平台生成 .icns/.ico 等所需图标
+icons = ["assets/app-icon.png", "assets/AppIcon.icns"]
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
+
+[package.metadata.packager.deb]
+# GPUI 在 Linux 的运行时依赖；如目标发行版包名不同可按需调整。
+# AppImage 会自带依赖，deb 则交由系统包管理器解析这些依赖。
+depends = [
+    "libasound2",
+    "libxkbcommon0",
+    "libwayland-client0",
+    "libvulkan1",
+    "libxcb1",
+]

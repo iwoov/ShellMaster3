@@ -6,7 +6,6 @@
 
 use gpui::*;
 use gpui_component::Root;
-use std::path::PathBuf;
 
 mod assets;
 mod components;
@@ -30,29 +29,6 @@ use models::settings::ThemeMode;
 use pages::HomePage;
 use services::storage;
 
-/// 获取资源目录路径
-/// 在开发环境中使用项目的 assets 目录，在 .app 包中使用 Resources 目录
-fn get_assets_path() -> PathBuf {
-    // 首先尝试从可执行文件的位置推断 .app 包中的 Resources 目录
-    if let Ok(exe_path) = std::env::current_exe() {
-        // 在 .app 包中，可执行文件位于：ShellMaster3.app/Contents/MacOS/shellmaster3
-        // Resources 目录位于：ShellMaster3.app/Contents/Resources/
-        if let Some(parent) = exe_path.parent() {
-            if parent.ends_with("MacOS") {
-                if let Some(contents) = parent.parent() {
-                    let resources = contents.join("Resources").join("assets");
-                    if resources.exists() {
-                        return resources;
-                    }
-                }
-            }
-        }
-    }
-
-    // 开发环境：使用 CARGO_MANIFEST_DIR
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
-}
-
 fn main() {
     // 初始化日志系统
     // 可以通过 RUST_LOG 环境变量控制日志级别，例如：RUST_LOG=debug cargo run
@@ -70,9 +46,8 @@ fn main() {
         .with_target(false) // 不显示 target（模块路径）
         .init();
 
-    let app = Application::new().with_assets(Assets {
-        base: get_assets_path(),
-    });
+    // 资源已通过 rust-embed 嵌入二进制（见 assets.rs），无需外置 assets 目录
+    let app = Application::new().with_assets(Assets);
 
     // 处理 Dock 图标点击事件（macOS）或任务栏点击（Windows）
     // 当应用已运行但被隐藏时，点击图标会触发此回调

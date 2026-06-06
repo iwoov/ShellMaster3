@@ -118,6 +118,83 @@ impl SessionState {
         }
     }
 
+    /// 构建终端上下文（连接信息 / 操作系统 / 终端最近输出），用于注入到对话。
+    /// 关闭总开关或无任何可携带内容时返回 None。
+    fn build_terminal_context(&self, tab_id: &str, cx: &gpui::App) -> Option<String> {
+        let settings = crate::services::storage::load_settings().ok()?;
+        let ctx = &settings.ai.context;
+        if !ctx.enabled {
+            return None;
+        }
+        let tab = self.tabs.iter().find(|t| t.id == tab_id)?;
+
+        let mut sections: Vec<String> = Vec::new();
+
+        // 连接信息
+        if ctx.server_info {
+            if let Some(sd) = &tab.server_data {
+                let mut lines = Vec::new();
+                if !sd.label.trim().is_empty() {
+                    lines.push(format!("- 名称: {}", sd.label));
+                }
+                if !sd.host.trim().is_empty() {
+                    lines.push(format!("- 主机: {}:{}", sd.host, sd.port));
+                }
+                if !sd.username.trim().is_empty() {
+                    lines.push(format!("- 用户名: {}", sd.username));
+                }
+                if !lines.is_empty() {
+                    sections.push(format!("连接信息:\n{}", lines.join("\n")));
+                }
+            }
+        }
+
+        // 操作系统信息（复用 Monitor 采集，无则跳过）
+        if ctx.os_info {
+            if let Some(info) = &tab.monitor_state.system_info {
+                let mut lines = Vec::new();
+                if !info.host.hostname.trim().is_empty() {
+                    lines.push(format!("- 主机名: {}", info.host.hostname));
+                }
+                if !info.host.os.trim().is_empty() {
+                    lines.push(format!("- 操作系统: {}", info.host.os));
+                }
+                if !info.host.kernel.trim().is_empty() {
+                    lines.push(format!("- 内核: {}", info.host.kernel));
+                }
+                if !info.cpu.architecture.trim().is_empty() {
+                    lines.push(format!("- 架构: {}", info.cpu.architecture));
+                }
+                if !lines.is_empty() {
+                    sections.push(format!("系统信息:\n{}", lines.join("\n")));
+                }
+            }
+        }
+
+        // 终端最近输出
+        if ctx.terminal_output {
+            let term = tab
+                .active_terminal_id
+                .as_ref()
+                .and_then(|id| tab.terminals.iter().find(|t| &t.id == id))
+                .and_then(|inst| inst.terminal.as_ref());
+            if let Some(term) = term {
+                let text = term.read(cx).visible_text(ctx.output_lines as usize);
+                if !text.trim().is_empty() {
+                    sections.push(format!("终端最近输出:\n```\n{}\n```", text));
+                }
+            }
+        }
+
+        if sections.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "以下是用户当前终端会话的环境上下文，供你参考以给出更贴合的回答（这些信息由系统自动附加，并非用户输入）：\n\n{}",
+            sections.join("\n\n")
+        ))
+    }
+
     /// 发送当前 tab 的 AI 对话消息
     pub fn send_ai_chat_message(
         &mut self,
@@ -170,6 +247,9 @@ impl SessionState {
         resolved.model = self.resolve_ai_model(tab_id, &provider_ref);
         let system_prompt = settings.ai.system_prompt.clone();
 
+        // 在可变借用 tabs 之前，先算好终端上下文（需要不可变读取 self 与 cx）
+        let terminal_context = self.build_terminal_context(tab_id, cx);
+
         // 追加用户消息、标记 pending、清空输入
         let history: Vec<ChatMessage> = {
             let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
@@ -190,6 +270,13 @@ impl SessionState {
                 msgs.push(ChatMessage {
                     role: ChatRole::System,
                     content: system_prompt.clone(),
+                });
+            }
+            // 注入终端上下文（如果开启且有内容），作为额外的 system 消息
+            if let Some(ctx) = terminal_context {
+                msgs.push(ChatMessage {
+                    role: ChatRole::System,
+                    content: ctx,
                 });
             }
             msgs.extend(

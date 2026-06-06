@@ -435,6 +435,13 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.ai.status_fail" => "失败",
         "settings.ai.empty_key" => "API Key 为空",
         "settings.ai.save_blocked" => "以下供应商填写了 API Key 但未通过测试",
+        "settings.ai.context.title" => "终端上下文",
+        "settings.ai.context.hint" => "开启后，每次对话会把当前终端的环境信息一并发给模型，帮助它给出更贴合的回答。",
+        "settings.ai.context.enabled" => "携带终端上下文",
+        "settings.ai.context.server_info" => "连接信息（主机/端口/用户名）",
+        "settings.ai.context.os_info" => "操作系统信息（来自监控）",
+        "settings.ai.context.terminal_output" => "终端最近输出",
+        "settings.ai.context.output_lines" => "携带输出行数",
 
         // AI 对话
         "ai_chat.empty" => "开始一段新对话吧",
@@ -887,6 +894,13 @@ fn en_us(key: &'static str) -> &'static str {
         "settings.ai.status_fail" => "Failed",
         "settings.ai.empty_key" => "API key is empty",
         "settings.ai.save_blocked" => "The following providers have an API key but failed the connectivity test",
+        "settings.ai.context.title" => "Terminal Context",
+        "settings.ai.context.hint" => "When enabled, each chat will include the current terminal's environment so the model can give more relevant answers.",
+        "settings.ai.context.enabled" => "Include terminal context",
+        "settings.ai.context.server_info" => "Connection info (host/port/user)",
+        "settings.ai.context.os_info" => "OS info (from monitor)",
+        "settings.ai.context.terminal_output" => "Recent terminal output",
+        "settings.ai.context.output_lines" => "Output lines to include",
 
         // AI Chat
         "ai_chat.empty" => "Start a new conversation",

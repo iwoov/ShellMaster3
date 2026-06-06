@@ -727,6 +727,7 @@ fn render_ai_chat_panel(
     use gpui_component::input::Input;
     use gpui_component::menu::{DropdownMenu, PopupMenuItem};
     use gpui_component::Disableable;
+    use gpui_component::Sizable;
 
     let tab_id = tab.id.clone();
     let chat = &tab.ai_chat;
@@ -921,7 +922,18 @@ fn render_ai_chat_panel(
             .flex()
             .flex_col()
             .gap_3()
-            .children(chat.messages.iter().enumerate().map(|(idx, msg)| {
+            .children(chat.messages.iter().enumerate().filter(|(_, msg)| {
+                // 跳过流式开始前的空助手占位消息——此时由下方「思考中」指示器代为占位，
+                // 避免出现一个空气泡 + 思考气泡同时显示
+                !(msg.role == crate::services::ai::ChatRole::Assistant
+                    && !msg.error
+                    && msg.content.is_empty()
+                    && msg
+                        .reasoning
+                        .as_ref()
+                        .map(|r| r.trim().is_empty())
+                        .unwrap_or(true))
+            }).map(|(idx, msg)| {
                 render_ai_chat_message(
                     idx,
                     msg,
@@ -1011,6 +1023,8 @@ fn render_ai_chat_panel(
             let label_color = if has_any { foreground } else { muted_foreground };
             Button::new("ai-chat-model-btn")
                 .ghost()
+                .xsmall()
+                .compact()
                 .disabled(!has_any || model_list.is_empty())
                 .child(
                     div()
@@ -1019,17 +1033,13 @@ fn render_ai_chat_panel(
                         .gap(px(5.))
                         .min_w_0()
                         .child(
-                            svg()
-                                .path(icons::CPU)
-                                .size(px(13.))
-                                .flex_shrink_0()
-                                .text_color(muted_foreground),
-                        )
-                        .child(
                             div()
                                 .text_xs()
                                 .text_color(label_color)
+                                .max_w(px(160.))
                                 .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
                                 .child(current_model.clone()),
                         )
                         .child(render_icon(icons::CHEVRON_DOWN, muted_foreground.into())),
@@ -1061,11 +1071,14 @@ fn render_ai_chat_panel(
         };
         let send_btn = Button::new("ai-chat-send")
             .ghost()
+            .xsmall()
+            .compact()
             .disabled(send_disabled)
             .child(
                 svg()
                     .path(icons::SEND)
                     .size(px(16.))
+                    .flex_shrink_0()
                     .text_color(send_icon_color),
             )
             .on_click(move |_, window, cx| {
@@ -1097,7 +1110,8 @@ fn render_ai_chat_panel(
                                 .map(|input| Input::new(input).appearance(false)),
                         ),
                     )
-                    // 底部工具条：模型下拉 + 发送
+                    // 底部工具条：模型下拉（左）+ 发送图标（右）。
+                    // 模型名有 max_w 上限并省略截断，保证发送按钮始终在右侧可见。
                     .child(
                         div()
                             .flex()

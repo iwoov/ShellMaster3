@@ -168,6 +168,8 @@ pub struct SettingsDialogState {
     pub ai_active_provider: ProviderRef,
     /// 系统提示词输入框
     pub ai_system_prompt_input: Option<Entity<InputState>>,
+    /// 终端上下文：携带行数输入框
+    pub ai_context_lines_input: Option<Entity<InputState>>,
 }
 
 impl Default for SettingsDialogState {
@@ -221,6 +223,7 @@ impl Default for SettingsDialogState {
             ai_save_error: None,
             ai_active_provider: ProviderRef::Builtin(AiProviderId::OpenAi),
             ai_system_prompt_input: None,
+            ai_context_lines_input: None,
         }
     }
 }
@@ -308,6 +311,7 @@ impl SettingsDialogState {
         self.log_retention_input = None;
         self.ai_inputs.clear();
         self.ai_system_prompt_input = None;
+        self.ai_context_lines_input = None;
     }
 
     pub fn close(&mut self) {
@@ -619,6 +623,13 @@ impl SettingsDialogState {
                 state
             }));
         }
+
+        // 终端上下文：携带行数
+        if self.ai_context_lines_input.is_none() {
+            let value = self.settings.ai.context.output_lines.to_string();
+            self.ai_context_lines_input =
+                Some(create_int_number_input(value, 1, 500, 10, window, cx));
+        }
     }
 
     /// 从 AI 输入框读取当前值，构造一个 AiProviderConfig（不修改 settings）
@@ -837,6 +848,12 @@ impl SettingsDialogState {
         // AI - 系统提示词
         if let Some(input) = &self.ai_system_prompt_input {
             self.settings.ai.system_prompt = input.read(cx).value().to_string();
+        }
+        // AI - 终端上下文携带行数
+        if let Some(input) = &self.ai_context_lines_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.ai.context.output_lines = v;
+            }
         }
         // AI - 内置供应商
         for id in AiProviderId::ALL {

@@ -392,4 +392,52 @@ impl TerminalState {
         let term = self.term.lock();
         term.selection.is_some()
     }
+
+    /// 导出可见区域文本（最多保留最后 max_lines 行，去除行尾空白与首尾空行）。
+    /// 用于把终端最近输出作为上下文发给 AI。
+    pub fn visible_text(&self, max_lines: usize) -> String {
+        use alacritty_terminal::term::cell::Flags;
+        let term = self.term.lock();
+        let content = term.renderable_content();
+
+        let mut lines: Vec<String> = Vec::new();
+        let mut cur_line: i32 = i32::MIN;
+        let mut buf = String::new();
+        for indexed in content.display_iter {
+            // 跳过宽字符占位符，避免重复字符
+            if indexed.cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let line = indexed.point.line.0;
+            if line != cur_line {
+                if cur_line != i32::MIN {
+                    lines.push(std::mem::take(&mut buf));
+                }
+                cur_line = line;
+            }
+            buf.push(indexed.cell.c);
+        }
+        if cur_line != i32::MIN {
+            lines.push(buf);
+        }
+
+        // 去除每行行尾空白
+        for l in lines.iter_mut() {
+            let trimmed_len = l.trim_end().len();
+            l.truncate(trimmed_len);
+        }
+        // 去除首尾空行
+        while lines.first().map(|l| l.is_empty()).unwrap_or(false) {
+            lines.remove(0);
+        }
+        while lines.last().map(|l| l.is_empty()).unwrap_or(false) {
+            lines.pop();
+        }
+        // 仅保留最后 max_lines 行
+        if max_lines > 0 && lines.len() > max_lines {
+            lines = lines.split_off(lines.len() - max_lines);
+        }
+
+        lines.join("\n")
+    }
 }

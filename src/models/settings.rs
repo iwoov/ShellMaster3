@@ -193,6 +193,33 @@ impl AiProviderConfig {
     }
 }
 
+/// 终端上下文携带设置：对话时是否把当前终端环境信息发给模型
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AiContextSettings {
+    /// 总开关：是否携带终端上下文
+    pub enabled: bool,
+    /// 携带连接信息（标签/主机/端口/用户名）
+    pub server_info: bool,
+    /// 携带操作系统信息（复用 Monitor 采集的 os/内核/主机名/架构）
+    pub os_info: bool,
+    /// 携带终端最近输出
+    pub terminal_output: bool,
+    /// 终端输出携带的行数
+    pub output_lines: u32,
+}
+
+impl Default for AiContextSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_info: true,
+            os_info: true,
+            terminal_output: true,
+            output_lines: 40,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AiSettings {
     /// 默认对话使用的供应商
@@ -205,6 +232,9 @@ pub struct AiSettings {
     /// 用户自定义供应商
     #[serde(default)]
     pub custom_providers: Vec<CustomProvider>,
+    /// 终端上下文携带设置
+    #[serde(default)]
+    pub context: AiContextSettings,
 }
 
 impl Default for AiSettings {
@@ -218,6 +248,7 @@ impl Default for AiSettings {
             providers,
             system_prompt: Self::default_system_prompt(),
             custom_providers: Vec::new(),
+            context: AiContextSettings::default(),
         }
     }
 }

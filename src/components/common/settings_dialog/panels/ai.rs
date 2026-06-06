@@ -12,7 +12,7 @@ use crate::components::common::icon::{render_colored_icon, render_letter_avatar}
 use crate::i18n;
 use crate::models::settings::{AiProviderId, ApiFormat, ProviderRef};
 
-use super::super::helpers::render_section_title;
+use super::super::helpers::{render_number_row, render_section_title, render_switch_row};
 use super::super::{AiTestStatus, SettingsDialogState};
 
 pub fn render_ai_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
@@ -49,6 +49,75 @@ pub fn render_ai_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
 
     // 仅渲染当前选中的供应商配置
     container = container.child(render_provider_block(active, state.clone(), cx));
+
+    // 终端上下文（全局）
+    {
+        let border = cx.theme().border;
+        let ctx = read.settings.ai.context.clone();
+        let mut block = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_4()
+            .border_1()
+            .border_color(border)
+            .rounded_lg()
+            .child(render_section_title(i18n::t(lang, "settings.ai.context.title"), cx))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .mb_2()
+                    .child(i18n::t(lang, "settings.ai.context.hint")),
+            )
+            .child(render_switch_row(
+                "ai-ctx-enabled",
+                i18n::t(lang, "settings.ai.context.enabled"),
+                ctx.enabled,
+                state.clone(),
+                |s, v| s.settings.ai.context.enabled = v,
+                cx,
+            ));
+
+        if ctx.enabled {
+            block = block
+                .child(render_switch_row(
+                    "ai-ctx-server",
+                    i18n::t(lang, "settings.ai.context.server_info"),
+                    ctx.server_info,
+                    state.clone(),
+                    |s, v| s.settings.ai.context.server_info = v,
+                    cx,
+                ))
+                .child(render_switch_row(
+                    "ai-ctx-os",
+                    i18n::t(lang, "settings.ai.context.os_info"),
+                    ctx.os_info,
+                    state.clone(),
+                    |s, v| s.settings.ai.context.os_info = v,
+                    cx,
+                ))
+                .child(render_switch_row(
+                    "ai-ctx-output",
+                    i18n::t(lang, "settings.ai.context.terminal_output"),
+                    ctx.terminal_output,
+                    state.clone(),
+                    |s, v| s.settings.ai.context.terminal_output = v,
+                    cx,
+                ));
+            if ctx.terminal_output {
+                if let Some(input) = read.ai_context_lines_input.clone() {
+                    block = block.child(render_number_row(
+                        i18n::t(lang, "settings.ai.context.output_lines"),
+                        &input,
+                        cx,
+                    ));
+                }
+            }
+        }
+
+        container = container.child(block);
+    }
 
     // 系统提示词（全局）
     if let Some(input) = read.ai_system_prompt_input.clone() {

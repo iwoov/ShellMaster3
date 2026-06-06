@@ -56,10 +56,16 @@ fn get_assets_path() -> PathBuf {
 fn main() {
     // 初始化日志系统
     // 可以通过 RUST_LOG 环境变量控制日志级别，例如：RUST_LOG=debug cargo run
+    // 默认全局 INFO，但 Monitor 模块强制开启 DEBUG，方便排查监控采集问题。
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
+                .add_directive(tracing::Level::INFO.into())
+                .add_directive(
+                    "shellmaster3::services::monitor=debug"
+                        .parse()
+                        .expect("valid log directive"),
+                ),
         )
         .with_target(false) // 不显示 target（模块路径）
         .init();

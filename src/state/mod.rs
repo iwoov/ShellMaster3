@@ -1,6 +1,7 @@
 // 全局 AppState 模块
 // 按功能拆分为多个子模块
 
+mod ai_chat;
 mod core;
 mod sftp_navigation;
 mod sftp_transfer;
@@ -79,6 +80,8 @@ pub struct SessionTab {
     pub active_transfers: Vec<crate::models::sftp::TransferItem>,
     /// 服务是否已启动（Monitor/SFTP，只在首次 PTY 创建时启动）
     pub services_started: bool,
+    /// AI 对话状态（按 tab 内存保存，关闭 tab 即清）
+    pub ai_chat: AiChatState,
 }
 
 /// 侧边栏面板类型
@@ -87,6 +90,28 @@ pub enum SidebarPanel {
     #[default]
     Snippets, // 快捷命令
     Transfer, // 传输管理
+    AiChat,   // AI 对话
+}
+
+/// AI 对话消息（按 tab 内存保存，关闭即清）
+#[derive(Clone, Debug)]
+pub struct AiChatMessage {
+    pub role: crate::services::ai::ChatRole,
+    pub content: String,
+    pub error: bool,
+    /// 助手的思考过程（仅 DeepSeek-R1 等模型）
+    pub reasoning: Option<String>,
+    /// 思考过程是否折叠（流式完成或正文开始后自动折叠；用户可点击切换）
+    pub reasoning_collapsed: bool,
+}
+
+/// 单个会话标签的 AI 对话状态
+#[derive(Clone, Default)]
+pub struct AiChatState {
+    pub messages: Vec<AiChatMessage>,
+    pub pending: bool,
+    /// 用户在 chat header 选择的供应商；None 表示使用 settings.ai.default_provider
+    pub selected_provider: Option<crate::models::AiProviderId>,
 }
 
 /// 全局会话状态
@@ -127,6 +152,8 @@ pub struct SessionState {
     pub file_watcher: Option<Arc<Mutex<FileWatcher>>>,
     /// 文件监控事件接收器
     pub file_watch_receiver: Option<std::sync::mpsc::Receiver<FileWatchEvent>>,
+    /// AI 对话输入框（按 tab_id 存储）
+    pub ai_chat_inputs: HashMap<String, Entity<InputState>>,
 }
 
 impl Default for SessionState {
@@ -151,6 +178,7 @@ impl Default for SessionState {
             sftp_properties_dialog: None,
             file_watcher: None,
             file_watch_receiver: None,
+            ai_chat_inputs: HashMap::new(),
         }
     }
 }

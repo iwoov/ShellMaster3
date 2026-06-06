@@ -41,6 +41,12 @@ pub mod icons {
     pub const TRANSFER: &str = "icons/transfer.svg";
     pub const FINGERPRINT: &str = "icons/fingerprint.svg";
     pub const SEND: &str = "icons/send.svg";
+    pub const SPARKLES: &str = "icons/sparkles.svg";
+    // AI 供应商图标
+    pub const AI_OPENAI: &str = "icons/openai.svg";
+    pub const AI_GEMINI: &str = "icons/gemini.svg";
+    pub const AI_CLAUDE: &str = "icons/claude.svg";
+    pub const AI_DEEPSEEK: &str = "icons/deepseek.svg";
     // Monitor 图标
     pub const CPU: &str = "icons/cpu.svg";
     pub const MEMORY: &str = "icons/memory.svg";

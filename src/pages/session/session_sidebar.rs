@@ -18,7 +18,8 @@ pub fn render_session_sidebar(
     _tab: &SessionTab,
     active_panel: SidebarPanel,
     session_state: Entity<SessionState>,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     let bg_color = crate::theme::sidebar_color(cx);
     let foreground = cx.theme().foreground;
@@ -37,6 +38,11 @@ pub fn render_session_sidebar(
         SidebarPanel::Transfer => (
             crate::i18n::t(&lang, "mini_sidebar.transfer"),
             render_transfer_panel(session_state.clone(), &lang, cx).into_any_element(),
+        ),
+        SidebarPanel::AiChat => (
+            crate::i18n::t(&lang, "mini_sidebar.ai_chat"),
+            render_ai_chat_panel(_tab, session_state.clone(), &lang, window, cx)
+                .into_any_element(),
         ),
     };
 
@@ -730,4 +736,408 @@ fn render_command_node(
                 .overflow_hidden()
                 .child(command.name.clone()),
         )
+}
+
+// ==================== AI 对话面板 ====================
+
+fn render_ai_chat_panel(
+    tab: &SessionTab,
+    session_state: Entity<SessionState>,
+    lang: &crate::models::settings::Language,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    use gpui::Corner;
+    use gpui_component::button::Button;
+    use gpui_component::input::Input;
+    use gpui_component::menu::{DropdownMenu, PopupMenuItem};
+    use gpui_component::Disableable;
+
+    let tab_id = tab.id.clone();
+    let chat = &tab.ai_chat;
+    let foreground = cx.theme().foreground;
+    let muted_foreground = cx.theme().muted_foreground;
+    let border = cx.theme().border;
+
+    // 当前选中供应商；未选则用 default
+    let settings = crate::services::storage::load_settings().unwrap_or_default();
+    let verified_list = settings.ai.verified_providers();
+    let active_provider = chat.selected_provider.unwrap_or(settings.ai.default_provider);
+    let has_any = !verified_list.is_empty();
+
+    // 输入框（如果存在）
+    let input_entity = session_state.read(cx).get_ai_chat_input(&tab_id);
+
+    // 头部：供应商下拉 + 清空按钮
+    let header = {
+        let session_for_clear = session_state.clone();
+        let tab_id_for_clear = tab_id.clone();
+        let lang_for_clear = lang.clone();
+        let providers = verified_list.clone();
+        let tab_id_for_pick = tab_id.clone();
+        let session_for_pick = session_state.clone();
+
+        div()
+            .h(px(36.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px_2()
+            .border_b_1()
+            .border_color(border)
+            .child({
+                let trigger_label: SharedString = if has_any {
+                    SharedString::from(active_provider.label())
+                } else {
+                    crate::i18n::t(lang, "ai_chat.no_provider_short").into()
+                };
+                let trigger_color = if has_any { foreground } else { muted_foreground };
+                let trigger_icon = if has_any { Some(active_provider.icon_path()) } else { None };
+                Button::new("ai-chat-provider-btn")
+                    .outline()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .children(trigger_icon.map(|p| {
+                                img(p).w(px(14.)).h(px(14.))
+                            }))
+                            .child(div().text_xs().text_color(trigger_color).child(trigger_label))
+                            .child(render_icon(icons::CHEVRON_DOWN, muted_foreground.into())),
+                    )
+                    .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
+                        let mut menu = menu.min_w(px(160.));
+                        for id in &providers {
+                            let provider_id = *id;
+                            let label: SharedString = id.label().into();
+                            let session = session_for_pick.clone();
+                            let tab_id_owned = tab_id_for_pick.clone();
+                            menu = menu.item(PopupMenuItem::new(label).on_click(
+                                move |_, _, cx| {
+                                    session.update(cx, |s, cx| {
+                                        s.set_ai_chat_provider(&tab_id_owned, provider_id);
+                                        cx.notify();
+                                    });
+                                },
+                            ));
+                        }
+                        menu
+                    })
+            })
+            .child(
+                div()
+                    .id("ai-chat-clear")
+                    .cursor_pointer()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(muted_foreground.opacity(0.15)))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted_foreground)
+                            .child(crate::i18n::t(&lang_for_clear, "ai_chat.clear")),
+                    )
+                    .on_click(move |_, _, cx| {
+                        session_for_clear.update(cx, |s, cx| {
+                            s.clear_ai_chat(&tab_id_for_clear, cx);
+                        });
+                    }),
+            )
+    };
+
+    // 消息列表
+    let messages_view = if chat.messages.is_empty() && !chat.pending {
+        div()
+            .id("ai-chat-empty")
+            .flex_1()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .child(render_icon(icons::SPARKLES, muted_foreground.into()))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted_foreground)
+                    .child(crate::i18n::t(lang, "ai_chat.empty")),
+            )
+            .into_any_element()
+    } else {
+        div()
+            .id("ai-chat-messages")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(chat.messages.iter().enumerate().map(|(idx, msg)| {
+                render_ai_chat_message(
+                    idx,
+                    msg,
+                    session_state.clone(),
+                    tab_id.clone(),
+                    window,
+                    cx,
+                )
+            }))
+            .when(
+                chat.pending
+                    && chat
+                        .messages
+                        .last()
+                        .map(|m| {
+                            m.role == crate::services::ai::ChatRole::Assistant
+                                && m.content.is_empty()
+                                && m.reasoning.as_ref().map(|r| r.is_empty()).unwrap_or(true)
+                        })
+                        .unwrap_or(true),
+                |this| {
+                    this.child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .text_xs()
+                            .text_color(muted_foreground)
+                            .child(crate::i18n::t(lang, "ai_chat.thinking")),
+                    )
+                },
+            )
+            .into_any_element()
+    };
+
+    // 输入区
+    let input_area = {
+        let session_for_send = session_state.clone();
+        let tab_id_for_send = tab_id.clone();
+        let send_label = crate::i18n::t(lang, "ai_chat.send");
+        let pending = chat.pending;
+        let has_input = input_entity.is_some();
+
+        div()
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(border)
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(
+                input_entity
+                    .as_ref()
+                    .map(|input| Input::new(input).appearance(true)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .child(
+                        Button::new("ai-chat-send")
+                            .disabled(pending || !has_any || !has_input)
+                            .child(if pending {
+                                crate::i18n::t(lang, "ai_chat.thinking")
+                            } else {
+                                send_label
+                            })
+                            .on_click(move |_, window, cx| {
+                                session_for_send.update(cx, |s, cx| {
+                                    s.send_ai_chat_message(&tab_id_for_send, window, cx);
+                                });
+                            }),
+                    ),
+            )
+    };
+
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .child(header)
+        .child(messages_view)
+        .child(input_area)
+}
+
+fn render_ai_chat_message(
+    idx: usize,
+    msg: &crate::state::AiChatMessage,
+    session_state: Entity<SessionState>,
+    tab_id: String,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    use crate::services::ai::ChatRole;
+    use gpui_component::text::TextView;
+
+    let is_user = msg.role == ChatRole::User;
+    let bg = if msg.error {
+        cx.theme().danger.opacity(0.12)
+    } else if is_user {
+        cx.theme().primary.opacity(0.12)
+    } else {
+        cx.theme().muted
+    };
+    let text_color = if msg.error {
+        cx.theme().danger
+    } else {
+        cx.theme().foreground
+    };
+    let muted_fg = cx.theme().muted_foreground;
+    let border = cx.theme().border;
+
+    // 气泡内容：用户/错误纯文本；助手 markdown，整体限制为 text_xs 与思考过程一致
+    let body: AnyElement = if is_user || msg.error {
+        div()
+            .text_xs()
+            .text_color(text_color)
+            .whitespace_normal()
+            .child(SharedString::from(msg.content.clone()))
+            .into_any_element()
+    } else {
+        use gpui::StyleRefinement;
+        use gpui_component::text::TextViewStyle;
+        // 代码块样式：深色背景 + 边框 + 等宽小字号，与气泡区分开
+        let code_bg = if cx.theme().mode.is_dark() {
+            gpui::black().opacity(0.45)
+        } else {
+            cx.theme().secondary
+        };
+        let code_style = StyleRefinement::default()
+            .bg(code_bg)
+            .rounded(px(6.))
+            .p_3()
+            .border_1()
+            .border_color(cx.theme().border);
+
+        div()
+            .text_xs()
+            .child(
+                TextView::markdown(
+                    SharedString::from(format!("ai-md-{}", idx)),
+                    msg.content.clone(),
+                    window,
+                    cx,
+                )
+                .style(
+                    TextViewStyle::default()
+                        .paragraph_gap(gpui::rems(0.5))
+                        .code_block(code_style),
+                )
+                .selectable(true)
+                .code_block_actions(|cb, _window, cx| {
+                    let code = cb.code();
+                    let copy_color = cx.theme().muted_foreground;
+                    div()
+                        .id(SharedString::from(format!("md-copy-{}", code.len())))
+                        .cursor_pointer()
+                        .px_1()
+                        .py(px(2.))
+                        .rounded(px(3.))
+                        .hover(move |s| s.bg(copy_color.opacity(0.15)))
+                        .child(
+                            svg()
+                                .path(crate::constants::icons::COPY)
+                                .size(px(12.))
+                                .text_color(copy_color),
+                        )
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
+                        })
+                        .into_any_element()
+                }),
+            )
+            .into_any_element()
+    };
+
+    // 思考过程块（DeepSeek-R1 等会带 reasoning），可折叠
+    let reasoning_block: Option<AnyElement> = msg.reasoning.as_ref().and_then(|r| {
+        let r_owned = r.trim().to_string();
+        if r_owned.is_empty() {
+            return None;
+        }
+        let collapsed = msg.reasoning_collapsed;
+        let session_for_toggle = session_state.clone();
+        let tab_id_for_toggle = tab_id.clone();
+        Some(
+            div()
+                .mb_1()
+                .p_2()
+                .rounded(px(4.))
+                .border_l_2()
+                .border_color(border)
+                .bg(muted_fg.opacity(0.08))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .id(SharedString::from(format!("ai-reason-toggle-{}", idx)))
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .cursor_pointer()
+                        .child(render_icon(icons::SPARKLES, muted_fg.into()))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(muted_fg)
+                                .child(SharedString::from(if collapsed {
+                                    "思考过程（已折叠，点击展开）"
+                                } else {
+                                    "思考过程"
+                                })),
+                        )
+                        .child(svg().path(if collapsed {
+                                icons::CHEVRON_RIGHT
+                            } else {
+                                icons::CHEVRON_DOWN
+                            })
+                            .size(px(12.))
+                            .text_color(muted_fg))
+                        .on_click(move |_, _, cx| {
+                            session_for_toggle.update(cx, |s, cx| {
+                                s.toggle_ai_reasoning(&tab_id_for_toggle, idx, cx);
+                            });
+                        }),
+                )
+                .when(!collapsed, |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted_fg)
+                            .whitespace_normal()
+                            .child(SharedString::from(r_owned)),
+                    )
+                })
+                .into_any_element(),
+        )
+    });
+
+    // 气泡：助手占满宽度（用 w_full 而非 flex_1，避免 flex 计算把 markdown 内部压到 0 宽）
+    // 用户气泡最大 85% 宽，自然收缩。
+    // overflow_hidden 兜底：极窄场景下宽代码块直接裁掉，不破坏布局或触发 TextView 零尺寸渲染。
+    let bubble = div()
+        .id(SharedString::from(format!("ai-msg-{}", idx)))
+        .p_2()
+        .rounded(px(8.))
+        .bg(bg)
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .when(is_user, |this| this.max_w(relative(0.85)))
+        .when(!is_user, |this| this.w_full())
+        .children(reasoning_block)
+        .child(body);
+
+    div()
+        .w_full()
+        .flex()
+        .overflow_hidden()
+        .when(is_user, |this| this.justify_end())
+        .child(bubble)
 }

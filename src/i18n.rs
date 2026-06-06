@@ -410,9 +410,34 @@ fn zh_cn(key: &'static str) -> &'static str {
         // 小侧栏
         "mini_sidebar.snippets" => "快捷命令",
         "mini_sidebar.transfer" => "传输管理",
+        "mini_sidebar.ai_chat" => "AI 对话",
 
         // 传输管理
         "transfer.empty" => "暂无传输任务",
+
+        // AI 设置
+        "settings.nav.ai" => "AI 配置",
+        "settings.ai.intro" => "为各供应商填写 API Key，点击「测试」通过后才能保存。",
+        "settings.ai.api_key" => "API Key",
+        "settings.ai.base_url" => "Base URL",
+        "settings.ai.model" => "默认模型",
+        "settings.ai.test" => "测试连通性",
+        "settings.ai.testing" => "测试中...",
+        "settings.ai.status_untested" => "未测试",
+        "settings.ai.status_testing" => "测试中",
+        "settings.ai.status_pass" => "已通过",
+        "settings.ai.status_fail" => "失败",
+        "settings.ai.empty_key" => "API Key 为空",
+        "settings.ai.save_blocked" => "以下供应商填写了 API Key 但未通过测试",
+
+        // AI 对话
+        "ai_chat.empty" => "开始一段新对话吧",
+        "ai_chat.placeholder" => "向 AI 提问…",
+        "ai_chat.send" => "发送",
+        "ai_chat.thinking" => "思考中…",
+        "ai_chat.clear" => "清空",
+        "ai_chat.no_provider" => "尚未配置任何已通过测试的 AI 供应商，请先在「设置 → AI 配置」中添加并测试。",
+        "ai_chat.no_provider_short" => "未配置",
 
         // 已知主机
         "known_hosts.empty.title" => "暂无已知主机",
@@ -830,9 +855,34 @@ fn en_us(key: &'static str) -> &'static str {
         // Mini Sidebar
         "mini_sidebar.snippets" => "Snippets",
         "mini_sidebar.transfer" => "Transfer",
+        "mini_sidebar.ai_chat" => "AI Chat",
 
         // Transfer Panel
         "transfer.empty" => "No active transfers",
+
+        // AI Settings
+        "settings.nav.ai" => "AI",
+        "settings.ai.intro" => "Fill in the API key for each provider; the Save button is only enabled after a successful connectivity test.",
+        "settings.ai.api_key" => "API Key",
+        "settings.ai.base_url" => "Base URL",
+        "settings.ai.model" => "Default Model",
+        "settings.ai.test" => "Test connection",
+        "settings.ai.testing" => "Testing...",
+        "settings.ai.status_untested" => "Untested",
+        "settings.ai.status_testing" => "Testing",
+        "settings.ai.status_pass" => "Passed",
+        "settings.ai.status_fail" => "Failed",
+        "settings.ai.empty_key" => "API key is empty",
+        "settings.ai.save_blocked" => "The following providers have an API key but failed the connectivity test",
+
+        // AI Chat
+        "ai_chat.empty" => "Start a new conversation",
+        "ai_chat.placeholder" => "Ask the AI…",
+        "ai_chat.send" => "Send",
+        "ai_chat.thinking" => "Thinking…",
+        "ai_chat.clear" => "Clear",
+        "ai_chat.no_provider" => "No verified AI provider configured. Add one under Settings → AI and run the connectivity test.",
+        "ai_chat.no_provider_short" => "Unconfigured",
 
         // Known Hosts
         "known_hosts.empty.title" => "No Known Hosts",

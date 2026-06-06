@@ -175,7 +175,43 @@ pub fn render_session_layout(
                 }),
         );
 
-    // 小侧栏组件 - 始终存在，包含两个图标按钮
+    // 创建 AI 对话图标按钮
+    let is_ai_active = active_panel == SidebarPanel::AiChat;
+    let ai_session_state = session_state.clone();
+    let ai_button = div()
+        .id("mini-sidebar-ai")
+        .size(px(24.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .rounded(px(4.))
+        .when(is_ai_active, |s| s.bg(hover_bg))
+        .hover(|s| s.bg(hover_bg))
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            ai_session_state.update(cx, |state, _| {
+                if state.active_sidebar_panel == SidebarPanel::AiChat {
+                    state.toggle_sidebar();
+                } else {
+                    state.set_sidebar_panel(SidebarPanel::AiChat);
+                    if state.sidebar_collapsed {
+                        state.sidebar_collapsed = false;
+                    }
+                }
+            });
+        })
+        .child(
+            svg()
+                .path(icons::SPARKLES)
+                .size(px(16.))
+                .text_color(if is_ai_active {
+                    active_icon_color
+                } else {
+                    icon_color
+                }),
+        );
+
+    // 小侧栏组件 - 始终存在，包含三个图标按钮
     let mini_sidebar = div()
         .w(px(sidebar_width))
         .flex_shrink_0()
@@ -188,7 +224,8 @@ pub fn render_session_layout(
         .pt_3()
         .gap_2()
         .child(snippets_button)
-        .child(transfer_button);
+        .child(transfer_button)
+        .child(ai_button);
 
     // 主布局：使用简单的 flex 容器
     // 包装在 relative 容器中以支持 dialog overlay
@@ -212,10 +249,12 @@ pub fn render_session_layout(
                     .child(
                         resizable_panel()
                             .size(px(230.))
+                            .size_range(px(220.)..px(2000.))
                             .child(render_session_sidebar(
                                 tab,
                                 active_panel,
                                 session_state.clone(),
+                                window,
                                 cx,
                             )),
                     ),

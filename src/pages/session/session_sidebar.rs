@@ -22,28 +22,23 @@ pub fn render_session_sidebar(
     cx: &mut App,
 ) -> impl IntoElement {
     let bg_color = crate::theme::sidebar_color(cx);
-    let foreground = cx.theme().foreground;
 
     // 获取语言设置
     let lang = crate::services::storage::load_settings()
         .map(|s| s.theme.language)
         .unwrap_or_default();
 
-    // 根据不同面板显示不同内容
-    let (title, content) = match active_panel {
-        SidebarPanel::Snippets => (
-            crate::i18n::t(&lang, "mini_sidebar.snippets"),
-            render_snippets_tree(session_state.clone(), cx).into_any_element(),
-        ),
-        SidebarPanel::Transfer => (
-            crate::i18n::t(&lang, "mini_sidebar.transfer"),
-            render_transfer_panel(session_state.clone(), &lang, cx).into_any_element(),
-        ),
-        SidebarPanel::AiChat => (
-            crate::i18n::t(&lang, "mini_sidebar.ai_chat"),
-            render_ai_chat_panel(_tab, session_state.clone(), &lang, window, cx)
-                .into_any_element(),
-        ),
+    // 根据不同面板显示不同内容（标题栏已移除，内容占满空间）
+    let content = match active_panel {
+        SidebarPanel::Snippets => {
+            render_snippets_tree(session_state.clone(), cx).into_any_element()
+        }
+        SidebarPanel::Transfer => {
+            render_transfer_panel(session_state.clone(), &lang, cx).into_any_element()
+        }
+        SidebarPanel::AiChat => {
+            render_ai_chat_panel(_tab, session_state.clone(), &lang, window, cx).into_any_element()
+        }
     };
 
     div()
@@ -51,28 +46,7 @@ pub fn render_session_sidebar(
         .bg(bg_color)
         .flex()
         .flex_col()
-        .child(
-            // 标题栏
-            div()
-                .w_full()
-                .h(px(44.))
-                .flex()
-                .items_center()
-                .px_4()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .text_sm()
-                        .font_medium()
-                        .text_color(foreground)
-                        .child(title),
-                ),
-        )
-        .child(
-            // 内容区域
-            content,
-        )
+        .child(content)
 }
 
 /// 渲染传输管理面板
@@ -797,18 +771,22 @@ fn render_ai_chat_panel(
                 let trigger_color = if has_any { foreground } else { muted_foreground };
                 let trigger_icon = if has_any { Some(active_provider.icon_path()) } else { None };
                 Button::new("ai-chat-provider-btn")
-                    .outline()
+                    .ghost()
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.))
-                            .children(trigger_icon.map(|p| img(p).w(px(16.)).h(px(16.))))
+                            .gap(px(5.))
+                            .min_w_0()
+                            .children(
+                                trigger_icon
+                                    .map(|p| img(p).w(px(15.)).h(px(15.)).flex_shrink_0()),
+                            )
                             .child(
                                 div()
-                                    .text_sm()
-                                    .font_medium()
+                                    .text_xs()
                                     .text_color(trigger_color)
+                                    .overflow_hidden()
                                     .child(trigger_label),
                             )
                             .child(render_icon(icons::CHEVRON_DOWN, muted_foreground.into())),
@@ -818,16 +796,30 @@ fn render_ai_chat_panel(
                         for id in &providers {
                             let provider_id = *id;
                             let label: SharedString = id.label().into();
+                            let icon_path = id.icon_path();
                             let session = session_for_pick.clone();
                             let tab_id_owned = tab_id_for_pick.clone();
-                            menu = menu.item(PopupMenuItem::new(label).on_click(
-                                move |_, _, cx| {
+                            menu = menu.item(
+                                PopupMenuItem::element(move |_window, cx| {
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .child(img(icon_path).w(px(16.)).h(px(16.)))
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(cx.theme().foreground)
+                                                .child(label.clone()),
+                                        )
+                                })
+                                .on_click(move |_, _, cx| {
                                     session.update(cx, |s, cx| {
                                         s.set_ai_chat_provider(&tab_id_owned, provider_id);
                                         cx.notify();
                                     });
-                                },
-                            ));
+                                }),
+                            );
                         }
                         menu
                     })
@@ -902,6 +894,7 @@ fn render_ai_chat_panel(
                     msg,
                     session_state.clone(),
                     tab_id.clone(),
+                    lang,
                     window,
                     cx,
                 )
@@ -1107,6 +1100,7 @@ fn render_ai_chat_message(
     msg: &crate::state::AiChatMessage,
     session_state: Entity<SessionState>,
     tab_id: String,
+    lang: &crate::models::settings::Language,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -1225,11 +1219,7 @@ fn render_ai_chat_message(
                             div()
                                 .text_xs()
                                 .text_color(muted_fg)
-                                .child(SharedString::from(if collapsed {
-                                    "思考过程（已折叠，点击展开）"
-                                } else {
-                                    "思考过程"
-                                })),
+                                .child(crate::i18n::t(lang, "ai_chat.reasoning")),
                         )
                         .child(svg().path(if collapsed {
                                 icons::CHEVRON_RIGHT

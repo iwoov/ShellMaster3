@@ -156,6 +156,41 @@ impl SshSession {
         Ok(ExecChannel::new(channel))
     }
 
+    /// 打开流式执行通道（用于 Monitor 常驻采集脚本）
+    /// 与 `open_exec` 不同：启动一个长期运行的远端脚本，持续读取其输出而不等待退出。
+    pub async fn open_exec_stream(&self, script: &str) -> Result<ExecStreamChannel, SshError> {
+        if !self.is_alive() {
+            return Err(SshError::Disconnected(
+                "Session is disconnected".to_string(),
+            ));
+        }
+
+        let channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(SshError::from)?;
+
+        // 用 `sh -s` 从 stdin 读取脚本执行，而不是把脚本作为命令字符串传给远端登录 shell。
+        // 否则当用户默认 shell 不是 POSIX sh（如 csh/tcsh/fish）时，多行脚本会被错误解析而立即失败。
+        channel
+            .exec(false, "sh -s")
+            .await
+            .map_err(|e| SshError::Channel(e.to_string()))?;
+
+        // 把脚本写入 stdin，然后发送 EOF（仅半关闭写方向，服务端仍可持续输出 stdout）
+        channel
+            .data(script.as_bytes())
+            .await
+            .map_err(|e| SshError::Channel(e.to_string()))?;
+        channel
+            .eof()
+            .await
+            .map_err(|e| SshError::Channel(e.to_string()))?;
+
+        Ok(ExecStreamChannel::new(channel))
+    }
+
     /// 打开 SFTP 通道
     pub async fn open_sftp(&self) -> Result<SftpChannel, SshError> {
         if !self.is_alive() {
@@ -314,6 +349,45 @@ impl ExecChannel {
             stderr,
             exit_code: exit_code.unwrap_or(0),
         })
+    }
+}
+
+/// 流式执行通道（用于 Monitor 常驻采集脚本）
+/// 仅做流式读取：脚本在远端长期运行并持续输出，逐块读取即可。
+pub struct ExecStreamChannel {
+    read_half: Mutex<ChannelReadHalf>,
+}
+
+impl ExecStreamChannel {
+    fn new(channel: RusshChannel) -> Self {
+        let (read_half, _write_half) = channel.split();
+        Self {
+            read_half: Mutex::new(read_half),
+        }
+    }
+
+    /// 读取下一块输出数据
+    /// - `Some(bytes)`：收到 stdout 数据
+    /// - `None`：通道已结束（Eof/Close 或底层关闭）
+    pub async fn read(&self) -> Result<Option<Vec<u8>>, SshError> {
+        let mut read_half = self.read_half.lock().await;
+
+        loop {
+            match read_half.wait().await {
+                Some(channel_msg) => match channel_msg {
+                    ChannelMsg::Data { data } => return Ok(Some(data.to_vec())),
+                    ChannelMsg::ExtendedData { data, ext } => {
+                        // ext==0 为标准输出；stderr（ext==1）忽略
+                        if ext == 0 {
+                            return Ok(Some(data.to_vec()));
+                        }
+                    }
+                    ChannelMsg::Eof | ChannelMsg::Close => return Ok(None),
+                    _ => {}
+                },
+                None => return Ok(None),
+            }
+        }
     }
 }
 

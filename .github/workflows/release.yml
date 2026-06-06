@@ -33,7 +33,7 @@ jobs:
             formats: nsis
           - label: Linux
             os: ubuntu-22.04
-            formats: deb appimage
+            formats: deb,appimage
 
     steps:
       - uses: actions/checkout@v4

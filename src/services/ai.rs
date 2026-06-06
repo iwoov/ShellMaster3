@@ -6,7 +6,7 @@
 //
 // 所有调用都在 SshManager 的 tokio runtime 中执行；GPUI 侧通过 channel 接收结果。
 
-use crate::models::{AiProviderConfig, AiProviderId};
+use crate::models::ApiFormat;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -63,31 +63,25 @@ fn build_client(timeout_secs: u64) -> Result<reqwest::Client, AiError> {
 
 /// 测试连通性（list-models 端点，2xx 即通过）
 pub async fn test_connection(
-    provider: AiProviderId,
-    cfg: &AiProviderConfig,
+    format: ApiFormat,
+    api_key: &str,
+    base_url: &str,
 ) -> Result<(), AiError> {
-    if cfg.api_key.trim().is_empty() {
+    if api_key.trim().is_empty() {
         return Err(AiError::MissingKey);
     }
     let client = build_client(15)?;
-    let base = if cfg.base_url.is_empty() {
-        provider.default_base_url().to_string()
-    } else {
-        cfg.base_url.trim_end_matches('/').to_string()
-    };
+    let base = base_url.trim_end_matches('/').to_string();
 
-    let req = match provider {
-        AiProviderId::OpenAi => client
+    let req = match format {
+        ApiFormat::OpenAiChat | ApiFormat::OpenAiResponses => {
+            client.get(format!("{}/models", base)).bearer_auth(api_key)
+        }
+        ApiFormat::Anthropic => client
             .get(format!("{}/models", base))
-            .bearer_auth(&cfg.api_key),
-        AiProviderId::DeepSeek => client
-            .get(format!("{}/models", base))
-            .bearer_auth(&cfg.api_key),
-        AiProviderId::Claude => client
-            .get(format!("{}/models", base))
-            .header("x-api-key", &cfg.api_key)
+            .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01"),
-        AiProviderId::Gemini => client.get(format!("{}/models?key={}", base, cfg.api_key)),
+        ApiFormat::Gemini => client.get(format!("{}/models?key={}", base, api_key)),
     };
 
     let resp = req.send().await.map_err(|e| AiError::Http(e.to_string()))?;
@@ -105,31 +99,27 @@ pub async fn test_connection(
 
 /// 发送一轮对话，返回助手文本（含可选 reasoning）
 pub async fn chat_completion(
-    provider: AiProviderId,
-    cfg: &AiProviderConfig,
+    format: ApiFormat,
+    api_key: &str,
+    base_url: &str,
+    model: &str,
     messages: &[ChatMessage],
 ) -> Result<ChatResponse, AiError> {
-    if cfg.api_key.trim().is_empty() {
+    if api_key.trim().is_empty() {
         return Err(AiError::MissingKey);
     }
     let client = build_client(60)?;
-    let base = if cfg.base_url.is_empty() {
-        provider.default_base_url().to_string()
-    } else {
-        cfg.base_url.trim_end_matches('/').to_string()
-    };
-    let model = if cfg.model.is_empty() {
-        provider.default_model().to_string()
-    } else {
-        cfg.model.clone()
-    };
+    let base = base_url.trim_end_matches('/').to_string();
 
-    match provider {
-        AiProviderId::OpenAi | AiProviderId::DeepSeek => {
-            chat_openai_compatible(&client, &base, &cfg.api_key, &model, messages).await
+    match format {
+        ApiFormat::OpenAiChat => {
+            chat_openai_compatible(&client, &base, api_key, model, messages).await
         }
-        AiProviderId::Claude => chat_anthropic(&client, &base, &cfg.api_key, &model, messages).await,
-        AiProviderId::Gemini => chat_gemini(&client, &base, &cfg.api_key, &model, messages).await,
+        ApiFormat::OpenAiResponses => {
+            chat_openai_responses(&client, &base, api_key, model, messages).await
+        }
+        ApiFormat::Anthropic => chat_anthropic(&client, &base, api_key, model, messages).await,
+        ApiFormat::Gemini => chat_gemini(&client, &base, api_key, model, messages).await,
     }
 }
 
@@ -206,6 +196,110 @@ async fn chat_openai_compatible(
     Ok(ChatResponse {
         content: msg.as_ref().and_then(|m| m.content.clone()).unwrap_or_default(),
         reasoning: msg.and_then(|m| m.reasoning_content).filter(|s| !s.is_empty()),
+    })
+}
+
+// ---------------------- OpenAI Responses (/responses) ----------------------
+
+#[derive(Serialize)]
+struct OpenAiResponsesRequest<'a> {
+    model: &'a str,
+    input: Vec<OpenAiMessage<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instructions: Option<String>,
+    stream: bool,
+}
+
+#[derive(Deserialize)]
+struct OpenAiResponsesBody {
+    #[serde(default)]
+    output: Vec<RespOutputItem>,
+    /// 某些实现直接给出聚合文本
+    #[serde(default)]
+    output_text: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RespOutputItem {
+    #[serde(default)]
+    content: Vec<RespContentPart>,
+}
+
+#[derive(Deserialize)]
+struct RespContentPart {
+    #[serde(rename = "type", default)]
+    part_type: String,
+    #[serde(default)]
+    text: String,
+}
+
+/// 把消息拆成 instructions(system) + input(user/assistant)
+fn split_responses_input(messages: &[ChatMessage]) -> (Option<String>, Vec<OpenAiMessage<'_>>) {
+    let system: Vec<&str> = messages
+        .iter()
+        .filter(|m| m.role == ChatRole::System)
+        .map(|m| m.content.as_str())
+        .collect();
+    let instructions = if system.is_empty() {
+        None
+    } else {
+        Some(system.join("\n\n"))
+    };
+    let input: Vec<OpenAiMessage> = messages
+        .iter()
+        .filter(|m| m.role != ChatRole::System)
+        .map(|m| OpenAiMessage {
+            role: m.role.as_openai_str(),
+            content: &m.content,
+        })
+        .collect();
+    (instructions, input)
+}
+
+async fn chat_openai_responses(
+    client: &reqwest::Client,
+    base: &str,
+    api_key: &str,
+    model: &str,
+    messages: &[ChatMessage],
+) -> Result<ChatResponse, AiError> {
+    let (instructions, input) = split_responses_input(messages);
+    let payload = OpenAiResponsesRequest {
+        model,
+        input,
+        instructions,
+        stream: false,
+    };
+    let resp = client
+        .post(format!("{}/responses", base))
+        .bearer_auth(api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| AiError::Http(e.to_string()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AiError::Provider {
+            status: status.as_u16(),
+            body,
+        });
+    }
+    let parsed: OpenAiResponsesBody =
+        resp.json().await.map_err(|e| AiError::Parse(e.to_string()))?;
+    let text = parsed.output_text.unwrap_or_else(|| {
+        parsed
+            .output
+            .into_iter()
+            .flat_map(|item| item.content)
+            .filter(|p| p.part_type == "output_text")
+            .map(|p| p.text)
+            .collect::<Vec<_>>()
+            .join("")
+    });
+    Ok(ChatResponse {
+        content: text,
+        reasoning: None,
     })
 }
 
@@ -444,39 +538,33 @@ pub enum StreamEvent {
 
 /// 流式发送一轮对话，每次增量通过 tx 发出。最终 Ok(()) 或 Err(AiError)。
 pub async fn chat_completion_stream(
-    provider: AiProviderId,
-    cfg: &AiProviderConfig,
+    format: ApiFormat,
+    api_key: &str,
+    base_url: &str,
+    model: &str,
     messages: &[ChatMessage],
     tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
 ) -> Result<(), AiError> {
-    if cfg.api_key.trim().is_empty() {
+    if api_key.trim().is_empty() {
         return Err(AiError::MissingKey);
     }
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| AiError::Http(e.to_string()))?;
-    let base = if cfg.base_url.is_empty() {
-        provider.default_base_url().to_string()
-    } else {
-        cfg.base_url.trim_end_matches('/').to_string()
-    };
-    let model = if cfg.model.is_empty() {
-        provider.default_model().to_string()
-    } else {
-        cfg.model.clone()
-    };
+    let base = base_url.trim_end_matches('/').to_string();
 
-    let result = match provider {
-        AiProviderId::OpenAi | AiProviderId::DeepSeek => {
-            stream_openai_compatible(&client, &base, &cfg.api_key, &model, messages, &tx).await
+    let result = match format {
+        ApiFormat::OpenAiChat => {
+            stream_openai_compatible(&client, &base, api_key, model, messages, &tx).await
         }
-        AiProviderId::Claude => {
-            stream_anthropic(&client, &base, &cfg.api_key, &model, messages, &tx).await
+        ApiFormat::OpenAiResponses => {
+            stream_openai_responses(&client, &base, api_key, model, messages, &tx).await
         }
-        AiProviderId::Gemini => {
-            stream_gemini(&client, &base, &cfg.api_key, &model, messages, &tx).await
+        ApiFormat::Anthropic => {
+            stream_anthropic(&client, &base, api_key, model, messages, &tx).await
         }
+        ApiFormat::Gemini => stream_gemini(&client, &base, api_key, model, messages, &tx).await,
     };
     let _ = tx.send(StreamEvent::Done);
     result
@@ -591,6 +679,63 @@ async fn stream_openai_compatible(
                     }
                 }
             }
+        }
+        true
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct ResponsesStreamDelta {
+    #[serde(default)]
+    delta: String,
+}
+
+async fn stream_openai_responses(
+    client: &reqwest::Client,
+    base: &str,
+    api_key: &str,
+    model: &str,
+    messages: &[ChatMessage],
+    tx: &tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+) -> Result<(), AiError> {
+    let (instructions, input) = split_responses_input(messages);
+    let payload = OpenAiResponsesRequest {
+        model,
+        input,
+        instructions,
+        stream: true,
+    };
+    let resp = client
+        .post(format!("{}/responses", base))
+        .bearer_auth(api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| AiError::Http(e.to_string()))?;
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AiError::Provider { status, body });
+    }
+    for_each_sse_event(resp, |event, data| {
+        match event {
+            "response.output_text.delta" => {
+                if let Ok(d) = serde_json::from_str::<ResponsesStreamDelta>(data) {
+                    if !d.delta.is_empty() {
+                        let _ = tx.send(StreamEvent::ContentDelta(d.delta));
+                    }
+                }
+            }
+            "response.reasoning_summary_text.delta" => {
+                if let Ok(d) = serde_json::from_str::<ResponsesStreamDelta>(data) {
+                    if !d.delta.is_empty() {
+                        let _ = tx.send(StreamEvent::ReasoningDelta(d.delta));
+                    }
+                }
+            }
+            "response.completed" => return false,
+            _ => {}
         }
         true
     })

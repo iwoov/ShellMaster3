@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
 use crate::i18n;
-use crate::models::settings::{AiProviderId, AppSettings};
+use crate::models::settings::{AiProviderId, ApiFormat, CustomProvider, ProviderRef, AppSettings};
 use crate::services::storage;
 
 // 导入辅助函数
@@ -41,6 +41,20 @@ pub struct AiProviderInputs {
     pub api_key: Option<Entity<InputState>>,
     pub base_url: Option<Entity<InputState>>,
     pub model: Option<Entity<InputState>>,
+    /// 自定义供应商：名称输入
+    pub name: Option<Entity<InputState>>,
+    /// 自定义供应商：协议格式（下拉选择）
+    pub format: Option<ApiFormat>,
+}
+
+/// 从输入框收集到的 AI 供应商值（内置/自定义通用）
+pub struct AiInputValues {
+    pub name: String,
+    pub format: ApiFormat,
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+    pub models: Vec<String>,
 }
 
 /// 设置导航区域类型
@@ -144,14 +158,14 @@ pub struct SettingsDialogState {
     pub log_retention_input: Option<Entity<InputState>>,
 
     // ============ AI 设置 ============
-    pub ai_inputs: HashMap<AiProviderId, AiProviderInputs>,
-    pub ai_test_statuses: HashMap<AiProviderId, AiTestStatus>,
-    /// 已通过测试时的输入快照 (api_key, base_url, model)，用于检测用户在通过后是否又改了
-    pub ai_tested_snapshots: HashMap<AiProviderId, (String, String, String)>,
+    pub ai_inputs: HashMap<ProviderRef, AiProviderInputs>,
+    pub ai_test_statuses: HashMap<ProviderRef, AiTestStatus>,
+    /// 已通过测试时的输入快照 (api_key, base_url, model, format_tag)，用于检测用户在通过后是否又改了
+    pub ai_tested_snapshots: HashMap<ProviderRef, (String, String, String, String)>,
     /// 保存校验失败时的错误信息（如某供应商有 key 但未通过测试）
     pub ai_save_error: Option<String>,
     /// AI 面板当前编辑/查看的供应商（横向图标切换）
-    pub ai_active_provider: AiProviderId,
+    pub ai_active_provider: ProviderRef,
     /// 系统提示词输入框
     pub ai_system_prompt_input: Option<Entity<InputState>>,
 }
@@ -205,7 +219,7 @@ impl Default for SettingsDialogState {
             ai_test_statuses: HashMap::new(),
             ai_tested_snapshots: HashMap::new(),
             ai_save_error: None,
-            ai_active_provider: AiProviderId::OpenAi,
+            ai_active_provider: ProviderRef::Builtin(AiProviderId::OpenAi),
             ai_system_prompt_input: None,
         }
     }
@@ -225,13 +239,38 @@ impl SettingsDialogState {
         self.ai_test_statuses.clear();
         self.ai_tested_snapshots.clear();
         for id in AiProviderId::ALL {
+            let r = ProviderRef::Builtin(id);
             let cfg = self.settings.ai.get(id);
             if cfg.verified && !cfg.api_key.is_empty() {
-                self.ai_test_statuses.insert(id, AiTestStatus::Pass);
-                self.ai_tested_snapshots
-                    .insert(id, (cfg.api_key.clone(), cfg.base_url.clone(), cfg.model.clone()));
+                self.ai_test_statuses.insert(r.clone(), AiTestStatus::Pass);
+                self.ai_tested_snapshots.insert(
+                    r,
+                    (
+                        cfg.api_key.clone(),
+                        cfg.base_url.clone(),
+                        cfg.model.clone(),
+                        id.api_format().label().to_string(),
+                    ),
+                );
             } else {
-                self.ai_test_statuses.insert(id, AiTestStatus::Untested);
+                self.ai_test_statuses.insert(r, AiTestStatus::Untested);
+            }
+        }
+        for c in &self.settings.ai.custom_providers {
+            let r = ProviderRef::Custom(c.id.clone());
+            if c.verified && !c.api_key.is_empty() {
+                self.ai_test_statuses.insert(r.clone(), AiTestStatus::Pass);
+                self.ai_tested_snapshots.insert(
+                    r,
+                    (
+                        c.api_key.clone(),
+                        c.base_url.clone(),
+                        c.model.clone(),
+                        c.format.label().to_string(),
+                    ),
+                );
+            } else {
+                self.ai_test_statuses.insert(r, AiTestStatus::Untested);
             }
         }
     }
@@ -478,9 +517,9 @@ impl SettingsDialogState {
             self.log_retention_input = Some(create_int_number_input(value, 1, 365, 1, window, cx));
         }
 
-        // AI 设置
+        // AI 设置（内置供应商）
         for id in AiProviderId::ALL {
-            let entry = self.ai_inputs.entry(id).or_default();
+            let entry = self.ai_inputs.entry(ProviderRef::Builtin(id)).or_default();
             let cfg = self.settings.ai.get(id);
             if entry.api_key.is_none() {
                 let value = cfg.api_key.clone();
@@ -519,6 +558,56 @@ impl SettingsDialogState {
             }
         }
 
+        // AI 设置（自定义供应商）
+        let custom_list = self.settings.ai.custom_providers.clone();
+        for c in &custom_list {
+            let entry = self
+                .ai_inputs
+                .entry(ProviderRef::Custom(c.id.clone()))
+                .or_default();
+            if entry.format.is_none() {
+                entry.format = Some(c.format);
+            }
+            if entry.name.is_none() {
+                let value = c.name.clone();
+                entry.name = Some(cx.new(|cx| {
+                    let mut state = InputState::new(window, cx).placeholder("名称 / Name");
+                    state.set_value(value, window, cx);
+                    state
+                }));
+            }
+            if entry.api_key.is_none() {
+                let value = c.api_key.clone();
+                entry.api_key = Some(cx.new(|cx| {
+                    let mut state = InputState::new(window, cx)
+                        .placeholder("API Key")
+                        .masked(true);
+                    state.set_value(value, window, cx);
+                    state
+                }));
+            }
+            if entry.base_url.is_none() {
+                let value = c.base_url.clone();
+                entry.base_url = Some(cx.new(|cx| {
+                    let mut state = InputState::new(window, cx)
+                        .placeholder("https://api.example.com/v1");
+                    state.set_value(value, window, cx);
+                    state
+                }));
+            }
+            if entry.model.is_none() {
+                let models = c.model_list();
+                let value = models.join("\n");
+                entry.model = Some(cx.new(|cx| {
+                    let mut state = InputState::new(window, cx)
+                        .placeholder("gpt-4o-mini")
+                        .auto_grow(2, 8);
+                    state.set_value(value, window, cx);
+                    state
+                }));
+            }
+        }
+
         // 系统提示词
         if self.ai_system_prompt_input.is_none() {
             let value = self.settings.ai.system_prompt.clone();
@@ -533,22 +622,52 @@ impl SettingsDialogState {
     }
 
     /// 从 AI 输入框读取当前值，构造一个 AiProviderConfig（不修改 settings）
-    pub fn build_ai_config_from_inputs(
-        &self,
-        id: AiProviderId,
-        cx: &App,
-    ) -> crate::models::settings::AiProviderConfig {
-        let cfg = self.settings.ai.get(id);
-        let cfg_models = cfg.model_list();
-        let inputs = self.ai_inputs.get(&id);
+    /// 从 AI 输入框读取当前值（内置/自定义通用）
+    pub fn collect_ai_inputs(&self, r: &ProviderRef, cx: &App) -> AiInputValues {
+        let inputs = self.ai_inputs.get(r);
+        // 默认值（用于输入框不存在时回退）
+        let (def_name, def_format, def_key, def_url, def_models): (
+            String,
+            ApiFormat,
+            String,
+            String,
+            Vec<String>,
+        ) = match r {
+            ProviderRef::Builtin(id) => {
+                let cfg = self.settings.ai.get(*id);
+                (
+                    id.label().to_string(),
+                    id.api_format(),
+                    cfg.api_key.clone(),
+                    cfg.base_url.clone(),
+                    cfg.model_list(),
+                )
+            }
+            ProviderRef::Custom(cid) => {
+                let c = self.settings.ai.custom_get(cid).cloned();
+                (
+                    c.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+                    c.as_ref().map(|c| c.format).unwrap_or_default(),
+                    c.as_ref().map(|c| c.api_key.clone()).unwrap_or_default(),
+                    c.as_ref().map(|c| c.base_url.clone()).unwrap_or_default(),
+                    c.as_ref().map(|c| c.model_list()).unwrap_or_default(),
+                )
+            }
+        };
+
+        let name = inputs
+            .and_then(|i| i.name.as_ref())
+            .map(|s| s.read(cx).value().to_string())
+            .unwrap_or(def_name);
+        let format = inputs.and_then(|i| i.format).unwrap_or(def_format);
         let api_key = inputs
             .and_then(|i| i.api_key.as_ref())
             .map(|s| s.read(cx).value().to_string())
-            .unwrap_or(cfg.api_key);
+            .unwrap_or(def_key);
         let base_url = inputs
             .and_then(|i| i.base_url.as_ref())
             .map(|s| s.read(cx).value().to_string())
-            .unwrap_or(cfg.base_url);
+            .unwrap_or(def_url);
         // 模型框为多行文本：每行一个模型，过滤空行并去重；首行为默认模型
         let models_text = inputs
             .and_then(|i| i.model.as_ref())
@@ -564,18 +683,16 @@ impl SettingsDialogState {
                 }
                 out
             }
-            None => cfg_models,
+            None => def_models,
         };
-        let model = models
-            .first()
-            .cloned()
-            .unwrap_or_else(|| id.default_model().to_string());
-        crate::models::settings::AiProviderConfig {
+        let model = models.first().cloned().unwrap_or_default();
+        AiInputValues {
+            name,
+            format,
             api_key,
             base_url,
             model,
             models,
-            verified: false,
         }
     }
 
@@ -721,40 +838,91 @@ impl SettingsDialogState {
         if let Some(input) = &self.ai_system_prompt_input {
             self.settings.ai.system_prompt = input.read(cx).value().to_string();
         }
-        // AI - 各供应商
+        // AI - 内置供应商
         for id in AiProviderId::ALL {
-            let mut cfg = self.build_ai_config_from_inputs(id, cx);
-            // 根据测试状态与快照决定 verified
-            let snapshot = self.ai_tested_snapshots.get(&id);
-            let pass = matches!(self.ai_test_statuses.get(&id), Some(AiTestStatus::Pass));
-            let matches_snapshot = snapshot
-                .map(|(k, b, m)| {
-                    *k == cfg.api_key && *b == cfg.base_url && *m == cfg.model
-                })
-                .unwrap_or(false);
-            cfg.verified = !cfg.api_key.is_empty() && pass && matches_snapshot;
-            self.settings.ai.set(id, cfg);
+            let r = ProviderRef::Builtin(id);
+            let v = self.collect_ai_inputs(&r, cx);
+            let verified = self.ai_ref_verified(&r, &v);
+            self.settings.ai.set(
+                id,
+                crate::models::settings::AiProviderConfig {
+                    api_key: v.api_key,
+                    base_url: v.base_url,
+                    model: v.model,
+                    models: v.models,
+                    verified,
+                },
+            );
         }
+        // AI - 自定义供应商（按现有 id 列表重建）
+        let custom_ids: Vec<String> = self
+            .settings
+            .ai
+            .custom_providers
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        let mut rebuilt: Vec<CustomProvider> = Vec::with_capacity(custom_ids.len());
+        for cid in custom_ids {
+            let r = ProviderRef::Custom(cid.clone());
+            let v = self.collect_ai_inputs(&r, cx);
+            let verified = self.ai_ref_verified(&r, &v);
+            rebuilt.push(CustomProvider {
+                id: cid,
+                name: v.name,
+                format: v.format,
+                api_key: v.api_key,
+                base_url: v.base_url,
+                model: v.model,
+                models: v.models,
+                verified,
+            });
+        }
+        self.settings.ai.custom_providers = rebuilt;
+    }
+
+    /// 根据测试状态与快照判定某供应商是否 verified
+    fn ai_ref_verified(&self, r: &ProviderRef, v: &AiInputValues) -> bool {
+        let pass = matches!(self.ai_test_statuses.get(r), Some(AiTestStatus::Pass));
+        let matches_snapshot = self
+            .ai_tested_snapshots
+            .get(r)
+            .map(|(k, b, m, f)| {
+                *k == v.api_key
+                    && *b == v.base_url
+                    && *m == v.model
+                    && *f == v.format.label()
+            })
+            .unwrap_or(false);
+        !v.api_key.is_empty() && pass && matches_snapshot
     }
 
     /// 检查 AI 设置是否可以保存：每个填了 api_key 的供应商都必须通过测试且未被修改
-    /// 返回 Err(供应商列表) 表示哪些供应商未通过校验
-    pub fn validate_ai_for_save(&self, cx: &App) -> Result<(), Vec<AiProviderId>> {
+    /// 返回 Err(供应商名称列表) 表示哪些供应商未通过校验
+    pub fn validate_ai_for_save(&self, cx: &App) -> Result<(), Vec<String>> {
         let mut failing = Vec::new();
-        for id in AiProviderId::ALL {
-            let cfg = self.build_ai_config_from_inputs(id, cx);
-            if cfg.api_key.trim().is_empty() {
+        let mut refs: Vec<ProviderRef> =
+            AiProviderId::ALL.into_iter().map(ProviderRef::Builtin).collect();
+        for c in &self.settings.ai.custom_providers {
+            refs.push(ProviderRef::Custom(c.id.clone()));
+        }
+        for r in refs {
+            let v = self.collect_ai_inputs(&r, cx);
+            if v.api_key.trim().is_empty() {
                 continue;
             }
-            let snapshot = self.ai_tested_snapshots.get(&id);
-            let pass = matches!(self.ai_test_statuses.get(&id), Some(AiTestStatus::Pass));
-            let matches_snapshot = snapshot
-                .map(|(k, b, m)| {
-                    *k == cfg.api_key && *b == cfg.base_url && *m == cfg.model
-                })
-                .unwrap_or(false);
-            if !pass || !matches_snapshot {
-                failing.push(id);
+            if !self.ai_ref_verified(&r, &v) {
+                let name = match &r {
+                    ProviderRef::Builtin(id) => id.label().to_string(),
+                    ProviderRef::Custom(_) => {
+                        if v.name.trim().is_empty() {
+                            "(未命名)".to_string()
+                        } else {
+                            v.name.clone()
+                        }
+                    }
+                };
+                failing.push(name);
             }
         }
         if failing.is_empty() {
@@ -762,6 +930,23 @@ impl SettingsDialogState {
         } else {
             Err(failing)
         }
+    }
+
+    /// 新增一个自定义供应商，返回其 ref
+    pub fn add_custom_provider(&mut self) -> ProviderRef {
+        let c = CustomProvider::new();
+        let id = c.id.clone();
+        self.settings.ai.custom_providers.push(c);
+        ProviderRef::Custom(id)
+    }
+
+    /// 删除指定自定义供应商
+    pub fn remove_custom_provider(&mut self, id: &str) {
+        self.settings.ai.custom_providers.retain(|c| c.id != id);
+        let r = ProviderRef::Custom(id.to_string());
+        self.ai_inputs.remove(&r);
+        self.ai_test_statuses.remove(&r);
+        self.ai_tested_snapshots.remove(&r);
     }
 }
 
@@ -1037,12 +1222,10 @@ fn render_footer_buttons(
                         let app: &App = cx;
                         if let Err(failing) = s.validate_ai_for_save(app) {
                             let lang = &s.settings.theme.language;
-                            let names: Vec<&'static str> =
-                                failing.iter().map(|id| id.label()).collect();
                             let msg = format!(
                                 "{}: {}",
                                 i18n::t(lang, "settings.ai.save_blocked"),
-                                names.join(", ")
+                                failing.join(", ")
                             );
                             s.ai_save_error = Some(msg);
                             s.current_section = SettingsSection::Ai;

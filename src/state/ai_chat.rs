@@ -1,7 +1,7 @@
 // AI 对话相关方法：维护每个 tab 的输入框、发送消息
 
 use super::{AiChatMessage, SessionState};
-use crate::models::AiProviderId;
+use crate::models::ProviderRef;
 use crate::services::ai::{self, ChatMessage, ChatRole};
 use gpui::{AppContext, Entity};
 use gpui_component::input::InputState;
@@ -34,7 +34,7 @@ impl SessionState {
     }
 
     /// 切换 chat panel 头部里选择的供应商
-    pub fn set_ai_chat_provider(&mut self, tab_id: &str, provider: AiProviderId) {
+    pub fn set_ai_chat_provider(&mut self, tab_id: &str, provider: ProviderRef) {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
             tab.ai_chat.selected_provider = Some(provider);
             // 供应商变了，已选模型可能不再属于新供应商，重置为默认
@@ -50,10 +50,13 @@ impl SessionState {
     }
 
     /// 解析当前 tab 实际使用的模型名
-    pub fn resolve_ai_model(&self, tab_id: &str, provider: AiProviderId) -> String {
+    pub fn resolve_ai_model(&self, tab_id: &str, provider: &ProviderRef) -> String {
         let settings = crate::services::storage::load_settings().unwrap_or_default();
-        let cfg = settings.ai.get(provider);
-        let list = cfg.model_list();
+        let resolved = settings.ai.resolve(provider);
+        let list = resolved
+            .as_ref()
+            .map(|r| r.models.clone())
+            .unwrap_or_default();
         // 用户已选且仍在该供应商列表内 → 用之
         if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
             if let Some(sel) = &tab.ai_chat.selected_model {
@@ -62,29 +65,33 @@ impl SessionState {
                 }
             }
         }
-        // 否则用供应商默认（列表首项 / model / default）
-        list.into_iter()
-            .next()
+        // 否则用供应商默认模型
+        resolved
+            .map(|r| r.model)
             .filter(|m| !m.is_empty())
-            .unwrap_or_else(|| provider.default_model().to_string())
+            .or_else(|| list.into_iter().next())
+            .unwrap_or_default()
     }
 
-    /// 解析当前 tab 实际使用的供应商
-    pub fn resolve_ai_provider(&self, tab_id: &str) -> Option<AiProviderId> {
-        let tab = self.tabs.iter().find(|t| t.id == tab_id)?;
+    /// 解析当前 tab 实际使用的供应商引用（内置或自定义）
+    pub fn resolve_ai_provider_ref(&self, tab_id: &str) -> Option<ProviderRef> {
         let settings = crate::services::storage::load_settings().ok()?;
-        // 用户选择优先；否则用默认供应商
-        let preferred = tab
-            .ai_chat
-            .selected_provider
-            .unwrap_or(settings.ai.default_provider);
-        // 必须已通过测试才可用
-        let cfg = settings.ai.get(preferred);
-        if cfg.verified && !cfg.api_key.is_empty() {
-            return Some(preferred);
+        let tab = self.tabs.iter().find(|t| t.id == tab_id)?;
+        // 用户选择优先：能解析且已验证可用则直接用
+        if let Some(sel) = &tab.ai_chat.selected_provider {
+            if let Some(r) = settings.ai.resolve(sel) {
+                if r.verified && !r.api_key.is_empty() {
+                    return Some(sel.clone());
+                }
+            }
         }
-        // 退化到任何已通过测试的供应商
-        settings.ai.verified_providers().into_iter().next()
+        // 回退：默认内置（若可用）→ 任一已验证供应商
+        let verified = settings.ai.verified_provider_refs();
+        let default_ref = ProviderRef::Builtin(settings.ai.default_provider);
+        if verified.contains(&default_ref) {
+            return Some(default_ref);
+        }
+        verified.into_iter().next()
     }
 
     /// 切换某条消息的思考过程折叠状态
@@ -130,7 +137,7 @@ impl SessionState {
         }
 
         // 解析供应商
-        let provider = match self.resolve_ai_provider(tab_id) {
+        let provider_ref = match self.resolve_ai_provider_ref(tab_id) {
             Some(p) => p,
             None => {
                 // 没有可用供应商：把错误塞到消息列表里
@@ -151,14 +158,16 @@ impl SessionState {
             }
         };
 
-        // 加载该供应商配置
+        // 解析供应商统一视图
         let settings = match crate::services::storage::load_settings() {
             Ok(s) => s,
             Err(_) => return,
         };
-        let mut cfg = settings.ai.get(provider);
-        // 用底部下拉所选模型覆盖（服务层从 cfg.model 取模型）
-        cfg.model = self.resolve_ai_model(tab_id, provider);
+        let Some(mut resolved) = settings.ai.resolve(&provider_ref) else {
+            return;
+        };
+        // 用底部下拉所选模型覆盖
+        resolved.model = self.resolve_ai_model(tab_id, &provider_ref);
         let system_prompt = settings.ai.system_prompt.clone();
 
         // 追加用户消息、标记 pending、清空输入
@@ -215,11 +224,16 @@ impl SessionState {
         // 启动后台流式请求
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ai::StreamEvent>();
         let (err_tx, err_rx) = tokio::sync::oneshot::channel::<Option<String>>();
-        let cfg_for_task = cfg.clone();
+        let format = resolved.format;
+        let api_key = resolved.api_key.clone();
+        let base_url = resolved.base_url.clone();
+        let model = resolved.model.clone();
         let runtime = crate::ssh::manager::SshManager::global().runtime();
         runtime.spawn(async move {
-            let result =
-                ai::chat_completion_stream(provider, &cfg_for_task, &history, tx).await;
+            let result = ai::chat_completion_stream(
+                format, &api_key, &base_url, &model, &history, tx,
+            )
+            .await;
             let _ = err_tx.send(result.err().map(|e| e.to_string()));
         });
 

@@ -3,14 +3,15 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme, StyledExt};
 use std::sync::Arc;
 use tracing::debug;
 
-use crate::components::common::icon::render_icon;
+use crate::components::common::icon::{render_icon, render_letter_avatar};
 use crate::constants::icons;
-use crate::models::{SnippetCommand, SnippetGroup, SnippetsConfig};
+use crate::models::{ProviderRef, SnippetCommand, SnippetGroup, SnippetsConfig};
 use crate::state::{SessionState, SessionTab, SidebarPanel};
 
 /// 渲染会话右侧边栏
@@ -734,11 +735,12 @@ fn render_ai_chat_panel(
     let border = cx.theme().border;
     let primary = cx.theme().primary;
 
-    // 当前选中供应商；未选则用 default
+    // 当前可用供应商（内置 + 自定义）与当前生效供应商
     let settings = crate::services::storage::load_settings().unwrap_or_default();
-    let verified_list = settings.ai.verified_providers();
-    let active_provider = chat.selected_provider.unwrap_or(settings.ai.default_provider);
-    let has_any = !verified_list.is_empty();
+    let verified_refs = settings.ai.verified_provider_refs();
+    let has_any = !verified_refs.is_empty();
+    let active_ref = session_state.read(cx).resolve_ai_provider_ref(&tab_id);
+    let active_resolved = active_ref.as_ref().and_then(|r| settings.ai.resolve(r));
 
     // 输入框（如果存在）
     let input_entity = session_state.read(cx).get_ai_chat_input(&tab_id);
@@ -747,10 +749,23 @@ fn render_ai_chat_panel(
     let header = {
         let session_for_clear = session_state.clone();
         let tab_id_for_clear = tab_id.clone();
-        let providers = verified_list.clone();
         let tab_id_for_pick = tab_id.clone();
         let session_for_pick = session_state.clone();
         let clear_tooltip = crate::i18n::t(lang, "ai_chat.clear");
+        // 预先算好菜单项：(ref, 名称, 内置品牌图标路径)
+        let menu_items: Vec<(ProviderRef, String, Option<&'static str>)> = verified_refs
+            .iter()
+            .map(|r| match r {
+                ProviderRef::Builtin(id) => {
+                    (r.clone(), id.label().to_string(), Some(id.icon_path()))
+                }
+                ProviderRef::Custom(_) => (
+                    r.clone(),
+                    settings.ai.resolve(r).map(|x| x.name).unwrap_or_default(),
+                    None,
+                ),
+            })
+            .collect();
 
         div()
             .h(px(44.))
@@ -763,13 +778,26 @@ fn render_ai_chat_panel(
             .border_b_1()
             .border_color(border)
             .child({
-                let trigger_label: SharedString = if has_any {
-                    SharedString::from(active_provider.label())
-                } else {
-                    crate::i18n::t(lang, "ai_chat.no_provider_short").into()
+                let trigger_label: SharedString = match &active_resolved {
+                    Some(r) => SharedString::from(r.name.clone()),
+                    None => crate::i18n::t(lang, "ai_chat.no_provider_short").into(),
                 };
                 let trigger_color = if has_any { foreground } else { muted_foreground };
-                let trigger_icon = if has_any { Some(active_provider.icon_path()) } else { None };
+                // 图标：内置品牌 / 自定义字母头像
+                let trigger_icon: Option<AnyElement> = match (&active_ref, &active_resolved) {
+                    (Some(ProviderRef::Builtin(id)), _) => Some(
+                        img(id.icon_path())
+                            .w(px(15.))
+                            .h(px(15.))
+                            .flex_shrink_0()
+                            .into_any_element(),
+                    ),
+                    (Some(ProviderRef::Custom(_)), Some(r)) => Some(
+                        render_letter_avatar(ProviderRef::avatar_char(&r.name), 16.)
+                            .into_any_element(),
+                    ),
+                    _ => None,
+                };
                 Button::new("ai-chat-provider-btn")
                     .ghost()
                     .child(
@@ -778,10 +806,7 @@ fn render_ai_chat_panel(
                             .items_center()
                             .gap(px(5.))
                             .min_w_0()
-                            .children(
-                                trigger_icon
-                                    .map(|p| img(p).w(px(15.)).h(px(15.)).flex_shrink_0()),
-                            )
+                            .children(trigger_icon)
                             .child(
                                 div()
                                     .text_xs()
@@ -793,19 +818,27 @@ fn render_ai_chat_panel(
                     )
                     .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
                         let mut menu = menu.min_w(px(180.));
-                        for id in &providers {
-                            let provider_id = *id;
-                            let label: SharedString = id.label().into();
-                            let icon_path = id.icon_path();
+                        for (r, name, builtin_icon) in &menu_items {
+                            let r_owned = r.clone();
+                            let label: SharedString = SharedString::from(name.clone());
+                            let builtin_icon = *builtin_icon;
+                            let avatar_char = ProviderRef::avatar_char(name);
                             let session = session_for_pick.clone();
                             let tab_id_owned = tab_id_for_pick.clone();
                             menu = menu.item(
                                 PopupMenuItem::element(move |_window, cx| {
+                                    let icon: AnyElement = match builtin_icon {
+                                        Some(p) => {
+                                            img(p).w(px(16.)).h(px(16.)).into_any_element()
+                                        }
+                                        None => render_letter_avatar(avatar_char, 16.)
+                                            .into_any_element(),
+                                    };
                                     div()
                                         .flex()
                                         .items_center()
                                         .gap(px(8.))
-                                        .child(img(icon_path).w(px(16.)).h(px(16.)))
+                                        .child(icon)
                                         .child(
                                             div()
                                                 .text_sm()
@@ -815,7 +848,7 @@ fn render_ai_chat_panel(
                                 })
                                 .on_click(move |_, _, cx| {
                                     session.update(cx, |s, cx| {
-                                        s.set_ai_chat_provider(&tab_id_owned, provider_id);
+                                        s.set_ai_chat_provider(&tab_id_owned, r_owned.clone());
                                         cx.notify();
                                     });
                                 }),
@@ -882,7 +915,7 @@ fn render_ai_chat_panel(
             .id("ai-chat-messages")
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .px_2()
             .py_3()
             .flex()
@@ -949,11 +982,10 @@ fn render_ai_chat_panel(
         let has_input = input_entity.is_some();
 
         // 当前供应商的可选模型列表 + 当前生效模型
-        let model_list: Vec<String> = if has_any {
-            settings.ai.get(active_provider).model_list()
-        } else {
-            Vec::new()
-        };
+        let model_list: Vec<String> = active_resolved
+            .as_ref()
+            .map(|r| r.models.clone())
+            .unwrap_or_default();
         let current_model: SharedString = {
             let sel = chat
                 .selected_model
@@ -964,14 +996,10 @@ fn render_ai_chat_panel(
                 None => model_list
                     .first()
                     .cloned()
+                    .or_else(|| active_resolved.as_ref().map(|r| r.model.clone()))
+                    .filter(|m| !m.is_empty())
                     .map(SharedString::from)
-                    .unwrap_or_else(|| {
-                        if has_any {
-                            SharedString::from(active_provider.default_model())
-                        } else {
-                            SharedString::from("—")
-                        }
-                    }),
+                    .unwrap_or_else(|| SharedString::from("—")),
             }
         };
 

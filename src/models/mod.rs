@@ -11,6 +11,9 @@ pub mod snippets;
 
 pub use known_hosts::{KnownHost, KnownHostsConfig};
 pub use server::{HistoryItem, Server, ServerConfig, ServerData, ServerGroup, ServerGroupData};
-pub use settings::{AiProviderConfig, AiProviderId, AiSettings, AppSettings};
+pub use settings::{
+    AiProviderConfig, AiProviderId, AiSettings, ApiFormat, AppSettings, CustomProvider,
+    ProviderRef, ResolvedProvider,
+};
 pub use sftp::SftpState;
 pub use snippets::{SnippetCommand, SnippetGroup, SnippetsConfig};

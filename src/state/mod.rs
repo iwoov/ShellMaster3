@@ -111,7 +111,7 @@ pub struct AiChatState {
     pub messages: Vec<AiChatMessage>,
     pub pending: bool,
     /// 用户在 chat header 选择的供应商；None 表示使用 settings.ai.default_provider
-    pub selected_provider: Option<crate::models::AiProviderId>,
+    pub selected_provider: Option<crate::models::ProviderRef>,
     /// 用户在底部选择的模型；None 表示使用该供应商的默认模型
     pub selected_model: Option<String>,
 }

@@ -61,12 +61,12 @@ pub const TERMINAL_THEMES: &[&str] = &[
 
 // ======================== 辅助渲染函数 ========================
 
-pub fn render_section_title(title: &'static str, cx: &App) -> impl IntoElement {
+pub fn render_section_title(title: impl Into<SharedString>, cx: &App) -> impl IntoElement {
     div()
         .text_base()
         .font_weight(FontWeight::MEDIUM)
         .text_color(cx.theme().foreground)
-        .child(title)
+        .child(title.into())
 }
 
 /// 渲染带输入框的设置行（用于文本输入）

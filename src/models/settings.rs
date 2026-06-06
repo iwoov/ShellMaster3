@@ -104,6 +104,52 @@ impl AiProviderId {
             AiProviderId::DeepSeek => crate::constants::icons::AI_DEEPSEEK,
         }
     }
+
+    /// 内置供应商对应的 API 协议格式
+    pub fn api_format(&self) -> ApiFormat {
+        match self {
+            AiProviderId::OpenAi | AiProviderId::DeepSeek => ApiFormat::OpenAiChat,
+            AiProviderId::Claude => ApiFormat::Anthropic,
+            AiProviderId::Gemini => ApiFormat::Gemini,
+        }
+    }
+}
+
+/// API 协议格式（决定请求/响应/流式如何编解码）
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ApiFormat {
+    /// OpenAI Chat Completions（/chat/completions）
+    OpenAiChat,
+    /// OpenAI Responses（/responses）
+    OpenAiResponses,
+    /// Google Gemini（/models/{model}:generateContent）
+    Gemini,
+    /// Anthropic Messages（/messages）
+    Anthropic,
+}
+
+impl Default for ApiFormat {
+    fn default() -> Self {
+        ApiFormat::OpenAiChat
+    }
+}
+
+impl ApiFormat {
+    pub const ALL: [ApiFormat; 4] = [
+        ApiFormat::OpenAiChat,
+        ApiFormat::OpenAiResponses,
+        ApiFormat::Gemini,
+        ApiFormat::Anthropic,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ApiFormat::OpenAiChat => "OpenAI Chat Completions",
+            ApiFormat::OpenAiResponses => "OpenAI Responses",
+            ApiFormat::Gemini => "Gemini",
+            ApiFormat::Anthropic => "Anthropic",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -156,6 +202,9 @@ pub struct AiSettings {
     /// 全局系统提示词（每次对话注入到 history 首部）
     #[serde(default = "AiSettings::default_system_prompt")]
     pub system_prompt: String,
+    /// 用户自定义供应商
+    #[serde(default)]
+    pub custom_providers: Vec<CustomProvider>,
 }
 
 impl Default for AiSettings {
@@ -168,6 +217,7 @@ impl Default for AiSettings {
             default_provider: AiProviderId::OpenAi,
             providers,
             system_prompt: Self::default_system_prompt(),
+            custom_providers: Vec::new(),
         }
     }
 }
@@ -207,6 +257,153 @@ impl AiSettings {
             })
             .collect()
     }
+
+    /// 按 id 取自定义供应商
+    pub fn custom_get(&self, id: &str) -> Option<&CustomProvider> {
+        self.custom_providers.iter().find(|c| c.id == id)
+    }
+
+    /// 所有已通过测试的供应商引用（内置 + 自定义）
+    pub fn verified_provider_refs(&self) -> Vec<ProviderRef> {
+        let mut refs: Vec<ProviderRef> = self
+            .verified_providers()
+            .into_iter()
+            .map(ProviderRef::Builtin)
+            .collect();
+        for c in &self.custom_providers {
+            if c.verified && !c.api_key.is_empty() {
+                refs.push(ProviderRef::Custom(c.id.clone()));
+            }
+        }
+        refs
+    }
+
+    /// 把供应商引用解析为统一视图（base_url / model 已填默认值）
+    pub fn resolve(&self, r: &ProviderRef) -> Option<ResolvedProvider> {
+        match r {
+            ProviderRef::Builtin(id) => {
+                let cfg = self.get(*id);
+                let base_url = if cfg.base_url.trim().is_empty() {
+                    id.default_base_url().to_string()
+                } else {
+                    cfg.base_url.clone()
+                };
+                let models = cfg.model_list();
+                let model = if cfg.model.trim().is_empty() {
+                    models
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| id.default_model().to_string())
+                } else {
+                    cfg.model.clone()
+                };
+                Some(ResolvedProvider {
+                    format: id.api_format(),
+                    name: id.label().to_string(),
+                    api_key: cfg.api_key,
+                    base_url,
+                    model,
+                    models,
+                    verified: cfg.verified,
+                })
+            }
+            ProviderRef::Custom(id) => {
+                let c = self.custom_get(id)?;
+                let models = c.model_list();
+                let model = if c.model.trim().is_empty() {
+                    models.first().cloned().unwrap_or_default()
+                } else {
+                    c.model.clone()
+                };
+                Some(ResolvedProvider {
+                    format: c.format,
+                    name: c.name.clone(),
+                    api_key: c.api_key.clone(),
+                    base_url: c.base_url.trim_end_matches('/').to_string(),
+                    model,
+                    models,
+                    verified: c.verified,
+                })
+            }
+        }
+    }
+}
+
+/// 自定义供应商
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CustomProvider {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub format: ApiFormat,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub base_url: String,
+    /// 当前/默认模型（= models 列表首项）
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub verified: bool,
+}
+
+impl CustomProvider {
+    pub fn new() -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: String::new(),
+            format: ApiFormat::default(),
+            api_key: String::new(),
+            base_url: String::new(),
+            model: String::new(),
+            models: Vec::new(),
+            verified: false,
+        }
+    }
+
+    /// 可选模型列表：models 非空则用之，否则回退单个 model
+    pub fn model_list(&self) -> Vec<String> {
+        if !self.models.is_empty() {
+            self.models.clone()
+        } else if !self.model.is_empty() {
+            vec![self.model.clone()]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+/// 供应商引用：内置枚举 or 自定义 id
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ProviderRef {
+    Builtin(AiProviderId),
+    Custom(String),
+}
+
+impl ProviderRef {
+    /// 字母头像字符（自定义供应商用名称首字符）；内置返回 None（用品牌图标）
+    pub fn avatar_char(name: &str) -> char {
+        name.trim()
+            .chars()
+            .next()
+            .map(|c| c.to_ascii_uppercase())
+            .unwrap_or('?')
+    }
+}
+
+/// 供应商统一视图（服务层 / 侧边栏消费）
+#[derive(Clone, Debug)]
+pub struct ResolvedProvider {
+    pub format: ApiFormat,
+    pub name: String,
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+    pub models: Vec<String>,
+    pub verified: bool,
 }
 
 // ======================== 主题设置 ========================

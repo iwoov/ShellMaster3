@@ -18,6 +18,9 @@ jobs:
   package:
     name: Package (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
+    # 单个平台失败/超时不阻塞整体 release（配合 matrix.experimental）。
+    # macOS Intel(macos-13) runner 经常长时间排不到队，设为不阻塞。
+    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +31,7 @@ jobs:
           - label: macOS (Intel)
             os: macos-13
             formats: dmg
+            experimental: true
           - label: Windows
             os: windows-latest
             formats: nsis
@@ -36,7 +40,7 @@ jobs:
             formats: deb,appimage
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -75,7 +79,7 @@ jobs:
 
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true
           files: |
@@ -88,7 +92,7 @@ jobs:
       # 非 tag（手动）触发时，把产物存为 workflow artifact 方便下载验证。
       - name: Upload build artifacts
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shellmaster3-${{ matrix.os }}
           path: |

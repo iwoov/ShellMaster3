@@ -244,7 +244,7 @@ pub fn render_connecting_page(
                 .child(
                     div()
                         .flex()
-                        .items_baseline() // 基线对齐让大小文字更好看
+                        .items_center()
                         .gap_3()
                         // 服务器名称
                         .child(
@@ -254,20 +254,25 @@ pub fn render_connecting_page(
                                 .text_color(foreground)
                                 .child(server_label),
                         )
-                        // 状态文本
-                        .child(
+                        // 状态徽章
+                        .child({
+                            let status_color = if has_error {
+                                destructive
+                            } else if current_stage == ConnectionStage::Connected {
+                                success_color
+                            } else {
+                                primary
+                            };
                             div()
-                                .text_base() // 稍微调小一点
+                                .px_3()
+                                .py(px(3.0))
+                                .rounded_full()
+                                .bg(status_color.opacity(0.12))
+                                .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(if has_error {
-                                    destructive
-                                } else if current_stage == ConnectionStage::Connected {
-                                    success_color
-                                } else {
-                                    primary
-                                })
-                                .child(title),
-                        ),
+                                .text_color(status_color)
+                                .child(title)
+                        }),
                 )
                 // 第二行：连接详情 (Host:Port • Mode)
                 .child(if let Some(details) = &progress.connection_details {
@@ -307,7 +312,8 @@ pub fn render_connecting_page(
                         })
                         .into_any_element()
                 } else {
-                    div().into_any_element()
+                    // 占位，保持高度一致，避免详情缺失时页面跳动
+                    div().h(px(20.0)).into_any_element()
                 }),
         )
         // 进度步进器 (Stepper)
@@ -714,33 +720,57 @@ pub fn render_connecting_page(
                     ),
                 ),
         )
-        // 取消按钮
-        .child(if current_stage != ConnectionStage::Connected {
+        // 底部操作区（固定高度，避免连接成功时按钮消失导致页面跳动）
+        .child(
             div()
-                .id("cancel-connect-btn")
-                .mt_4()
-                .px_8()
-                .py_2()
-                .bg(cx.theme().secondary)
-                .rounded_md()
-                .cursor_pointer()
-                .hover(|s| s.bg(cx.theme().secondary_hover))
-                .on_click(move |_, _, cx| {
-                    session_state_for_cancel.update(cx, |state, _| {
-                        state.close_tab(&tab_id_for_cancel);
-                    });
-                })
-                .child(
+                .h(px(36.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(if current_stage != ConnectionStage::Connected {
                     div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(foreground)
-                        .child(i18n::t(&lang, "connecting.cancel")),
-                )
-                .into_any_element()
-        } else {
-            div().into_any_element()
-        })
+                        .id("cancel-connect-btn")
+                        .px_8()
+                        .py_2()
+                        .bg(cx.theme().secondary)
+                        .rounded_md()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(cx.theme().secondary_hover))
+                        .on_click(move |_, _, cx| {
+                            session_state_for_cancel.update(cx, |state, _| {
+                                state.close_tab(&tab_id_for_cancel);
+                            });
+                        })
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(foreground)
+                                .child(i18n::t(&lang, "connecting.cancel")),
+                        )
+                        .into_any_element()
+                } else {
+                    // 连接成功：在同一位置展示确认信息，保持高度一致
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .w_4()
+                                .h_4()
+                                .child(render_icon(icons::CHECK, success_color.into())),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(success_color)
+                                .child(i18n::t(&lang, "connecting.connected")),
+                        )
+                        .into_any_element()
+                }),
+        )
 }
 
 /// 渲染日志条目

@@ -6217,6 +6217,7 @@ dependencies = [
  "rfd",
  "russh",
  "russh-sftp",
+ "rust-embed",
  "serde",
  "serde_json",
  "smallvec",

@@ -81,6 +81,21 @@ cargo run
 RUST_LOG=debug cargo run
 ```
 
+## 在 macOS 上安装
+
+GitHub Releases 提供的 macOS `.dmg` 为 **ad-hoc 签名、未做 Apple 公证**（项目没有付费的
+Apple Developer 账号）。下载后会被 macOS 标记隔离，首次打开可能提示
+**“ShellMaster3.app”已损坏，无法打开。你应该将它移到废纸篓。** 应用本身并没有损坏，这只是
+Gatekeeper 拒绝运行未公证的下载文件。
+
+打开方法：先把 app 拖到 `/Applications`，然后执行一次命令去除隔离属性：
+
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/ShellMaster3.app
+```
+
+或者到 **系统设置 → 隐私与安全性**，在安全性区域，于首次被拦截后点击 **“仍要打开”**。
+
 ## 配置与数据文件
 
 ShellMaster3 会在系统配置目录下创建 `shellmaster` 目录。

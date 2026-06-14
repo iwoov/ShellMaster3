@@ -74,7 +74,15 @@ jobs:
 
       # before-packaging-command (Cargo.toml) 会先执行 `cargo build --release`，
       # 因此这里以 --release 运行；产物统一输出到 dist/。
+      #
+      # macOS：通过 APPLE_SIGNING_IDENTITY="-" 让 cargo-packager 对 .app 做 ad-hoc 签名。
+      # 这样 .app bundle 的签名是自洽的，可把下载后的报错从死路一条的“已损坏，移到废纸篓”
+      # 降级为可恢复的“无法验证开发者 / 仍要打开”。
+      # 注意：ad-hoc 未经 Apple 公证，用户首次仍需执行 `xattr -rd com.apple.quarantine`
+      # 去隔离（见 README）。该环境变量在 Windows/Linux 上会被忽略。
       - name: Package
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
         run: cargo packager --release --formats ${{ matrix.formats }} --out-dir dist
 
       - name: Upload to GitHub Release

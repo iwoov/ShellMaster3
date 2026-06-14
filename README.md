@@ -81,6 +81,23 @@ For debug logging:
 RUST_LOG=debug cargo run
 ```
 
+## Installing the macOS Build
+
+The macOS `.dmg` from GitHub Releases is **ad-hoc signed but not notarized** (the project
+has no paid Apple Developer account). After downloading, macOS quarantines it, so on first
+launch you may see **"ShellMaster3.app" is damaged and can't be opened. You should move it
+to the Trash.** The app is not actually damaged — this is Gatekeeper rejecting an
+un-notarized download.
+
+To open it, drag the app to `/Applications`, then remove the quarantine attribute once:
+
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/ShellMaster3.app
+```
+
+Alternatively, go to **System Settings → Privacy & Security**, scroll to the security
+section, and click **Open Anyway** after the first blocked attempt.
+
 ## Configuration & Data Files
 
 ShellMaster3 stores app data under your OS config directory in `shellmaster`.

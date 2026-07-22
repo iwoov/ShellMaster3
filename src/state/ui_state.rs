@@ -277,12 +277,32 @@ impl SessionState {
     /// 确保终端焦点句柄已创建
     pub fn ensure_terminal_focus_handle_created(
         &mut self,
+        window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> FocusHandle {
         if self.terminal_focus_handle.is_none() {
             self.terminal_focus_handle = Some(cx.focus_handle());
         }
-        self.terminal_focus_handle.clone().unwrap()
+
+        let focus_handle = self.terminal_focus_handle.clone().unwrap();
+        if self.terminal_focus_subscriptions.is_empty() {
+            self.terminal_focus_subscriptions.push(cx.on_focus(
+                &focus_handle,
+                window,
+                |state, _window, cx| {
+                    state.send_terminal_focus_report(true, cx);
+                },
+            ));
+            self.terminal_focus_subscriptions.push(cx.on_blur(
+                &focus_handle,
+                window,
+                |state, _window, cx| {
+                    state.send_terminal_focus_report(false, cx);
+                },
+            ));
+        }
+
+        focus_handle
     }
 
     /// 获取终端焦点句柄（如果存在）

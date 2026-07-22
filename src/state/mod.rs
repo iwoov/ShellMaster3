@@ -21,7 +21,7 @@ use crate::services::sftp::{FileWatchEvent, FileWatcher, SftpService};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use gpui::{Entity, FocusHandle};
+use gpui::{Entity, FocusHandle, Subscription};
 use gpui_component::input::InputState;
 
 /// 会话连接状态
@@ -39,6 +39,32 @@ pub enum SessionStatus {
     },
 }
 
+/// PTY 生命周期状态
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalPtyState {
+    NotStarted,
+    Opening,
+    Ready,
+    Failed(String),
+}
+
+impl TerminalPtyState {
+    pub fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    pub fn can_start(&self) -> bool {
+        matches!(self, Self::NotStarted)
+    }
+
+    pub fn error_message(&self) -> Option<String> {
+        match self {
+            Self::Failed(message) => Some(message.clone()),
+            _ => None,
+        }
+    }
+}
+
 /// 单个终端实例
 #[derive(Clone)]
 pub struct TerminalInstance {
@@ -49,12 +75,10 @@ pub struct TerminalInstance {
     pub terminal: Option<Entity<crate::terminal::TerminalState>>,
     /// PTY 通道
     pub pty_channel: Option<std::sync::Arc<crate::ssh::session::TerminalChannel>>,
-    /// PTY 是否已初始化
-    pub pty_initialized: bool,
+    /// PTY 生命周期状态
+    pub pty_state: TerminalPtyState,
     /// 上次发送给远端 PTY 的尺寸 (cols, rows)
     pub last_sent_pty_size: Option<(u32, u32)>,
-    /// PTY 错误信息
-    pub pty_error: Option<String>,
 }
 
 /// 会话标签
@@ -134,6 +158,8 @@ pub struct SessionState {
     pub command_input: Option<Entity<InputState>>,
     /// 终端焦点句柄（用于键盘事件处理）
     pub terminal_focus_handle: Option<FocusHandle>,
+    /// 终端焦点监听订阅（用于 xterm focus in/out 上报）
+    pub terminal_focus_subscriptions: Vec<Subscription>,
     /// Monitor 详情弹窗状态
     pub monitor_detail_dialog: Option<Entity<DetailDialogState>>,
     /// Monitor 服务实例（按 tab_id 存储）
@@ -170,6 +196,7 @@ impl Default for SessionState {
             snippets_config: None,
             command_input: None,
             terminal_focus_handle: None,
+            terminal_focus_subscriptions: Vec::new(),
             monitor_detail_dialog: None,
             monitor_services: Arc::new(Mutex::new(HashMap::new())),
             sftp_services: Arc::new(Mutex::new(HashMap::new())),

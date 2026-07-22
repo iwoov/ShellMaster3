@@ -8,7 +8,9 @@ use gpui_component::ActiveTheme;
 use crate::i18n;
 use crate::models::settings::{Language, ThemeMode};
 
-use super::super::helpers::{render_font_input_row, render_number_row, render_section_title, UI_FONTS};
+use super::super::helpers::{
+    render_font_input_row, render_number_row, render_section_title, UI_FONTS,
+};
 use super::super::SettingsDialogState;
 
 /// 渲染主题设置面板

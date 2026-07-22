@@ -436,7 +436,9 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.ai.empty_key" => "API Key 为空",
         "settings.ai.save_blocked" => "以下供应商填写了 API Key 但未通过测试",
         "settings.ai.context.title" => "终端上下文",
-        "settings.ai.context.hint" => "开启后，每次对话会把当前终端的环境信息一并发给模型，帮助它给出更贴合的回答。",
+        "settings.ai.context.hint" => {
+            "开启后，每次对话会把当前终端的环境信息一并发给模型，帮助它给出更贴合的回答。"
+        }
         "settings.ai.context.enabled" => "携带终端上下文",
         "settings.ai.context.server_info" => "连接信息（主机/端口/用户名）",
         "settings.ai.context.os_info" => "操作系统信息（来自监控）",
@@ -450,7 +452,9 @@ fn zh_cn(key: &'static str) -> &'static str {
         "ai_chat.thinking" => "思考中…",
         "ai_chat.reasoning" => "思考过程",
         "ai_chat.clear" => "清空",
-        "ai_chat.no_provider" => "尚未配置任何已通过测试的 AI 供应商，请先在「设置 → AI 配置」中添加并测试。",
+        "ai_chat.no_provider" => {
+            "尚未配置任何已通过测试的 AI 供应商，请先在「设置 → AI 配置」中添加并测试。"
+        }
         "ai_chat.no_provider_short" => "未配置",
 
         // 已知主机

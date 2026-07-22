@@ -15,9 +15,9 @@ use crate::constants::icons;
 use crate::ssh::session::TerminalChannel;
 use crate::state::{SessionState, SessionStatus, SessionTab};
 use crate::terminal::{
-    hex_to_hsla, keystroke_to_escape, render_terminal_view, SendDown, SendEnter, SendEscape,
-    SendLeft, SendRight, SendTab, SendUp, TerminalCopy, TerminalPaste, TerminalState,
-    TERMINAL_PADDING_LEFT,
+    hex_to_hsla, keystroke_to_escape, named_key_to_escape, paste_to_bytes, render_terminal_view,
+    SendDown, SendEnter, SendEscape, SendLeft, SendRight, SendTab, SendUp, TerminalCopy,
+    TerminalPaste, TerminalState, TERMINAL_PADDING_LEFT,
 };
 
 /// 渲染终端面板
@@ -43,7 +43,7 @@ pub fn render_terminal_panel(
     // 获取终端状态和错误信息（从当前激活的终端实例）
     let terminal_entity = active_instance.and_then(|inst| inst.terminal.clone());
     let pty_channel = active_instance.and_then(|inst| inst.pty_channel.clone());
-    let pty_error = active_instance.and_then(|inst| inst.pty_error.clone());
+    let pty_error = active_instance.and_then(|inst| inst.pty_state.error_message());
 
     // 获取会话状态用于显示重连/断开状态
     let session_status = tab.status.clone();
@@ -67,15 +67,15 @@ pub fn render_terminal_panel(
     let terminal_for_bounds = terminal_entity.clone();
     terminal_display = terminal_display.child(
         canvas(
-            move |bounds, _window, cx| {
+            move |bounds, window, cx| {
                 let width = f32::from(bounds.size.width);
                 let height = f32::from(bounds.size.height);
                 let origin_x = f32::from(bounds.origin.x);
                 let origin_y = f32::from(bounds.origin.y);
 
-                // 更新尺寸
+                // 更新尺寸；未启动/失败的 PTY 使用真实 canvas bounds 初始化。
                 session_state_for_resize.update(cx, |state, cx| {
-                    state.sync_terminal_size(&tab_id, width, height, cx);
+                    state.sync_or_initialize_terminal_size(&tab_id, width, height, window, cx);
                 });
 
                 // 更新 bounds origin（用于鼠标坐标转换）
@@ -155,15 +155,69 @@ pub fn render_terminal_panel(
         // 鼠标释放：结束选择
         {
             let terminal = terminal_entity.clone();
+            let copy_on_select = terminal_settings.copy_on_select;
             terminal_display =
                 terminal_display.on_mouse_up(MouseButton::Left, move |_event, _window, cx| {
                     if let Some(terminal) = terminal.clone() {
-                        terminal.update(cx, |t, cx| {
-                            let _selected_text = t.end_selection();
+                        let selected_text = terminal.update(cx, |t, cx| {
+                            let _ = t.end_selection();
+                            let selected_text = t.selected_text_for_copy();
                             // 选择结束后不清除选择，保留高亮显示
                             cx.notify();
+                            selected_text
                         });
+                        if copy_on_select {
+                            if let Some(text) = selected_text {
+                                if !text.is_empty() {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                }
+                            }
+                        }
                     }
+                });
+        }
+
+        // 右键粘贴
+        if terminal_settings.right_click_paste {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display =
+                terminal_display.on_mouse_down(MouseButton::Right, move |_event, _window, cx| {
+                    let Some(channel) = channel.clone() else {
+                        return;
+                    };
+
+                    let Some(clipboard_item) = cx.read_from_clipboard() else {
+                        return;
+                    };
+                    let Some(text) = clipboard_item.text() else {
+                        return;
+                    };
+                    if text.is_empty() {
+                        return;
+                    }
+
+                    let mode = terminal
+                        .as_ref()
+                        .map(|terminal| terminal.read(cx).term_mode())
+                        .unwrap_or_else(TermMode::empty);
+                    let bytes = paste_to_bytes(&text, mode);
+
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, _| t.show_cursor());
+                    }
+
+                    cx.spawn(async move |_| {
+                        if let Err(e) = channel.write(&bytes).await {
+                            tracing::error!(
+                                "[Terminal] PTY write error on right-click paste: {:?}",
+                                e
+                            );
+                        }
+                    })
+                    .detach();
+
+                    cx.stop_propagation();
                 });
         }
 
@@ -289,11 +343,17 @@ pub fn render_terminal_panel(
             let terminal = terminal_entity.clone();
             terminal_display = terminal_display.on_action(move |_: &SendUp, _window, cx| {
                 if let Some(channel) = channel.clone() {
+                    let mode = terminal
+                        .as_ref()
+                        .map(|terminal| terminal.read(cx).term_mode())
+                        .unwrap_or_else(TermMode::empty);
+                    let bytes = named_key_to_escape("up", &Modifiers::default(), mode)
+                        .unwrap_or_else(|| vec![0x1B, b'[', b'A']);
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
                     cx.spawn(async move |_| {
-                        let _ = channel.write(&[0x1B, b'[', b'A']).await; // Up arrow
+                        let _ = channel.write(&bytes).await;
                     })
                     .detach();
                 }
@@ -305,11 +365,17 @@ pub fn render_terminal_panel(
             let terminal = terminal_entity.clone();
             terminal_display = terminal_display.on_action(move |_: &SendDown, _window, cx| {
                 if let Some(channel) = channel.clone() {
+                    let mode = terminal
+                        .as_ref()
+                        .map(|terminal| terminal.read(cx).term_mode())
+                        .unwrap_or_else(TermMode::empty);
+                    let bytes = named_key_to_escape("down", &Modifiers::default(), mode)
+                        .unwrap_or_else(|| vec![0x1B, b'[', b'B']);
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
                     cx.spawn(async move |_| {
-                        let _ = channel.write(&[0x1B, b'[', b'B']).await; // Down arrow
+                        let _ = channel.write(&bytes).await;
                     })
                     .detach();
                 }
@@ -321,11 +387,17 @@ pub fn render_terminal_panel(
             let terminal = terminal_entity.clone();
             terminal_display = terminal_display.on_action(move |_: &SendLeft, _window, cx| {
                 if let Some(channel) = channel.clone() {
+                    let mode = terminal
+                        .as_ref()
+                        .map(|terminal| terminal.read(cx).term_mode())
+                        .unwrap_or_else(TermMode::empty);
+                    let bytes = named_key_to_escape("left", &Modifiers::default(), mode)
+                        .unwrap_or_else(|| vec![0x1B, b'[', b'D']);
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
                     cx.spawn(async move |_| {
-                        let _ = channel.write(&[0x1B, b'[', b'D']).await; // Left arrow
+                        let _ = channel.write(&bytes).await;
                     })
                     .detach();
                 }
@@ -337,11 +409,17 @@ pub fn render_terminal_panel(
             let terminal = terminal_entity.clone();
             terminal_display = terminal_display.on_action(move |_: &SendRight, _window, cx| {
                 if let Some(channel) = channel.clone() {
+                    let mode = terminal
+                        .as_ref()
+                        .map(|terminal| terminal.read(cx).term_mode())
+                        .unwrap_or_else(TermMode::empty);
+                    let bytes = named_key_to_escape("right", &Modifiers::default(), mode)
+                        .unwrap_or_else(|| vec![0x1B, b'[', b'C']);
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
                     cx.spawn(async move |_| {
-                        let _ = channel.write(&[0x1B, b'[', b'C']).await; // Right arrow
+                        let _ = channel.write(&bytes).await;
                     })
                     .detach();
                 }
@@ -352,7 +430,7 @@ pub fn render_terminal_panel(
             let terminal = terminal_entity.clone();
             terminal_display = terminal_display.on_action(move |_: &TerminalCopy, _window, cx| {
                 if let Some(terminal) = terminal.clone() {
-                    let selected_text = terminal.update(cx, |t, _| t.selection_to_string());
+                    let selected_text = terminal.update(cx, |t, _| t.selected_text_for_copy());
                     if let Some(text) = selected_text {
                         if !text.is_empty() {
                             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
@@ -375,7 +453,11 @@ pub fn render_terminal_panel(
                     // 从剪贴板读取文本
                     if let Some(clipboard_item) = cx.read_from_clipboard() {
                         if let Some(text) = clipboard_item.text() {
-                            let bytes = text.as_bytes().to_vec();
+                            let mode = terminal
+                                .as_ref()
+                                .map(|terminal| terminal.read(cx).term_mode())
+                                .unwrap_or_else(TermMode::empty);
+                            let bytes = paste_to_bytes(&text, mode);
                             tracing::debug!("[Terminal] Paste action: {} bytes", bytes.len());
 
                             // 重置光标为可见
@@ -435,8 +517,15 @@ pub fn render_terminal_panel(
                 return;
             };
 
+            let mode = terminal_for_key
+                .as_ref()
+                .map(|terminal| terminal.read(cx).term_mode())
+                .unwrap_or_else(TermMode::empty);
+
             // 将按键转换为转义序列
-            if let Some(bytes) = keystroke_to_escape(&event.keystroke, &event.keystroke.modifiers) {
+            if let Some(bytes) =
+                keystroke_to_escape(&event.keystroke, &event.keystroke.modifiers, mode)
+            {
                 trace!(
                     "[Terminal] Key pressed: {:?}, sending {} bytes",
                     event.keystroke.key,
@@ -484,7 +573,10 @@ pub fn render_terminal_panel(
             render_terminal_content(terminal.clone(), &terminal_settings, cx).into_any_element();
 
         match &session_status {
-            SessionStatus::Reconnecting { attempt, max_attempts } => {
+            SessionStatus::Reconnecting {
+                attempt,
+                max_attempts,
+            } => {
                 // 重连中 - 显示终端历史 + 重连覆盖层
                 render_terminal_with_overlay(
                     terminal_content,
@@ -551,7 +643,7 @@ pub fn render_terminal_panel(
             terminals_for_toolbar
                 .iter()
                 .enumerate()
-                .map(|(idx, term_inst)| {
+                .map(|(_idx, term_inst)| {
                     let term_id = term_inst.id.clone();
                     // 动态生成翻译后的标签名
                     let term_label = format!("{} {}", terminal_label_prefix, term_inst.index);
@@ -614,7 +706,8 @@ pub fn render_terminal_panel(
                                         let session = session_for_close.clone();
                                         move |_, _window, cx| {
                                             session.update(cx, |state, cx| {
-                                                state.close_terminal_instance(&tab_id, &term_id);
+                                                state
+                                                    .close_terminal_instance(&tab_id, &term_id, cx);
                                                 cx.notify();
                                             });
                                             cx.stop_propagation();
@@ -774,12 +867,7 @@ fn render_terminal_with_overlay(
         .size_full()
         .relative()
         // 终端内容层（底层，半透明）
-        .child(
-            div()
-                .size_full()
-                .opacity(0.6)
-                .child(terminal_content),
-        )
+        .child(div().size_full().opacity(0.6).child(terminal_content))
         // 覆盖层（顶层）
         .child(
             div()
@@ -808,7 +896,12 @@ fn render_reconnecting_overlay(attempt: u32, max_attempts: u32, _cx: &App) -> Di
         .p_6()
         .rounded_lg()
         .bg(Hsla::from(rgb(0x000000)).opacity(0.7))
-        .child(svg().path(icons::LOADER).size(px(32.)).text_color(amber_color))
+        .child(
+            svg()
+                .path(icons::LOADER)
+                .size(px(32.))
+                .text_color(amber_color),
+        )
         .child(
             div()
                 .text_color(amber_color)
@@ -851,7 +944,12 @@ fn render_disconnected_overlay(
         .p_6()
         .rounded_lg()
         .bg(Hsla::from(rgb(0x000000)).opacity(0.7))
-        .child(svg().path(icons::LOADER).size(px(32.)).text_color(amber_color))
+        .child(
+            svg()
+                .path(icons::LOADER)
+                .size(px(32.))
+                .text_color(amber_color),
+        )
         .child(
             div()
                 .text_color(amber_color)
@@ -873,7 +971,12 @@ fn render_disconnected_overlay(
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(svg().path(icons::REFRESH).size(px(14.)).text_color(Hsla::from(rgb(0xffffff))))
+                .child(
+                    svg()
+                        .path(icons::REFRESH)
+                        .size(px(14.))
+                        .text_color(Hsla::from(rgb(0xffffff))),
+                )
                 .child(
                     div()
                         .text_color(Hsla::from(rgb(0xffffff)))

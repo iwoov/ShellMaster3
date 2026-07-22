@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
 use crate::i18n;
-use crate::models::settings::{AiProviderId, ApiFormat, CustomProvider, ProviderRef, AppSettings};
+use crate::models::settings::{AiProviderId, ApiFormat, AppSettings, CustomProvider, ProviderRef};
 use crate::services::storage;
 
 // 导入辅助函数
@@ -593,8 +593,8 @@ impl SettingsDialogState {
             if entry.base_url.is_none() {
                 let value = c.base_url.clone();
                 entry.base_url = Some(cx.new(|cx| {
-                    let mut state = InputState::new(window, cx)
-                        .placeholder("https://api.example.com/v1");
+                    let mut state =
+                        InputState::new(window, cx).placeholder("https://api.example.com/v1");
                     state.set_value(value, window, cx);
                     state
                 }));
@@ -905,10 +905,7 @@ impl SettingsDialogState {
             .ai_tested_snapshots
             .get(r)
             .map(|(k, b, m, f)| {
-                *k == v.api_key
-                    && *b == v.base_url
-                    && *m == v.model
-                    && *f == v.format.label()
+                *k == v.api_key && *b == v.base_url && *m == v.model && *f == v.format.label()
             })
             .unwrap_or(false);
         !v.api_key.is_empty() && pass && matches_snapshot
@@ -918,8 +915,10 @@ impl SettingsDialogState {
     /// 返回 Err(供应商名称列表) 表示哪些供应商未通过校验
     pub fn validate_ai_for_save(&self, cx: &App) -> Result<(), Vec<String>> {
         let mut failing = Vec::new();
-        let mut refs: Vec<ProviderRef> =
-            AiProviderId::ALL.into_iter().map(ProviderRef::Builtin).collect();
+        let mut refs: Vec<ProviderRef> = AiProviderId::ALL
+            .into_iter()
+            .map(ProviderRef::Builtin)
+            .collect();
         for c in &self.settings.ai.custom_providers {
             refs.push(ProviderRef::Custom(c.id.clone()));
         }

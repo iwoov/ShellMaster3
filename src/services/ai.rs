@@ -191,11 +191,19 @@ async fn chat_openai_compatible(
             body,
         });
     }
-    let parsed: OpenAiChatResponse = resp.json().await.map_err(|e| AiError::Parse(e.to_string()))?;
+    let parsed: OpenAiChatResponse = resp
+        .json()
+        .await
+        .map_err(|e| AiError::Parse(e.to_string()))?;
     let msg = parsed.choices.into_iter().next().map(|c| c.message);
     Ok(ChatResponse {
-        content: msg.as_ref().and_then(|m| m.content.clone()).unwrap_or_default(),
-        reasoning: msg.and_then(|m| m.reasoning_content).filter(|s| !s.is_empty()),
+        content: msg
+            .as_ref()
+            .and_then(|m| m.content.clone())
+            .unwrap_or_default(),
+        reasoning: msg
+            .and_then(|m| m.reasoning_content)
+            .filter(|s| !s.is_empty()),
     })
 }
 
@@ -285,8 +293,10 @@ async fn chat_openai_responses(
             body,
         });
     }
-    let parsed: OpenAiResponsesBody =
-        resp.json().await.map_err(|e| AiError::Parse(e.to_string()))?;
+    let parsed: OpenAiResponsesBody = resp
+        .json()
+        .await
+        .map_err(|e| AiError::Parse(e.to_string()))?;
     let text = parsed.output_text.unwrap_or_else(|| {
         parsed
             .output
@@ -390,7 +400,10 @@ async fn chat_anthropic(
             body,
         });
     }
-    let parsed: AnthropicResponse = resp.json().await.map_err(|e| AiError::Parse(e.to_string()))?;
+    let parsed: AnthropicResponse = resp
+        .json()
+        .await
+        .map_err(|e| AiError::Parse(e.to_string()))?;
     let text = parsed
         .content
         .into_iter()
@@ -398,7 +411,10 @@ async fn chat_anthropic(
         .map(|b| b.text)
         .collect::<Vec<_>>()
         .join("");
-    Ok(ChatResponse { content: text, reasoning: None })
+    Ok(ChatResponse {
+        content: text,
+        reasoning: None,
+    })
 }
 
 // ---------------------- Google Gemini ----------------------
@@ -502,7 +518,10 @@ async fn chat_gemini(
             body,
         });
     }
-    let parsed: GeminiResponse = resp.json().await.map_err(|e| AiError::Parse(e.to_string()))?;
+    let parsed: GeminiResponse = resp
+        .json()
+        .await
+        .map_err(|e| AiError::Parse(e.to_string()))?;
     let text = parsed
         .candidates
         .unwrap_or_default()
@@ -518,7 +537,10 @@ async fn chat_gemini(
                 .join("")
         })
         .unwrap_or_default();
-    Ok(ChatResponse { content: text, reasoning: None })
+    Ok(ChatResponse {
+        content: text,
+        reasoning: None,
+    })
 }
 
 // ============================================================================
@@ -571,7 +593,10 @@ pub async fn chat_completion_stream(
 }
 
 /// SSE 按行解析器
-async fn for_each_sse_event<F>(mut response: reqwest::Response, mut handle: F) -> Result<(), AiError>
+async fn for_each_sse_event<F>(
+    mut response: reqwest::Response,
+    mut handle: F,
+) -> Result<(), AiError>
 where
     F: FnMut(&str, &str) -> bool,
 {
@@ -579,7 +604,11 @@ where
     let mut current_event = String::new();
     let mut current_data = String::new();
 
-    while let Some(chunk) = response.chunk().await.map_err(|e| AiError::Http(e.to_string()))? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| AiError::Http(e.to_string()))?
+    {
         buf.push_str(&String::from_utf8_lossy(&chunk));
         loop {
             let Some(nl) = buf.find('\n') else { break };
@@ -770,7 +799,11 @@ async fn stream_anthropic(
             .filter(|m| m.role == ChatRole::System)
             .map(|m| m.content.as_str())
             .collect();
-        if s.is_empty() { None } else { Some(s.join("\n\n")) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.join("\n\n"))
+        }
     };
     let msgs: Vec<AnthropicMessage> = messages
         .iter()
@@ -844,7 +877,11 @@ async fn stream_gemini(
             .filter(|m| m.role == ChatRole::System)
             .map(|m| m.content.as_str())
             .collect();
-        if s.is_empty() { None } else { Some(s.join("\n\n")) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.join("\n\n"))
+        }
     };
     let contents: Vec<GeminiContent> = messages
         .iter()

@@ -251,46 +251,43 @@ impl SessionState {
         let terminal_context = self.build_terminal_context(tab_id, cx);
 
         // 追加用户消息、标记 pending、清空输入
-        let history: Vec<ChatMessage> = {
-            let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
-                return;
-            };
-            tab.ai_chat.messages.push(AiChatMessage {
-                role: ChatRole::User,
-                content: text.clone(),
-                error: false,
-                reasoning: None,
-                        reasoning_collapsed: false,
-            });
-            tab.ai_chat.pending = true;
-            let mut msgs = Vec::new();
-            // 注入系统提示词（如果用户配置了）
-            let trimmed = system_prompt.trim();
-            if !trimmed.is_empty() {
-                msgs.push(ChatMessage {
-                    role: ChatRole::System,
-                    content: system_prompt.clone(),
+        let history: Vec<ChatMessage> =
+            {
+                let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+                    return;
+                };
+                tab.ai_chat.messages.push(AiChatMessage {
+                    role: ChatRole::User,
+                    content: text.clone(),
+                    error: false,
+                    reasoning: None,
+                    reasoning_collapsed: false,
                 });
-            }
-            // 注入终端上下文（如果开启且有内容），作为额外的 system 消息
-            if let Some(ctx) = terminal_context {
-                msgs.push(ChatMessage {
-                    role: ChatRole::System,
-                    content: ctx,
-                });
-            }
-            msgs.extend(
-                tab.ai_chat
-                    .messages
-                    .iter()
-                    .filter(|m| !m.error)
-                    .map(|m| ChatMessage {
+                tab.ai_chat.pending = true;
+                let mut msgs = Vec::new();
+                // 注入系统提示词（如果用户配置了）
+                let trimmed = system_prompt.trim();
+                if !trimmed.is_empty() {
+                    msgs.push(ChatMessage {
+                        role: ChatRole::System,
+                        content: system_prompt.clone(),
+                    });
+                }
+                // 注入终端上下文（如果开启且有内容），作为额外的 system 消息
+                if let Some(ctx) = terminal_context {
+                    msgs.push(ChatMessage {
+                        role: ChatRole::System,
+                        content: ctx,
+                    });
+                }
+                msgs.extend(tab.ai_chat.messages.iter().filter(|m| !m.error).map(|m| {
+                    ChatMessage {
                         role: m.role,
                         content: m.content.clone(),
-                    }),
-            );
-            msgs
-        };
+                    }
+                }));
+                msgs
+            };
         input.update(cx, |state, cx| {
             state.set_value("", window, cx);
         });
@@ -303,7 +300,7 @@ impl SessionState {
                 content: String::new(),
                 error: false,
                 reasoning: None,
-                        reasoning_collapsed: false,
+                reasoning_collapsed: false,
             });
         }
         cx.notify();
@@ -317,10 +314,8 @@ impl SessionState {
         let model = resolved.model.clone();
         let runtime = crate::ssh::manager::SshManager::global().runtime();
         runtime.spawn(async move {
-            let result = ai::chat_completion_stream(
-                format, &api_key, &base_url, &model, &history, tx,
-            )
-            .await;
+            let result =
+                ai::chat_completion_stream(format, &api_key, &base_url, &model, &history, tx).await;
             let _ = err_tx.send(result.err().map(|e| e.to_string()));
         });
 
@@ -333,7 +328,9 @@ impl SessionState {
                     let tab_id_for_update = tab_id_owned.clone();
                     let _ = async_cx.update(|cx| {
                         session.update(cx, |state, cx| {
-                            let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_update) else {
+                            let Some(tab) =
+                                state.tabs.iter_mut().find(|t| t.id == tab_id_for_update)
+                            else {
                                 return;
                             };
                             let Some(msg) = tab.ai_chat.messages.last_mut() else {
@@ -361,9 +358,7 @@ impl SessionState {
                 let err = err_rx.await.ok().flatten();
                 let _ = async_cx.update(|cx| {
                     session_entity.update(cx, |state, cx| {
-                        if let Some(tab) =
-                            state.tabs.iter_mut().find(|t| t.id == tab_id_owned)
-                        {
+                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_owned) {
                             tab.ai_chat.pending = false;
                             // 完成时若有思考过程也折叠（兜底：没有正文也折叠）
                             if let Some(last) = tab.ai_chat.messages.last_mut() {
@@ -386,7 +381,7 @@ impl SessionState {
                                             content: err_msg,
                                             error: true,
                                             reasoning: None,
-                        reasoning_collapsed: false,
+                                            reasoning_collapsed: false,
                                         });
                                     }
                                 }

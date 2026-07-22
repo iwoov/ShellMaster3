@@ -62,7 +62,10 @@ pub fn render_ai_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl Int
             .border_1()
             .border_color(border)
             .rounded_lg()
-            .child(render_section_title(i18n::t(lang, "settings.ai.context.title"), cx))
+            .child(render_section_title(
+                i18n::t(lang, "settings.ai.context.title"),
+                cx,
+            ))
             .child(
                 div()
                     .text_xs()
@@ -452,14 +455,24 @@ fn render_provider_block(
     // 自定义：名称 + 协议格式
     if is_custom {
         if let Some(input) = name_input.as_ref() {
-            block = block.child(render_kv_row(i18n::t(lang, "settings.ai.custom_name"), input, cx));
+            block = block.child(render_kv_row(
+                i18n::t(lang, "settings.ai.custom_name"),
+                input,
+                cx,
+            ));
         }
         let current_format = read
             .ai_inputs
             .get(&r)
             .and_then(|i| i.format)
             .unwrap_or_default();
-        block = block.child(render_format_row(r.clone(), current_format, state.clone(), lang, cx));
+        block = block.child(render_format_row(
+            r.clone(),
+            current_format,
+            state.clone(),
+            lang,
+            cx,
+        ));
     }
 
     block
@@ -473,7 +486,11 @@ fn render_provider_block(
                 .as_ref()
                 .map(|input| render_kv_row(i18n::t(lang, "settings.ai.base_url"), input, cx)),
         )
-        .children(model_input.as_ref().map(|input| render_models_field(lang, input, cx)))
+        .children(
+            model_input
+                .as_ref()
+                .map(|input| render_models_field(lang, input, cx)),
+        )
         .child(
             div().flex().justify_end().mt_1().child(
                 Button::new(SharedString::from(format!("ai-test-{:?}", r)))
@@ -526,7 +543,12 @@ fn render_format_row(
                         .flex()
                         .items_center()
                         .gap_1()
-                        .child(div().text_sm().text_color(foreground).child(current.label()))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(foreground)
+                                .child(current.label()),
+                        )
                         .child(
                             svg()
                                 .path(crate::constants::icons::CHEVRON_DOWN)

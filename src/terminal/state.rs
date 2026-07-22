@@ -387,6 +387,23 @@ impl TerminalState {
         term.selection_to_string()
     }
 
+    /// 获取用于复制的选中文本，应用终端复制相关设置。
+    pub fn selected_text_for_copy(&self) -> Option<String> {
+        let text = self.selection_to_string()?;
+        if !self.settings.trim_trailing_whitespace {
+            return Some(text);
+        }
+
+        let mut result = String::with_capacity(text.len());
+        for (idx, line) in text.split('\n').enumerate() {
+            if idx > 0 {
+                result.push('\n');
+            }
+            result.push_str(line.trim_end());
+        }
+        Some(result)
+    }
+
     /// 检查是否有选择
     pub fn has_selection(&self) -> bool {
         let term = self.term.lock();

@@ -2,6 +2,7 @@
 
 use super::{
     MonitorState, SessionState, SessionStatus, SessionTab, SidebarPanel, TerminalInstance,
+    TerminalPtyState,
 };
 use tracing::info;
 
@@ -16,9 +17,8 @@ impl SessionState {
             index: 1,
             terminal: None,
             pty_channel: None,
-            pty_initialized: false,
+            pty_state: TerminalPtyState::NotStarted,
             last_sent_pty_size: None,
-            pty_error: None,
         };
         let first_terminal_id = first_terminal.id.clone();
 

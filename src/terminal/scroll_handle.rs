@@ -1,17 +1,7 @@
-use std::{
-    cell::Cell,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
-use alacritty_terminal::{
-    Term,
-    grid::Dimensions,
-    grid::Scroll,
-    sync::FairMutex,
-    term::TermMode,
-};
-use gpui::{Pixels, Point, Size, point, px, size};
+use alacritty_terminal::{grid::Dimensions, grid::Scroll, sync::FairMutex, term::TermMode, Term};
+use gpui::{point, px, size, Pixels, Point, Size};
 use gpui_component::scroll::ScrollbarHandle;
 
 use super::state::EventProxy;
@@ -80,8 +70,8 @@ impl ScrollbarHandle for TerminalScrollHandle {
         }
 
         let offset_delta = (offset.y / line_height).round() as i32;
-        let new_display_offset = (max_display_offset as i32 + offset_delta)
-            .clamp(0, max_display_offset as i32) as usize;
+        let new_display_offset =
+            (max_display_offset as i32 + offset_delta).clamp(0, max_display_offset as i32) as usize;
 
         let current_display_offset = term.grid().display_offset();
         let delta = new_display_offset as i32 - current_display_offset as i32;
@@ -95,6 +85,9 @@ impl ScrollbarHandle for TerminalScrollHandle {
         let line_height = self.line_height.get();
         let history_lines = term.total_lines().saturating_sub(term.screen_lines());
         let viewport_height = self.viewport_height.get();
-        size(Pixels::ZERO, history_lines as f32 * line_height + viewport_height)
+        size(
+            Pixels::ZERO,
+            history_lines as f32 * line_height + viewport_height,
+        )
     }
 }

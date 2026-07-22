@@ -817,7 +817,7 @@ impl SessionState {
                                         }
                                         cx.notify();
                                     });
-                                    
+
                                     // 推送通知
                                     if let Some(window) = cx.active_window() {
                                         use gpui::AppContext as _;
@@ -834,12 +834,18 @@ impl SessionState {
 
                                             let notification = match result_clone {
                                                 Ok(()) => Notification::new()
-                                                    .message(crate::i18n::t(&lang, "sftp.upload.success"))
+                                                    .message(crate::i18n::t(
+                                                        &lang,
+                                                        "sftp.upload.success",
+                                                    ))
                                                     .with_type(NotificationType::Success)
                                                     .w_48()
                                                     .py_2(),
                                                 Err(_) => Notification::new()
-                                                    .message(crate::i18n::t(&lang, "sftp.upload.failed"))
+                                                    .message(crate::i18n::t(
+                                                        &lang,
+                                                        "sftp.upload.failed",
+                                                    ))
                                                     .with_type(NotificationType::Error)
                                                     .w_48()
                                                     .py_2(),
@@ -1820,12 +1826,7 @@ impl SessionState {
     }
 
     /// 创建新文件
-    pub fn sftp_create_file(
-        &mut self,
-        path: String,
-        tab_id: String,
-        cx: &mut gpui::Context<Self>,
-    ) {
+    pub fn sftp_create_file(&mut self, path: String, tab_id: String, cx: &mut gpui::Context<Self>) {
         let sftp_services = self.sftp_services.clone();
         let session_state = cx.entity().clone();
         let dialog_state = self.sftp_new_file_dialog.clone();
@@ -1948,14 +1949,21 @@ impl SessionState {
         path: String,
         cx: &mut gpui::Context<Self>,
     ) {
-        info!("[SFTP] Open properties dialog for: {} in tab {}", path, tab_id);
+        info!(
+            "[SFTP] Open properties dialog for: {} in tab {}",
+            path, tab_id
+        );
 
         // 从 file_list 中查找对应的 FileEntry
         let entry = {
             let tab = self.tabs.iter().find(|t| t.id == tab_id);
             if let Some(tab) = tab {
                 if let Some(sftp_state) = &tab.sftp_state {
-                    sftp_state.file_list.iter().find(|e| e.path == path).cloned()
+                    sftp_state
+                        .file_list
+                        .iter()
+                        .find(|e| e.path == path)
+                        .cloned()
                 } else {
                     None
                 }
@@ -2049,12 +2057,13 @@ impl SessionState {
         dialog: Entity<PropertiesDialogState>,
         cx: &mut gpui::Context<Self>,
     ) {
-        info!("[SFTP] Calculating folder size for: {} in tab {}", path, tab_id);
+        info!(
+            "[SFTP] Calculating folder size for: {} in tab {}",
+            path, tab_id
+        );
 
         // 标记正在计算，并获取取消令牌
-        let cancellation_token = dialog.update(cx, |d, _| {
-            d.start_calculating_size()
-        });
+        let cancellation_token = dialog.update(cx, |d, _| d.start_calculating_size());
 
         let tab_id_owned = tab_id.to_string();
         let path_owned = path.to_string();
@@ -2098,8 +2107,11 @@ impl SessionState {
 
             // 执行 du 命令获取文件夹大小（字节）
             // 使用 du -sb 获取总字节数，2>/dev/null 忽略权限错误
-            let command = format!("du -sb '{}' 2>/dev/null | cut -f1", path_clone.replace("'", "'\\''"));
-            
+            let command = format!(
+                "du -sb '{}' 2>/dev/null | cut -f1",
+                path_clone.replace("'", "'\\''")
+            );
+
             match exec_channel.exec(&command).await {
                 Ok(output) => {
                     // 检查是否已取消
@@ -2164,4 +2176,3 @@ impl SessionState {
             .detach();
     }
 }
-

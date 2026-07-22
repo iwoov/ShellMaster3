@@ -21,24 +21,36 @@ pub async fn connect_via_proxy(
 ) -> Result<TcpStream, SshError> {
     // 先连接到代理服务器
     let proxy_addr = format!("{}:{}", proxy.host, proxy.port);
-    let proxy_socket: SocketAddr = proxy_addr
-        .parse()
-        .or_else(|_| {
-            // 如果不是直接的 IP:PORT，尝试 DNS 解析
-            use std::net::ToSocketAddrs;
-            proxy_addr
-                .to_socket_addrs()
-                .map_err(|e| SshError::Proxy(format!("Failed to resolve proxy address: {}", e)))?
-                .next()
-                .ok_or_else(|| SshError::Proxy("No valid proxy address found".to_string()))
-        })?;
+    let proxy_socket: SocketAddr = proxy_addr.parse().or_else(|_| {
+        // 如果不是直接的 IP:PORT，尝试 DNS 解析
+        use std::net::ToSocketAddrs;
+        proxy_addr
+            .to_socket_addrs()
+            .map_err(|e| SshError::Proxy(format!("Failed to resolve proxy address: {}", e)))?
+            .next()
+            .ok_or_else(|| SshError::Proxy("No valid proxy address found".to_string()))
+    })?;
 
     match proxy.proxy_type {
         ProxyType::Socks5 => {
-            connect_socks5(proxy_socket, proxy, target_host, target_port, connect_timeout).await
+            connect_socks5(
+                proxy_socket,
+                proxy,
+                target_host,
+                target_port,
+                connect_timeout,
+            )
+            .await
         }
         ProxyType::Http => {
-            connect_http(proxy_socket, proxy, target_host, target_port, connect_timeout).await
+            connect_http(
+                proxy_socket,
+                proxy,
+                target_host,
+                target_port,
+                connect_timeout,
+            )
+            .await
         }
     }
 }
@@ -73,13 +85,10 @@ async fn connect_socks5(
         })?
     } else {
         // 无认证的 SOCKS5 连接
-        timeout(
-            connect_timeout,
-            Socks5Stream::connect(proxy_addr, target),
-        )
-        .await
-        .map_err(|_| SshError::Proxy(format!("SOCKS5 proxy connection timeout")))?
-        .map_err(|e| SshError::Proxy(format!("SOCKS5 proxy connection failed: {}", e)))?
+        timeout(connect_timeout, Socks5Stream::connect(proxy_addr, target))
+            .await
+            .map_err(|_| SshError::Proxy(format!("SOCKS5 proxy connection timeout")))?
+            .map_err(|e| SshError::Proxy(format!("SOCKS5 proxy connection failed: {}", e)))?
     };
 
     Ok(stream.into_inner())
@@ -106,7 +115,13 @@ async fn connect_http(
         // 带认证
         timeout(
             connect_timeout,
-            http_connect_tokio_with_basic_auth(&mut stream, target_host, target_port, username, password),
+            http_connect_tokio_with_basic_auth(
+                &mut stream,
+                target_host,
+                target_port,
+                username,
+                password,
+            ),
         )
         .await
         .map_err(|_| SshError::Proxy("HTTP CONNECT tunnel timeout".to_string()))?

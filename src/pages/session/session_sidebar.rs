@@ -783,7 +783,11 @@ fn render_ai_chat_panel(
                     Some(r) => SharedString::from(r.name.clone()),
                     None => crate::i18n::t(lang, "ai_chat.no_provider_short").into(),
                 };
-                let trigger_color = if has_any { foreground } else { muted_foreground };
+                let trigger_color = if has_any {
+                    foreground
+                } else {
+                    muted_foreground
+                };
                 // 图标：内置品牌 / 自定义字母头像
                 let trigger_icon: Option<AnyElement> = match (&active_ref, &active_resolved) {
                     (Some(ProviderRef::Builtin(id)), _) => Some(
@@ -829,23 +833,16 @@ fn render_ai_chat_panel(
                             menu = menu.item(
                                 PopupMenuItem::element(move |_window, cx| {
                                     let icon: AnyElement = match builtin_icon {
-                                        Some(p) => {
-                                            img(p).w(px(16.)).h(px(16.)).into_any_element()
-                                        }
+                                        Some(p) => img(p).w(px(16.)).h(px(16.)).into_any_element(),
                                         None => render_letter_avatar(avatar_char, 16.)
                                             .into_any_element(),
                                     };
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.))
-                                        .child(icon)
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(cx.theme().foreground)
-                                                .child(label.clone()),
-                                        )
+                                    div().flex().items_center().gap(px(8.)).child(icon).child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(cx.theme().foreground)
+                                            .child(label.clone()),
+                                    )
                                 })
                                 .on_click(move |_, _, cx| {
                                     session.update(cx, |s, cx| {
@@ -902,7 +899,12 @@ fn render_ai_chat_panel(
                     .size(px(52.))
                     .rounded_full()
                     .bg(primary.opacity(0.1))
-                    .child(svg().path(icons::SPARKLES).size(px(24.)).text_color(primary)),
+                    .child(
+                        svg()
+                            .path(icons::SPARKLES)
+                            .size(px(24.))
+                            .text_color(primary),
+                    ),
             )
             .child(
                 div()
@@ -922,28 +924,34 @@ fn render_ai_chat_panel(
             .flex()
             .flex_col()
             .gap_3()
-            .children(chat.messages.iter().enumerate().filter(|(_, msg)| {
-                // 跳过流式开始前的空助手占位消息——此时由下方「思考中」指示器代为占位，
-                // 避免出现一个空气泡 + 思考气泡同时显示
-                !(msg.role == crate::services::ai::ChatRole::Assistant
-                    && !msg.error
-                    && msg.content.is_empty()
-                    && msg
-                        .reasoning
-                        .as_ref()
-                        .map(|r| r.trim().is_empty())
-                        .unwrap_or(true))
-            }).map(|(idx, msg)| {
-                render_ai_chat_message(
-                    idx,
-                    msg,
-                    session_state.clone(),
-                    tab_id.clone(),
-                    lang,
-                    window,
-                    cx,
-                )
-            }))
+            .children(
+                chat.messages
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, msg)| {
+                        // 跳过流式开始前的空助手占位消息——此时由下方「思考中」指示器代为占位，
+                        // 避免出现一个空气泡 + 思考气泡同时显示
+                        !(msg.role == crate::services::ai::ChatRole::Assistant
+                            && !msg.error
+                            && msg.content.is_empty()
+                            && msg
+                                .reasoning
+                                .as_ref()
+                                .map(|r| r.trim().is_empty())
+                                .unwrap_or(true))
+                    })
+                    .map(|(idx, msg)| {
+                        render_ai_chat_message(
+                            idx,
+                            msg,
+                            session_state.clone(),
+                            tab_id.clone(),
+                            lang,
+                            window,
+                            cx,
+                        )
+                    }),
+            )
             .when(
                 chat.pending
                     && chat
@@ -1020,7 +1028,11 @@ fn render_ai_chat_panel(
             let models = model_list.clone();
             let session_for_model = session_state.clone();
             let tab_id_for_model = tab_id.clone();
-            let label_color = if has_any { foreground } else { muted_foreground };
+            let label_color = if has_any {
+                foreground
+            } else {
+                muted_foreground
+            };
             Button::new("ai-chat-model-btn")
                 .ghost()
                 .xsmall()
@@ -1263,13 +1275,16 @@ fn render_ai_chat_message(
                                 .text_color(muted_fg)
                                 .child(crate::i18n::t(lang, "ai_chat.reasoning")),
                         )
-                        .child(svg().path(if collapsed {
-                                icons::CHEVRON_RIGHT
-                            } else {
-                                icons::CHEVRON_DOWN
-                            })
-                            .size(px(12.))
-                            .text_color(muted_fg))
+                        .child(
+                            svg()
+                                .path(if collapsed {
+                                    icons::CHEVRON_RIGHT
+                                } else {
+                                    icons::CHEVRON_DOWN
+                                })
+                                .size(px(12.))
+                                .text_color(muted_fg),
+                        )
                         .on_click(move |_, _, cx| {
                             session_for_toggle.update(cx, |s, cx| {
                                 s.toggle_ai_reasoning(&tab_id_for_toggle, idx, cx);

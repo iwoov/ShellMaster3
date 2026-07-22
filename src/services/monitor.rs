@@ -138,8 +138,7 @@ impl MonitorService {
 
         // 采集间隔（秒，至少 1 秒）与磁盘采集频率（每 N 轮一次）
         let interval_secs = (settings.load_interval_ms / 1000).max(1);
-        let disk_every =
-            (settings.disk_interval_ms / settings.load_interval_ms.max(1)).max(1);
+        let disk_every = (settings.disk_interval_ms / settings.load_interval_ms.max(1)).max(1);
         let script = build_stream_script(interval_secs, disk_every);
 
         const MAX_RETRIES: u32 = 10;
@@ -367,7 +366,10 @@ fn parse_system(parsed: &serde_json::Value, host_address: &str) -> SystemInfo {
                 .as_str()
                 .unwrap_or("unknown")
                 .to_string(),
-            os: parsed["host"]["os"].as_str().unwrap_or("unknown").to_string(),
+            os: parsed["host"]["os"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string(),
             kernel: parsed["host"]["kernel"]
                 .as_str()
                 .unwrap_or("unknown")

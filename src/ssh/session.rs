@@ -122,7 +122,7 @@ impl SshSession {
         // 请求 PTY
         channel
             .request_pty(
-                false, // want_reply
+                true, // want_reply
                 &pty.term,
                 pty.col_width,
                 pty.row_height,
@@ -134,7 +134,7 @@ impl SshSession {
             .map_err(SshError::from)?;
 
         // 请求 Shell
-        channel.request_shell(false).await.map_err(SshError::from)?;
+        channel.request_shell(true).await.map_err(SshError::from)?;
 
         Ok(TerminalChannel::new(channel, self.handle.clone()))
     }

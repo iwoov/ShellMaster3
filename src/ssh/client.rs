@@ -78,13 +78,9 @@ impl SshClient {
                 proxy_type, proxy.host, proxy.port
             )));
 
-            let stream = connect_via_proxy(
-                proxy,
-                &self.config.host,
-                self.config.port,
-                connect_timeout,
-            )
-            .await?;
+            let stream =
+                connect_via_proxy(proxy, &self.config.host, self.config.port, connect_timeout)
+                    .await?;
 
             self.log(LogEntry::info("Proxy tunnel established"));
 

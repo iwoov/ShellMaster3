@@ -19,7 +19,7 @@ pub fn calculate_terminal_size(
     area_height: f32,
     settings: &TerminalSettings,
     window: &Window,
-    cx: &App,
+    _cx: &App,
 ) -> (u32, u32, f32, f32) {
     let text_system = window.text_system();
 
@@ -88,9 +88,7 @@ pub fn start_pty_reader(
     cx.spawn(async move |async_cx| {
         debug!("[PTY Reader] Started");
 
-        let mut disconnect_reason: Option<String> = None;
-
-        loop {
+        let disconnect_reason = loop {
             // 读取 PTY 输出
             let result = channel.read().await;
             match result {
@@ -114,19 +112,39 @@ pub fn start_pty_reader(
                 }
                 Ok(None) => {
                     debug!("[PTY Reader] Channel closed");
-                    disconnect_reason = Some("terminal.disconnected".to_string());
-                    break;
+                    break Some("terminal.disconnected".to_string());
                 }
                 Err(e) => {
                     error!("[PTY Reader] Error: {:?}", e);
-                    disconnect_reason = Some(format!("{:?}", e));
-                    break;
+                    break Some(format!("{:?}", e));
                 }
             }
-        }
+        };
 
         // 断开连接后处理
         if disconnect_reason.is_some() {
+            let tab_id_for_check = tab_id.clone();
+            let terminal_id_for_check = terminal_id.clone();
+            let terminal_still_present = async_cx
+                .update(|cx| {
+                    session_state
+                        .read(cx)
+                        .tabs
+                        .iter()
+                        .find(|t| t.id == tab_id_for_check)
+                        .map(|tab| tab.terminals.iter().any(|t| t.id == terminal_id_for_check))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+
+            if !terminal_still_present {
+                debug!(
+                    "[PTY Reader] Terminal {} in tab {} was closed by user; skip reconnect",
+                    terminal_id, tab_id
+                );
+                return;
+            }
+
             // 读取设置和 server_data
             let (auto_reconnect, server_data) = async_cx
                 .update(|cx| {

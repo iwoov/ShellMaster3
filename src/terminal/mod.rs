@@ -55,14 +55,14 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("down", SendDown, Some(TERMINAL_CONTEXT)),
         KeyBinding::new("left", SendLeft, Some(TERMINAL_CONTEXT)),
         KeyBinding::new("right", SendRight, Some(TERMINAL_CONTEXT)),
-        // 复制粘贴快捷键（macOS 使用 cmd，其他平台使用 ctrl）
+        // 复制粘贴快捷键：终端优先，保留 Ctrl-C/Ctrl-V 控制字符语义
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-c", TerminalCopy, Some(TERMINAL_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-v", TerminalPaste, Some(TERMINAL_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-c", TerminalCopy, Some(TERMINAL_CONTEXT)),
+        KeyBinding::new("ctrl-shift-c", TerminalCopy, Some(TERMINAL_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-v", TerminalPaste, Some(TERMINAL_CONTEXT)),
+        KeyBinding::new("ctrl-shift-v", TerminalPaste, Some(TERMINAL_CONTEXT)),
     ]);
 }

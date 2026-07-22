@@ -6,7 +6,7 @@ use gpui::{App, Entity};
 use tracing::{debug, error, info, warn};
 
 use crate::models::server::ServerData;
-use crate::state::{SessionState, SessionStatus};
+use crate::state::{SessionState, SessionStatus, TerminalPtyState};
 
 use super::config::{AuthMethod, KeepaliveConfig, SshConfig};
 use super::event::{ConnectionEvent, HostKeyAction};
@@ -169,8 +169,7 @@ pub fn start_reconnection(
                                 tab.terminals.iter_mut().find(|t| t.id == terminal_id_clone)
                             {
                                 terminal.pty_channel = None;
-                                terminal.pty_initialized = false;
-                                terminal.pty_error = None;
+                                terminal.pty_state = TerminalPtyState::NotStarted;
                             }
                         }
 

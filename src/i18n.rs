@@ -345,6 +345,11 @@ fn zh_cn(key: &'static str) -> &'static str {
         "terminal.reconnect_attempt" => "尝试",
         "terminal.reconnected" => "重连成功",
         "terminal.reconnect_failed" => "重连失败",
+        "terminal.context_menu.copy" => "复制",
+        "terminal.context_menu.paste" => "粘贴",
+        "terminal.context_menu.select_all" => "全选",
+        "terminal.context_menu.clear" => "清除回滚",
+        "terminal.search.placeholder" => "搜索…",
 
         // Monitor 面板详细
         "monitor.system_info" => "系统信息",
@@ -808,6 +813,11 @@ fn en_us(key: &'static str) -> &'static str {
         "terminal.reconnect_attempt" => "Attempt",
         "terminal.reconnected" => "Reconnected",
         "terminal.reconnect_failed" => "Reconnection failed",
+        "terminal.context_menu.copy" => "Copy",
+        "terminal.context_menu.paste" => "Paste",
+        "terminal.context_menu.select_all" => "Select All",
+        "terminal.context_menu.clear" => "Clear Scrollback",
+        "terminal.search.placeholder" => "Search…",
 
         // Monitor Panel Detail
         "monitor.system_info" => "System Info",

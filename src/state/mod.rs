@@ -79,6 +79,8 @@ pub struct TerminalInstance {
     pub pty_state: TerminalPtyState,
     /// 上次发送给远端 PTY 的尺寸 (cols, rows)
     pub last_sent_pty_size: Option<(u32, u32)>,
+    /// 应用通过 OSC 0/2 设置的标题（无则回退到 "Terminal N"）
+    pub title: Option<String>,
 }
 
 /// 会话标签
@@ -156,6 +158,12 @@ pub struct SessionState {
     pub snippets_config: Option<SnippetsConfig>,
     /// 终端命令输入状态
     pub command_input: Option<Entity<InputState>>,
+    /// 终端搜索输入框状态
+    pub search_input: Option<Entity<InputState>>,
+    /// 搜索栏是否展开（针对当前激活终端）
+    pub search_open: bool,
+    /// 搜索输入框事件订阅
+    pub search_subscription: Option<Subscription>,
     /// 终端焦点句柄（用于键盘事件处理）
     pub terminal_focus_handle: Option<FocusHandle>,
     /// 终端焦点监听订阅（用于 xterm focus in/out 上报）
@@ -195,6 +203,9 @@ impl Default for SessionState {
             snippets_expanded: HashSet::new(),
             snippets_config: None,
             command_input: None,
+            search_input: None,
+            search_open: false,
+            search_subscription: None,
             terminal_focus_handle: None,
             terminal_focus_subscriptions: Vec::new(),
             monitor_detail_dialog: None,

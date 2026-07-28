@@ -5,6 +5,7 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::input::{Input, InputState};
+use gpui_component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::ActiveTheme;
 use tracing::trace;
@@ -15,10 +16,145 @@ use crate::constants::icons;
 use crate::ssh::session::TerminalChannel;
 use crate::state::{SessionState, SessionStatus, SessionTab};
 use crate::terminal::{
-    hex_to_hsla, keystroke_to_escape, named_key_to_escape, paste_to_bytes, render_terminal_view,
-    SendDown, SendEnter, SendEscape, SendLeft, SendRight, SendTab, SendUp, TerminalCopy,
-    TerminalPaste, TerminalState, TERMINAL_PADDING_LEFT,
+    hex_to_hsla, keystroke_to_escape, mouse_mode_enabled, mouse_report_bytes, named_key_to_escape,
+    paste_to_bytes, render_terminal_view, should_report_motion, SendDown, SendEnter, SendEscape,
+    SendLeft, SendRight, SendTab, SendUp, TerminalCopy, TerminalPaste, TerminalSearch,
+    TerminalSelectAll, TerminalState, MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT, MOUSE_WHEEL_DOWN,
+    MOUSE_WHEEL_UP, TERMINAL_PADDING_LEFT,
 };
+
+/// 构建终端右键上下文菜单（复制/粘贴/全选/清除回滚）。
+fn build_terminal_context_menu(
+    menu: PopupMenu,
+    terminal: &Option<Entity<TerminalState>>,
+    channel: &Option<Arc<TerminalChannel>>,
+    lang: crate::models::settings::Language,
+) -> PopupMenu {
+    use crate::i18n::t;
+    let copy_label = t(&lang, "terminal.context_menu.copy").to_string();
+    let paste_label = t(&lang, "terminal.context_menu.paste").to_string();
+    let select_all_label = t(&lang, "terminal.context_menu.select_all").to_string();
+    let clear_label = t(&lang, "terminal.context_menu.clear").to_string();
+
+    // 复制
+    let t_copy = terminal.clone();
+    let mut menu = menu.item(PopupMenuItem::new(copy_label).on_click(move |_, _, cx| {
+        if let Some(terminal) = t_copy.clone() {
+            let text = terminal.read(cx).selected_text_for_copy();
+            if let Some(text) = text {
+                if !text.is_empty() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+            }
+        }
+    }));
+
+    // 粘贴
+    let t_paste = terminal.clone();
+    let c_paste = channel.clone();
+    menu = menu.item(PopupMenuItem::new(paste_label).on_click(move |_, _, cx| {
+        let Some(channel) = c_paste.clone() else {
+            return;
+        };
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let Some(text) = item.text() else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        let mode = t_paste
+            .as_ref()
+            .map(|t| t.read(cx).term_mode())
+            .unwrap_or_else(TermMode::empty);
+        let bytes = paste_to_bytes(&text, mode);
+        if let Some(t) = t_paste.clone() {
+            t.update(cx, |t, _| t.show_cursor());
+        }
+        cx.spawn(async move |_| {
+            let _ = channel.write(&bytes).await;
+        })
+        .detach();
+    }));
+
+    menu = menu.separator();
+
+    // 全选
+    let t_all = terminal.clone();
+    menu = menu.item(PopupMenuItem::new(select_all_label).on_click(move |_, _, cx| {
+        if let Some(terminal) = t_all.clone() {
+            terminal.update(cx, |t, cx| {
+                t.select_all();
+                cx.notify();
+            });
+        }
+    }));
+
+    // 清除回滚
+    let t_clear = terminal.clone();
+    menu = menu.item(PopupMenuItem::new(clear_label).on_click(move |_, _, cx| {
+        if let Some(terminal) = t_clear.clone() {
+            terminal.update(cx, |t, cx| {
+                t.clear_scrollback();
+                cx.notify();
+            });
+        }
+    }));
+
+    menu
+}
+
+/// 计算鼠标位置对应的 1-based 终端可视区坐标。
+fn mouse_grid_pos(terminal: &Entity<TerminalState>, cx: &App, pos: Point<Pixels>) -> (usize, usize) {
+    let t = terminal.read(cx);
+    let (ox, oy) = t.bounds_origin();
+    let size = t.size();
+    let rel_x = (f32::from(pos.x) - ox - TERMINAL_PADDING_LEFT).max(0.0);
+    let rel_y = (f32::from(pos.y) - oy).max(0.0);
+    let col = ((rel_x / size.cell_width) as usize + 1).min(size.columns.max(1));
+    let row = ((rel_y / size.line_height) as usize + 1).min(size.lines.max(1));
+    (col, row)
+}
+
+/// 尝试把鼠标事件上报给启用了鼠标模式的远端应用。
+/// 成功上报返回 `true`（调用方应跳过本地选择/滚动）；Shift 按下则强制本地行为。
+#[allow(clippy::too_many_arguments)]
+fn try_report_mouse(
+    terminal: &Option<Entity<TerminalState>>,
+    channel: &Option<Arc<TerminalChannel>>,
+    cx: &mut App,
+    pos: Point<Pixels>,
+    base_button: u8,
+    is_motion: bool,
+    released: bool,
+    mods: &Modifiers,
+) -> bool {
+    if mods.shift {
+        return false;
+    }
+    let Some(terminal) = terminal.as_ref() else {
+        return false;
+    };
+    let Some(channel) = channel.clone() else {
+        return false;
+    };
+    let mode = terminal.read(cx).term_mode();
+    if !mouse_mode_enabled(mode) {
+        return false;
+    }
+    let (col, row) = mouse_grid_pos(terminal, cx, pos);
+    let Some(bytes) = mouse_report_bytes(base_button, is_motion, released, col, row, mods, mode)
+    else {
+        return false;
+    };
+    cx.spawn(async move |_| {
+        let _ = channel.write(&bytes).await;
+    })
+    .detach();
+    true
+}
 
 /// 渲染终端面板
 pub fn render_terminal_panel(
@@ -107,10 +243,26 @@ pub fn render_terminal_panel(
         {
             let terminal = terminal_entity.clone();
             let focus = focus_for_click.clone();
+            let channel_for_mouse = pty_channel.clone();
             terminal_display =
                 terminal_display.on_mouse_down(MouseButton::Left, move |event, window, cx| {
                     // 先获取焦点
                     window.focus(&focus);
+
+                    // 若远端启用鼠标模式（且未按 Shift），上报点击而非本地选择
+                    if try_report_mouse(
+                        &terminal,
+                        &channel_for_mouse,
+                        cx,
+                        event.position,
+                        MOUSE_LEFT,
+                        false,
+                        false,
+                        &event.modifiers,
+                    ) {
+                        cx.stop_propagation();
+                        return;
+                    }
 
                     // 开始选择
                     if let Some(terminal) = terminal.clone() {
@@ -131,7 +283,35 @@ pub fn render_terminal_panel(
         // 鼠标移动（拖动）：更新选择
         {
             let terminal = terminal_entity.clone();
+            let channel_for_move = pty_channel.clone();
             terminal_display = terminal_display.on_mouse_move(move |event, _window, cx| {
+                // 鼠标模式下上报移动/拖动（1003 任意移动；1002 仅拖动）
+                if !event.modifiers.shift {
+                    if let Some(terminal_ref) = terminal.as_ref() {
+                        let mode = terminal_ref.read(cx).term_mode();
+                        let button_pressed = event.pressed_button.is_some();
+                        if mouse_mode_enabled(mode) && should_report_motion(mode, button_pressed) {
+                            let base = match event.pressed_button {
+                                Some(gpui::MouseButton::Middle) => MOUSE_MIDDLE,
+                                Some(gpui::MouseButton::Right) => MOUSE_RIGHT,
+                                _ => MOUSE_LEFT,
+                            };
+                            if try_report_mouse(
+                                &terminal,
+                                &channel_for_move,
+                                cx,
+                                event.position,
+                                base,
+                                true,
+                                false,
+                                &event.modifiers,
+                            ) {
+                                return;
+                            }
+                        }
+                    }
+                }
+
                 // 只有按住左键拖动时才更新选择
                 if event.pressed_button != Some(gpui::MouseButton::Left) {
                     return;
@@ -145,6 +325,15 @@ pub fn render_terminal_panel(
                             f32::from(event.position.x) - origin_x - TERMINAL_PADDING_LEFT;
                         let rel_y: f32 = f32::from(event.position.y) - origin_y;
 
+                        // 拖动到终端上/下边缘之外时自动滚动 scrollback
+                        let size = t.size();
+                        let viewport_h = size.line_height * size.lines as f32;
+                        if rel_y < 0.0 {
+                            t.scroll_by_lines(1);
+                        } else if rel_y > viewport_h {
+                            t.scroll_by_lines(-1);
+                        }
+
                         t.update_selection(rel_x, rel_y);
                         cx.notify();
                     });
@@ -156,8 +345,24 @@ pub fn render_terminal_panel(
         {
             let terminal = terminal_entity.clone();
             let copy_on_select = terminal_settings.copy_on_select;
+            let channel_for_up = pty_channel.clone();
             terminal_display =
-                terminal_display.on_mouse_up(MouseButton::Left, move |_event, _window, cx| {
+                terminal_display.on_mouse_up(MouseButton::Left, move |event, _window, cx| {
+                    // 鼠标模式下上报释放
+                    if try_report_mouse(
+                        &terminal,
+                        &channel_for_up,
+                        cx,
+                        event.position,
+                        MOUSE_LEFT,
+                        false,
+                        true,
+                        &event.modifiers,
+                    ) {
+                        cx.stop_propagation();
+                        return;
+                    }
+
                     if let Some(terminal) = terminal.clone() {
                         let selected_text = terminal.update(cx, |t, cx| {
                             let _ = t.end_selection();
@@ -177,47 +382,85 @@ pub fn render_terminal_panel(
                 });
         }
 
-        // 右键粘贴
-        if terminal_settings.right_click_paste {
+        // 右键按下：仅在鼠标模式下上报（非鼠标模式由下方上下文菜单处理）
+        {
             let channel = pty_channel.clone();
             let terminal = terminal_entity.clone();
             terminal_display =
-                terminal_display.on_mouse_down(MouseButton::Right, move |_event, _window, cx| {
-                    let Some(channel) = channel.clone() else {
-                        return;
-                    };
-
-                    let Some(clipboard_item) = cx.read_from_clipboard() else {
-                        return;
-                    };
-                    let Some(text) = clipboard_item.text() else {
-                        return;
-                    };
-                    if text.is_empty() {
-                        return;
+                terminal_display.on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                    if try_report_mouse(
+                        &terminal,
+                        &channel,
+                        cx,
+                        event.position,
+                        MOUSE_RIGHT,
+                        false,
+                        false,
+                        &event.modifiers,
+                    ) {
+                        cx.stop_propagation();
                     }
+                });
+        }
 
-                    let mode = terminal
-                        .as_ref()
-                        .map(|terminal| terminal.read(cx).term_mode())
-                        .unwrap_or_else(TermMode::empty);
-                    let bytes = paste_to_bytes(&text, mode);
-
-                    if let Some(terminal) = terminal.clone() {
-                        terminal.update(cx, |t, _| t.show_cursor());
+        // 右键释放：鼠标模式下上报
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display =
+                terminal_display.on_mouse_up(MouseButton::Right, move |event, _window, cx| {
+                    if try_report_mouse(
+                        &terminal,
+                        &channel,
+                        cx,
+                        event.position,
+                        MOUSE_RIGHT,
+                        false,
+                        true,
+                        &event.modifiers,
+                    ) {
+                        cx.stop_propagation();
                     }
+                });
+        }
 
-                    cx.spawn(async move |_| {
-                        if let Err(e) = channel.write(&bytes).await {
-                            tracing::error!(
-                                "[Terminal] PTY write error on right-click paste: {:?}",
-                                e
-                            );
-                        }
-                    })
-                    .detach();
-
-                    cx.stop_propagation();
+        // 中键按下/释放：鼠标模式下上报
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display =
+                terminal_display.on_mouse_down(MouseButton::Middle, move |event, _window, cx| {
+                    if try_report_mouse(
+                        &terminal,
+                        &channel,
+                        cx,
+                        event.position,
+                        MOUSE_MIDDLE,
+                        false,
+                        false,
+                        &event.modifiers,
+                    ) {
+                        cx.stop_propagation();
+                    }
+                });
+        }
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display =
+                terminal_display.on_mouse_up(MouseButton::Middle, move |event, _window, cx| {
+                    if try_report_mouse(
+                        &terminal,
+                        &channel,
+                        cx,
+                        event.position,
+                        MOUSE_MIDDLE,
+                        false,
+                        true,
+                        &event.modifiers,
+                    ) {
+                        cx.stop_propagation();
+                    }
                 });
         }
 
@@ -242,6 +485,36 @@ pub fn render_terminal_panel(
                     }
 
                     let mode = t.term_mode();
+
+                    // 鼠标模式：上报滚轮（优先于本地滚动与 alt-scroll 箭头模拟）
+                    if mouse_mode_enabled(mode) && !event.modifiers.shift {
+                        let base = if scroll_lines > 0 {
+                            MOUSE_WHEEL_UP
+                        } else {
+                            MOUSE_WHEEL_DOWN
+                        };
+                        let (ox, oy) = t.bounds_origin();
+                        let size = t.size();
+                        let rel_x =
+                            (f32::from(event.position.x) - ox - TERMINAL_PADDING_LEFT).max(0.0);
+                        let rel_y = (f32::from(event.position.y) - oy).max(0.0);
+                        let col = ((rel_x / size.cell_width) as usize + 1).min(size.columns.max(1));
+                        let row = ((rel_y / size.line_height) as usize + 1).min(size.lines.max(1));
+                        let mut content = Vec::new();
+                        for _ in 0..scroll_lines.abs() {
+                            if let Some(b) = mouse_report_bytes(
+                                base, false, false, col, row, &event.modifiers, mode,
+                            ) {
+                                content.extend_from_slice(&b);
+                            }
+                        }
+                        if !content.is_empty() {
+                            bytes_to_send = Some(content);
+                            handled = true;
+                        }
+                        return;
+                    }
+
                     let should_alt_scroll = mode
                         .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
                         && !event.modifiers.shift;
@@ -444,6 +717,31 @@ pub fn render_terminal_panel(
                 cx.stop_propagation();
             });
         }
+        // 搜索：切换搜索栏
+        {
+            let session = session_state.clone();
+            terminal_display =
+                terminal_display.on_action(move |_: &TerminalSearch, window, cx| {
+                    session.update(cx, |state, cx| {
+                        state.toggle_terminal_search(window, cx);
+                    });
+                    cx.stop_propagation();
+                });
+        }
+        // 全选：选中整个缓冲区（含 scrollback）
+        {
+            let terminal = terminal_entity.clone();
+            terminal_display =
+                terminal_display.on_action(move |_: &TerminalSelectAll, _window, cx| {
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, cx| {
+                            t.select_all();
+                            cx.notify();
+                        });
+                    }
+                    cx.stop_propagation();
+                });
+        }
         // 粘贴：从剪贴板读取文本并发送到 PTY
         {
             let channel = pty_channel.clone();
@@ -612,6 +910,115 @@ pub fn render_terminal_panel(
         terminal_display = terminal_display.vertical_scrollbar(&scroll_handle);
     }
 
+    // 搜索栏：搜索打开时在终端右上角浮层显示
+    if session_state.read(cx).search_open {
+        if let Some(search_input) = session_state.read(cx).search_input.clone() {
+            let (cur, total) = terminal_entity
+                .as_ref()
+                .map(|t| {
+                    let s = t.read(cx);
+                    (s.search_current_number(), s.search_match_count())
+                })
+                .unwrap_or((0, 0));
+            let count_text = format!("{}/{}", cur, total);
+
+            let bar_bg = cx.theme().popover;
+            let bar_border = cx.theme().border;
+            let muted = cx.theme().muted_foreground;
+
+            let sess_prev = session_state.clone();
+            let sess_next = session_state.clone();
+            let sess_close = session_state.clone();
+
+            let icon_btn = |id: &'static str, icon: &'static str| {
+                div()
+                    .id(id)
+                    .size(px(18.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(3.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(muted.opacity(0.2)))
+                    .child(svg().path(icon).size(px(12.)).text_color(muted))
+            };
+
+            let search_bar = div()
+                .absolute()
+                .top(px(4.))
+                .right(px(16.))
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(bar_border)
+                .bg(bar_bg)
+                // 阻止在搜索栏上的鼠标操作触发终端选择
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(svg().path(icons::SEARCH).size(px(12.)).text_color(muted))
+                .child(div().w(px(150.)).child(Input::new(&search_input).appearance(false)))
+                .child(div().text_xs().text_color(muted).child(count_text))
+                .child(icon_btn("terminal-search-prev", icons::ARROW_UP).on_click(
+                    move |_, _window, cx| {
+                        sess_prev.update(cx, |state, cx| {
+                            if let Some(t) = state.active_terminal_entity() {
+                                t.update(cx, |t, cx| {
+                                    t.search_prev_match();
+                                    cx.notify();
+                                });
+                            }
+                            cx.notify();
+                        });
+                    },
+                ))
+                .child(icon_btn("terminal-search-next", icons::CHEVRON_DOWN).on_click(
+                    move |_, _window, cx| {
+                        sess_next.update(cx, |state, cx| {
+                            if let Some(t) = state.active_terminal_entity() {
+                                t.update(cx, |t, cx| {
+                                    t.search_next_match();
+                                    cx.notify();
+                                });
+                            }
+                            cx.notify();
+                        });
+                    },
+                ))
+                .child(icon_btn("terminal-search-close", icons::X).on_click(
+                    move |_, window, cx| {
+                        sess_close.update(cx, |state, cx| {
+                            state.close_terminal_search(window, cx);
+                        });
+                    },
+                ));
+
+            terminal_display = terminal_display.child(search_bar);
+        }
+    }
+
+    // 右键上下文菜单：非鼠标模式时启用（鼠标模式下右键留给应用上报）
+    let mouse_active = terminal_entity
+        .as_ref()
+        .map(|t| crate::terminal::mouse_mode_enabled(t.read(cx).term_mode()))
+        .unwrap_or(false);
+    let menu_lang = crate::services::storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or_default();
+    let terminal_area: AnyElement = if mouse_active || terminal_entity.is_none() {
+        terminal_display.into_any_element()
+    } else {
+        let ct = terminal_entity.clone();
+        let cc = pty_channel.clone();
+        terminal_display
+            .context_menu(move |menu, _window, _cx| {
+                build_terminal_context_menu(menu, &ct, &cc, menu_lang.clone())
+            })
+            .into_any_element()
+    };
+
     // 创建终端顶部工具栏区域（15px 高度）
     let tab_id_for_toolbar = tab.id.clone();
     let terminals_for_toolbar = tab.terminals.clone();
@@ -645,8 +1052,11 @@ pub fn render_terminal_panel(
                 .enumerate()
                 .map(|(_idx, term_inst)| {
                     let term_id = term_inst.id.clone();
-                    // 动态生成翻译后的标签名
-                    let term_label = format!("{} {}", terminal_label_prefix, term_inst.index);
+                    // 优先使用应用通过 OSC 设置的标题，否则回退到翻译后的默认标签名
+                    let term_label = match term_inst.title.as_deref() {
+                        Some(title) if !title.is_empty() => title.to_string(),
+                        _ => format!("{} {}", terminal_label_prefix, term_inst.index),
+                    };
                     let is_active = active_id_for_toolbar.as_ref() == Some(&term_id);
                     let tab_id_for_click = tab_id_for_toolbar.clone();
                     let session_for_click = session_state_for_toolbar.clone();
@@ -755,7 +1165,7 @@ pub fn render_terminal_panel(
         // 终端顶部工具栏区域
         .child(terminal_toolbar)
         // 终端显示区域（占据剩余空间）
-        .child(terminal_display)
+        .child(terminal_area)
         // 命令输入区域（下方）
         .child(render_command_input(
             border_color,
@@ -776,9 +1186,21 @@ fn render_terminal_content(
     let term = state.term();
     let size = state.size();
     let cursor_visible = state.is_cursor_visible();
+    let bell_flash = state.is_bell_flash();
+    let search_matches = state.search_matches();
+    let search_current = state.search_current_index();
 
     // 使用 renderer 中的 render_terminal_view 函数
-    render_terminal_view(&term.lock(), size, settings, cursor_visible, cx)
+    render_terminal_view(
+        &term.lock(),
+        size,
+        settings,
+        cursor_visible,
+        bell_flash,
+        search_matches,
+        search_current,
+        cx,
+    )
 }
 
 /// 渲染错误状态的终端

@@ -3,6 +3,7 @@
 mod batched_run;
 mod colors;
 mod keys;
+mod mouse;
 mod renderer;
 mod scroll_handle;
 mod state;
@@ -11,6 +12,7 @@ mod terminal_bridge;
 // pub use batched_run::*; // 内部使用，不导出
 pub use colors::*;
 pub use keys::*;
+pub use mouse::*;
 pub use renderer::*;
 pub use scroll_handle::*;
 pub use state::*;
@@ -31,6 +33,8 @@ actions!(
         SendRight,
         TerminalCopy,
         TerminalPaste,
+        TerminalSelectAll,
+        TerminalSearch,
     ]
 );
 
@@ -64,5 +68,15 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-shift-c", TerminalCopy, Some(TERMINAL_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-v", TerminalPaste, Some(TERMINAL_CONTEXT)),
+        // 全选
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-a", TerminalSelectAll, Some(TERMINAL_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-a", TerminalSelectAll, Some(TERMINAL_CONTEXT)),
+        // 搜索
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-f", TerminalSearch, Some(TERMINAL_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-f", TerminalSearch, Some(TERMINAL_CONTEXT)),
     ]);
 }

@@ -231,6 +231,15 @@ pub fn render_theme_select_row(
                             menu.item(PopupMenuItem::new(theme_name).on_click(move |_, _, cx| {
                                 state_clone.update(cx, |s, _| {
                                     s.settings.terminal.color_scheme = theme_val.clone();
+                                    // 选择主题时同步前景/背景/光标/选择色
+                                    let p = crate::terminal::palette_for(&theme_val);
+                                    let hex = |(r, g, b): (u8, u8, u8)| {
+                                        format!("#{:02x}{:02x}{:02x}", r, g, b)
+                                    };
+                                    s.settings.terminal.foreground_color = hex(p.foreground);
+                                    s.settings.terminal.background_color = hex(p.background);
+                                    s.settings.terminal.cursor_color = hex(p.cursor);
+                                    s.settings.terminal.selection_color = hex(p.selection);
                                     s.mark_changed();
                                 });
                             }));

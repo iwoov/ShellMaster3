@@ -1,5 +1,6 @@
 // 终端状态管理 - 封装 alacritty_terminal::Term
 
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener, WindowSize};
@@ -8,14 +9,36 @@ use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Direction, Line, Point as AlacPoint};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
+use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi;
+use alacritty_terminal::vte::ansi::{NamedColor, Rgb};
 use alacritty_terminal::Term;
 use gpui::{px, Pixels, ScrollWheelEvent, TouchPhase};
 
 use crate::models::settings::TerminalSettings;
+use crate::terminal::colors::{ansi_indexed_rgb, hex_to_rgb, palette_for};
 use crate::terminal::TerminalScrollHandle;
+
+/// 剪贴板读取请求：应用通过 OSC 52 请求把剪贴板内容写回 PTY。
+/// formatter 会把剪贴板文本转换为正确的转义序列。
+pub type ClipboardLoadRequest = Arc<dyn Fn(&str) -> String + Send + Sync + 'static>;
+
+/// 处理一段 PTY 输入后，需要终端前端/传输层执行的副作用。
+#[derive(Default)]
+pub struct TerminalOutput {
+    /// 需要回写给远端 PTY 的字节（DA/DSR/CPR 回复、颜色/尺寸查询回复等）。
+    pub pty_writes: Vec<u8>,
+    /// 窗口标题变化（OSC 0/2）。
+    pub title: Option<String>,
+    /// 是否触发了响铃（由消费侧按 bell_style 决定视觉/声音反馈）。
+    pub bell: bool,
+    /// 应用请求写入系统剪贴板的文本（OSC 52 store）。
+    pub clipboard_store: Option<String>,
+    /// 应用请求读取系统剪贴板并回写 PTY（OSC 52 load）。
+    pub clipboard_load: Vec<ClipboardLoadRequest>,
+}
 
 /// 终端尺寸信息
 #[derive(Clone, Debug)]
@@ -92,13 +115,17 @@ impl Dimensions for TerminalSize {
     }
 }
 
-/// 事件代理 - 接收终端事件
+/// 事件代理 - 把 alacritty 事件转发到 TerminalState 的接收端，
+/// 由 `input()` 在解析完一段数据后统一 drain 处理。
 #[derive(Clone)]
-pub struct EventProxy;
+pub struct EventProxy {
+    tx: Sender<AlacEvent>,
+}
 
 impl EventListener for EventProxy {
-    fn send_event(&self, _event: AlacEvent) {
-        // TODO: 处理终端事件（如标题变化、铃声等）
+    fn send_event(&self, event: AlacEvent) {
+        // 接收端与 Term 生命周期一致；发送失败只可能发生在关闭竞态，忽略即可。
+        let _ = self.tx.send(event);
     }
 }
 
@@ -121,6 +148,18 @@ pub struct TerminalState {
     cursor_visible: bool,
     /// 终端显示区域在窗口中的偏移原点
     bounds_origin: (f32, f32),
+    /// alacritty 事件接收端（PtyWrite/Title/Bell/剪贴板/颜色查询等）
+    event_rx: Receiver<AlacEvent>,
+    /// 上次测量字体的指纹（family, size, line_height），用于检测设置变化后重新测量。
+    font_fingerprint: (String, u32, f32),
+    /// 视觉响铃闪烁状态（短暂点亮后清除）。
+    bell_flash: bool,
+    /// 当前搜索关键字。
+    search_query: String,
+    /// 搜索命中范围（buffer 坐标），用于高亮。
+    search_matches: Vec<Match>,
+    /// 当前定位到的命中索引。
+    search_current: Option<usize>,
 }
 
 impl TerminalState {
@@ -135,9 +174,17 @@ impl TerminalState {
         let mut config = TermConfig::default();
         config.scrolling_history =
             (settings.scrollback_lines as usize).min(Self::MAX_SCROLLBACK_LINES);
+        // 双击选词的分隔字符（word_separators 设置）
+        if !settings.word_separators.is_empty() {
+            config.semantic_escape_chars = settings.word_separators.clone();
+        }
+
+        // 创建事件通道与代理
+        let (tx, event_rx) = std::sync::mpsc::channel();
+        let event_proxy = EventProxy { tx };
 
         // 创建终端实例
-        let term = Arc::new(FairMutex::new(Term::new(config, &size, EventProxy)));
+        let term = Arc::new(FairMutex::new(Term::new(config, &size, event_proxy)));
         let scroll_handle = TerminalScrollHandle::new(
             term.clone(),
             px(size.line_height),
@@ -146,6 +193,12 @@ impl TerminalState {
 
         // 创建 VTE 解析器
         let parser = ansi::Processor::new();
+
+        let font_fingerprint = (
+            settings.font_family.clone(),
+            settings.font_size,
+            settings.line_height,
+        );
 
         Self {
             term,
@@ -156,6 +209,12 @@ impl TerminalState {
             scroll_px: px(0.),
             cursor_visible: true,
             bounds_origin: (0.0, 0.0),
+            event_rx,
+            font_fingerprint,
+            bell_flash: false,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_current: None,
         }
     }
 
@@ -172,6 +231,36 @@ impl TerminalState {
     /// 获取当前尺寸
     pub fn size(&self) -> &TerminalSize {
         &self.size
+    }
+
+    /// 检测字体相关设置（family/size/line_height）是否相对上次测量发生变化。
+    pub fn font_settings_changed(&self, settings: &TerminalSettings) -> bool {
+        self.font_fingerprint
+            != (
+                settings.font_family.clone(),
+                settings.font_size,
+                settings.line_height,
+            )
+    }
+
+    /// 设置视觉响铃闪烁状态。
+    pub fn set_bell_flash(&mut self, on: bool) {
+        self.bell_flash = on;
+    }
+
+    /// 是否处于视觉响铃闪烁状态。
+    pub fn is_bell_flash(&self) -> bool {
+        self.bell_flash
+    }
+
+    /// 应用最新终端设置，并刷新字体指纹（在重新测量 cell metrics 后调用）。
+    pub fn apply_settings(&mut self, settings: TerminalSettings) {
+        self.font_fingerprint = (
+            settings.font_family.clone(),
+            settings.font_size,
+            settings.line_height,
+        );
+        self.settings = settings;
     }
 
     /// 设置终端显示区域在窗口中的偏移原点
@@ -209,15 +298,70 @@ impl TerminalState {
     }
 
     /// 向终端输入数据（来自 PTY）
-    /// 使用 VTE 解析器解析 ANSI 序列，并更新终端状态
-    pub fn input(&mut self, data: &[u8]) {
-        let mut term = self.term.lock();
-        self.parser.advance(&mut *term, data);
+    /// 使用 VTE 解析器解析 ANSI 序列，更新终端状态，并返回需要前端/传输层
+    /// 处理的副作用（回写 PTY、标题、响铃、剪贴板等）。
+    #[must_use]
+    pub fn input(&mut self, data: &[u8]) -> TerminalOutput {
+        {
+            let mut term = self.term.lock();
+            self.parser.advance(&mut *term, data);
+        }
+        self.drain_events()
     }
 
     /// 向终端输入字符串
-    pub fn input_str(&mut self, s: &str) {
-        self.input(s.as_bytes());
+    #[allow(dead_code)]
+    pub fn input_str(&mut self, s: &str) -> TerminalOutput {
+        self.input(s.as_bytes())
+    }
+
+    /// 处理 alacritty 在解析过程中产生的事件，转换为 `TerminalOutput`。
+    fn drain_events(&mut self) -> TerminalOutput {
+        let mut out = TerminalOutput::default();
+        while let Ok(event) = self.event_rx.try_recv() {
+            match event {
+                AlacEvent::PtyWrite(text) => out.pty_writes.extend_from_slice(text.as_bytes()),
+                AlacEvent::Title(title) => out.title = Some(title),
+                AlacEvent::ResetTitle => out.title = Some(String::new()),
+                AlacEvent::ClipboardStore(_, text) => out.clipboard_store = Some(text),
+                AlacEvent::ClipboardLoad(_, formatter) => out.clipboard_load.push(formatter),
+                AlacEvent::ColorRequest(index, formatter) => {
+                    let rgb = self.color_for_index(index);
+                    out.pty_writes.extend_from_slice(formatter(rgb).as_bytes());
+                }
+                AlacEvent::TextAreaSizeRequest(formatter) => {
+                    let reply = formatter(self.size.to_window_size());
+                    out.pty_writes.extend_from_slice(reply.as_bytes());
+                }
+                AlacEvent::Bell => out.bell = true,
+                // 以下事件当前无需处理：内容更新已通过 cx.notify() 触发重绘。
+                AlacEvent::MouseCursorDirty
+                | AlacEvent::CursorBlinkingChange
+                | AlacEvent::Wakeup
+                | AlacEvent::Exit
+                | AlacEvent::ChildExit(_) => {}
+            }
+        }
+        out
+    }
+
+    /// 为 OSC 颜色查询解析索引对应的 RGB 值。
+    /// index < 256 为调色板索引；256/257/258 分别为前景/背景/光标。
+    fn color_for_index(&self, index: usize) -> Rgb {
+        let (r, g, b) = if index < 16 {
+            palette_for(&self.settings.color_scheme).ansi[index]
+        } else if index < 256 {
+            ansi_indexed_rgb(index as u8)
+        } else if index == NamedColor::Foreground as usize {
+            hex_to_rgb(&self.settings.foreground_color)
+        } else if index == NamedColor::Background as usize {
+            hex_to_rgb(&self.settings.background_color)
+        } else if index == NamedColor::Cursor as usize {
+            hex_to_rgb(&self.settings.cursor_color)
+        } else {
+            hex_to_rgb(&self.settings.foreground_color)
+        };
+        Rgb { r, g, b }
     }
 
     /// 切换光标可见性（用于闪烁动画）
@@ -255,6 +399,11 @@ impl TerminalState {
 
     pub fn scroll_to_bottom(&mut self) {
         self.term.lock().scroll_display(Scroll::Bottom);
+    }
+
+    /// 清除 scrollback 历史（不影响当前屏幕，避免与远端 shell 失步）。
+    pub fn clear_scrollback(&mut self) {
+        self.term.lock().grid_mut().clear_history();
     }
 
     pub fn display_offset(&self) -> usize {
@@ -379,6 +528,116 @@ impl TerminalState {
     pub fn clear_selection(&mut self) {
         let mut term = self.term.lock();
         term.selection = None;
+    }
+
+    // ==================== 搜索 API ====================
+
+    /// 单次搜索最多收集的命中数量上限（避免超大 scrollback 卡顿）。
+    const MAX_SEARCH_MATCHES: usize = 5000;
+
+    /// 运行搜索：在整个缓冲区（含 scrollback）内收集所有命中并定位到第一个。
+    pub fn run_search(&mut self, query: &str) {
+        self.search_query = query.to_string();
+        self.search_matches.clear();
+        self.search_current = None;
+
+        if query.is_empty() {
+            return;
+        }
+        let mut regex = match RegexSearch::new(query) {
+            Ok(r) => r,
+            Err(_) => return, // 非法正则/模式：视为无命中
+        };
+
+        let last_col = Column(self.size.columns.saturating_sub(1));
+        let bottom = Line(self.size.lines as i32 - 1);
+        {
+            let term = self.term.lock();
+            let top = term.grid().topmost_line();
+            let start = AlacPoint::new(top, Column(0));
+            let end = AlacPoint::new(bottom, last_col);
+            let iter = RegexIter::new(start, end, Direction::Right, &term, &mut regex);
+            for m in iter.take(Self::MAX_SEARCH_MATCHES) {
+                self.search_matches.push(m);
+            }
+        }
+
+        if !self.search_matches.is_empty() {
+            self.search_current = Some(0);
+            self.scroll_to_current_match();
+        }
+    }
+
+    /// 定位到下一个命中。
+    pub fn search_next_match(&mut self) {
+        let n = self.search_matches.len();
+        if n == 0 {
+            return;
+        }
+        let cur = self.search_current.unwrap_or(0);
+        self.search_current = Some((cur + 1) % n);
+        self.scroll_to_current_match();
+    }
+
+    /// 定位到上一个命中。
+    pub fn search_prev_match(&mut self) {
+        let n = self.search_matches.len();
+        if n == 0 {
+            return;
+        }
+        let cur = self.search_current.unwrap_or(0);
+        self.search_current = Some((cur + n - 1) % n);
+        self.scroll_to_current_match();
+    }
+
+    /// 清除搜索状态。
+    pub fn clear_search(&mut self) {
+        self.search_query.clear();
+        self.search_matches.clear();
+        self.search_current = None;
+    }
+
+    /// 命中数量。
+    pub fn search_match_count(&self) -> usize {
+        self.search_matches.len()
+    }
+
+    /// 当前命中序号（1-based，无命中返回 0）。
+    pub fn search_current_number(&self) -> usize {
+        self.search_current.map(|i| i + 1).unwrap_or(0)
+    }
+
+    /// 命中范围切片（用于渲染高亮）。
+    pub fn search_matches(&self) -> &[Match] {
+        &self.search_matches
+    }
+
+    /// 当前命中索引（用于区分高亮当前项）。
+    pub fn search_current_index(&self) -> Option<usize> {
+        self.search_current
+    }
+
+    /// 把显示滚动到当前命中处。
+    fn scroll_to_current_match(&mut self) {
+        if let Some(idx) = self.search_current {
+            if let Some(m) = self.search_matches.get(idx) {
+                let point = *m.start();
+                self.term.lock().scroll_to_point(point);
+            }
+        }
+    }
+
+    /// 全选（含 scrollback 历史）。
+    pub fn select_all(&mut self) {
+        let columns = self.size.columns.saturating_sub(1);
+        let bottom_line = self.size.lines as i32 - 1;
+        let mut term = self.term.lock();
+        let top_line = term.grid().topmost_line();
+        let start = AlacPoint::new(top_line, Column(0));
+        let end = AlacPoint::new(Line(bottom_line), Column(columns));
+        let mut selection = Selection::new(SelectionType::Simple, start, Direction::Left);
+        selection.update(end, Direction::Right);
+        term.selection = Some(selection);
     }
 
     /// 获取当前选中的文本

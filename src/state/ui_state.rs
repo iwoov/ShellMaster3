@@ -4,9 +4,10 @@ use super::SessionState;
 use crate::components::monitor::DetailDialogState;
 use crate::components::sftp::{FileListView, PathBarEvent, PathBarState};
 use crate::services::monitor::{MonitorEvent, MonitorService, MonitorSettings};
+use crate::terminal::TerminalState;
 use gpui::prelude::*;
 use gpui::{Entity, FocusHandle};
-use gpui_component::input::InputState;
+use gpui_component::input::{InputEvent, InputState};
 use tracing::info;
 
 impl SessionState {
@@ -271,6 +272,125 @@ impl SessionState {
             input.update(cx, |state, cx| {
                 state.set_value(text, window, cx);
             });
+        }
+    }
+
+    /// 获取当前激活标签中激活终端的 TerminalState 实体
+    pub fn active_terminal_entity(&self) -> Option<Entity<TerminalState>> {
+        let tab_id = self.active_tab_id.as_ref()?;
+        let tab = self.tabs.iter().find(|t| &t.id == tab_id)?;
+        let active_id = tab.active_terminal_id.as_ref()?;
+        tab.terminals
+            .iter()
+            .find(|t| &t.id == active_id)
+            .and_then(|inst| inst.terminal.clone())
+    }
+
+    /// 确保搜索输入框已创建，并订阅其输入事件（首次调用时）。
+    pub fn ensure_search_input_created(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let lang = crate::services::storage::load_settings()
+            .map(|s| s.theme.language)
+            .unwrap_or(crate::models::settings::Language::Chinese);
+        let placeholder = crate::i18n::t(&lang, "terminal.search.placeholder");
+
+        if self.search_input.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+
+            // 订阅输入事件：Change → 实时搜索；PressEnter → 下/上一个命中
+            let subscription =
+                cx.subscribe(&input, |this, input, event: &InputEvent, cx| match event {
+                    InputEvent::Change => {
+                        let query = input.read(cx).value().to_string();
+                        if let Some(terminal) = this.active_terminal_entity() {
+                            terminal.update(cx, |t, cx| {
+                                t.run_search(&query);
+                                cx.notify();
+                            });
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::PressEnter { secondary } => {
+                        let secondary = *secondary;
+                        if let Some(terminal) = this.active_terminal_entity() {
+                            terminal.update(cx, |t, cx| {
+                                if secondary {
+                                    t.search_prev_match();
+                                } else {
+                                    t.search_next_match();
+                                }
+                                cx.notify();
+                            });
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                });
+
+            self.search_input = Some(input);
+            self.search_subscription = Some(subscription);
+        } else if let Some(input) = &self.search_input {
+            input.update(cx, |state, cx| {
+                state.set_placeholder(placeholder, window, cx);
+            });
+        }
+    }
+
+    /// 打开搜索栏并聚焦输入框；若已有关键字则重新运行搜索。
+    pub fn open_terminal_search(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.ensure_search_input_created(window, cx);
+        self.search_open = true;
+        if let Some(input) = self.search_input.clone() {
+            let query = input.read(cx).value().to_string();
+            input.update(cx, |state, cx| state.focus(window, cx));
+            if !query.is_empty() {
+                if let Some(terminal) = self.active_terminal_entity() {
+                    terminal.update(cx, |t, cx| {
+                        t.run_search(&query);
+                        cx.notify();
+                    });
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// 关闭搜索栏并清除搜索高亮，焦点回到终端。
+    pub fn close_terminal_search(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.search_open = false;
+        if let Some(terminal) = self.active_terminal_entity() {
+            terminal.update(cx, |t, cx| {
+                t.clear_search();
+                cx.notify();
+            });
+        }
+        if let Some(handle) = self.get_terminal_focus_handle() {
+            window.focus(&handle);
+        }
+        cx.notify();
+    }
+
+    /// 切换搜索栏开合。
+    pub fn toggle_terminal_search(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.search_open {
+            self.close_terminal_search(window, cx);
+        } else {
+            self.open_terminal_search(window, cx);
         }
     }
 

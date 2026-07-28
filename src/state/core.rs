@@ -19,6 +19,7 @@ impl SessionState {
             pty_channel: None,
             pty_state: TerminalPtyState::NotStarted,
             last_sent_pty_size: None,
+            title: None,
         };
         let first_terminal_id = first_terminal.id.clone();
 

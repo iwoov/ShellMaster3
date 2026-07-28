@@ -356,7 +356,7 @@ impl SessionState {
         if should_initialize {
             self.initialize_terminal(tab_id, area_width, area_height, window, cx);
         } else {
-            self.sync_terminal_size(tab_id, area_width, area_height, cx);
+            self.sync_terminal_size(tab_id, area_width, area_height, window, cx);
         }
     }
 
@@ -365,6 +365,7 @@ impl SessionState {
         tab_id: &str,
         area_width: f32,
         area_height: f32,
+        window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
         if area_width <= 0.0 || area_height <= 0.0 {
@@ -405,7 +406,17 @@ impl SessionState {
             return;
         };
 
-        let (cell_width, line_height) = {
+        // 若字体/字号/行高设置发生变化，重新测量 cell metrics，避免用旧网格绘制新字体
+        // 导致光标、选择、远端 PTY 行列数错位。
+        let settings = crate::services::storage::load_settings()
+            .unwrap_or_default()
+            .terminal;
+        let font_changed = terminal.read(cx).font_settings_changed(&settings);
+        let (cell_width, line_height) = if font_changed {
+            let (_, _, cell_width, line_height) =
+                crate::terminal::calculate_terminal_size(area_width, area_height, &settings, window, cx);
+            (cell_width, line_height)
+        } else {
             let size = terminal.read(cx).size();
             (size.cell_width, size.line_height)
         };
@@ -420,6 +431,9 @@ impl SessionState {
         let rows = new_size.lines as u32;
 
         terminal.update(cx, |t, _| {
+            if font_changed {
+                t.apply_settings(settings.clone());
+            }
             t.resize(area_width, area_height, cell_width, line_height);
         });
 
@@ -461,6 +475,7 @@ impl SessionState {
             pty_channel: None,
             pty_state: TerminalPtyState::NotStarted,
             last_sent_pty_size: None,
+            title: None,
         };
         let new_id = new_instance.id.clone();
         tab.terminals.push(new_instance);

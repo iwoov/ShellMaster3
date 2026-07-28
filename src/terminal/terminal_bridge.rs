@@ -94,14 +94,98 @@ pub fn start_pty_reader(
             match result {
                 Ok(Some(data)) if !data.is_empty() => {
                     trace!("[PTY Reader] Received {} bytes", data.len());
-                    // 将数据喂给终端
+                    // 将数据喂给终端，并收集需要回写 PTY 的字节（DA/DSR/CPR 回复、
+                    // 颜色/尺寸查询、OSC 52 剪贴板读取等）。
                     let terminal_clone = terminal.clone();
-                    let _ = async_cx.update(|cx| {
-                        terminal_clone.update(cx, |t, cx| {
-                            t.input(&data);
-                            cx.notify();
-                        });
-                    });
+                    let session_state_clone = session_state.clone();
+                    let tab_id_for_title = tab_id.clone();
+                    let terminal_id_for_title = terminal_id.clone();
+                    let write_back = async_cx
+                        .update(|cx| {
+                            let out =
+                                terminal_clone.update(cx, |t, cx| {
+                                    let out = t.input(&data);
+                                    cx.notify();
+                                    out
+                                });
+
+                            let mut bytes = out.pty_writes;
+
+                            // OSC 52：应用请求读取剪贴板并回写 PTY
+                            for formatter in &out.clipboard_load {
+                                let text = cx
+                                    .read_from_clipboard()
+                                    .and_then(|c| c.text())
+                                    .unwrap_or_default();
+                                bytes.extend_from_slice(formatter(&text).as_bytes());
+                            }
+
+                            // OSC 52：应用请求写入剪贴板
+                            if let Some(store) = out.clipboard_store {
+                                cx.write_to_clipboard(ClipboardItem::new_string(store));
+                            }
+
+                            // 响铃：按 bell_style 触发视觉闪烁（声音暂以视觉反馈代替）
+                            if out.bell {
+                                let bell_style = crate::services::storage::load_settings()
+                                    .map(|s| s.terminal.bell_style)
+                                    .unwrap_or_default();
+                                if !matches!(
+                                    bell_style,
+                                    crate::models::settings::BellStyle::None
+                                ) {
+                                    terminal_clone.update(cx, |t, cx| {
+                                        t.set_bell_flash(true);
+                                        cx.notify();
+                                    });
+                                    // 120ms 后清除闪烁（非阻塞）
+                                    let terminal_for_bell = terminal_clone.clone();
+                                    async_cx
+                                        .spawn(async move |acx| {
+                                            acx.background_executor()
+                                                .timer(std::time::Duration::from_millis(120))
+                                                .await;
+                                            let _ = acx.update(|cx| {
+                                                terminal_for_bell.update(cx, |t, cx| {
+                                                    t.set_bell_flash(false);
+                                                    cx.notify();
+                                                });
+                                            });
+                                        })
+                                        .detach();
+                                }
+                            }
+
+                            // OSC 0/2：窗口/标签标题
+                            if let Some(title) = out.title {
+                                session_state_clone.update(cx, |state, cx| {
+                                    if let Some(tab) = state
+                                        .tabs
+                                        .iter_mut()
+                                        .find(|t| t.id == tab_id_for_title)
+                                    {
+                                        if let Some(inst) = tab
+                                            .terminals
+                                            .iter_mut()
+                                            .find(|t| t.id == terminal_id_for_title)
+                                        {
+                                            inst.title =
+                                                (!title.is_empty()).then_some(title);
+                                        }
+                                    }
+                                    cx.notify();
+                                });
+                            }
+
+                            bytes
+                        })
+                        .unwrap_or_default();
+
+                    if !write_back.is_empty() {
+                        if let Err(e) = channel.write(&write_back).await {
+                            error!("[PTY Reader] Write-back error: {:?}", e);
+                        }
+                    }
                 }
                 Ok(Some(_)) => {
                     // 空数据，短暂等待后继续

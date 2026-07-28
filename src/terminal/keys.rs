@@ -54,13 +54,15 @@ pub fn named_key_to_escape(key: &str, modifiers: &Modifiers, mode: TermMode) -> 
     }
 
     match key {
-        "enter" => Some(vec![0x0d]),     // CR
-        "backspace" => Some(vec![0x7f]), // DEL
+        // 原始控制字节键：Alt 修饰时加 ESC 前缀（如 Alt+Backspace 删词、Alt+Enter）。
+        // 注意方向键/Home/End/Fn 等走 modifier_param 编码，不在此处理，避免双重编码。
+        "enter" => Some(with_alt(vec![0x0d], modifiers)), // CR
+        "backspace" => Some(with_alt(vec![0x7f], modifiers)), // DEL
         "tab" if modifiers.shift && !modifiers.alt && !modifiers.control && !modifiers.function => {
             Some(b"\x1b[Z".to_vec())
         }
         "tab" if !modifiers.alt && !modifiers.control && !modifiers.function => Some(vec![0x09]),
-        "escape" => Some(vec![0x1b]),
+        "escape" => Some(with_alt(vec![0x1b], modifiers)),
         "space" if no_terminal_modifiers(modifiers) => Some(vec![0x20]),
 
         "up" => arrow_key(b'A', modifiers, mode),
@@ -139,6 +141,18 @@ fn function_key(cmd: u8, number: Option<u8>, modifiers: &Modifiers) -> Option<Ve
         (None, Some(param)) => Some(format!("\x1b[1;{}{}", param, cmd as char).into_bytes()),
         (Some(number), None) => Some(format!("\x1b[{}~", number).into_bytes()),
         (Some(number), Some(param)) => Some(format!("\x1b[{};{}~", number, param).into_bytes()),
+    }
+}
+
+/// 为原始控制字节键加 Alt/Meta 的 ESC 前缀（若按下 Alt）。
+fn with_alt(bytes: Vec<u8>, modifiers: &Modifiers) -> Vec<u8> {
+    if modifiers.alt {
+        let mut prefixed = Vec::with_capacity(bytes.len() + 1);
+        prefixed.push(0x1b);
+        prefixed.extend_from_slice(&bytes);
+        prefixed
+    } else {
+        bytes
     }
 }
 

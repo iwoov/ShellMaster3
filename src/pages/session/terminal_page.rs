@@ -1047,93 +1047,79 @@ pub fn render_terminal_panel(
         .items_center()
         .gap_0()
         // 终端标签列表
-        .children(
-            terminals_for_toolbar
-                .iter()
-                .enumerate()
-                .map(|(_idx, term_inst)| {
-                    let term_id = term_inst.id.clone();
-                    // 优先使用应用通过 OSC 设置的标题，否则回退到翻译后的默认标签名
-                    let term_label = match term_inst.title.as_deref() {
-                        Some(title) if !title.is_empty() => title.to_string(),
-                        _ => format!("{} {}", terminal_label_prefix, term_inst.index),
-                    };
-                    let is_active = active_id_for_toolbar.as_ref() == Some(&term_id);
-                    let tab_id_for_click = tab_id_for_toolbar.clone();
-                    let session_for_click = session_state_for_toolbar.clone();
-                    let term_id_for_click = term_id.clone();
+        .children(terminals_for_toolbar.iter().map(|term_inst| {
+            let term_id = term_inst.id.clone();
+            // 使用稳定的本地编号作为标签，避免远端 OSC 标题使标签频繁变化。
+            let term_label = format!("{}{}", terminal_label_prefix, term_inst.index);
+            let is_active = active_id_for_toolbar.as_ref() == Some(&term_id);
+            let tab_id_for_click = tab_id_for_toolbar.clone();
+            let session_for_click = session_state_for_toolbar.clone();
+            let term_id_for_click = term_id.clone();
 
-                    // 检查是否可以关闭（有多个终端时才可关闭）
-                    let can_close = terminals_for_toolbar.len() > 1;
-                    let term_id_for_close = term_id.clone();
-                    let tab_id_for_close = tab_id_for_toolbar.clone();
-                    let session_for_close = session_state_for_toolbar.clone();
+            // 检查是否可以关闭（有多个终端时才可关闭）
+            let can_close = terminals_for_toolbar.len() > 1;
+            let term_id_for_close = term_id.clone();
+            let tab_id_for_close = tab_id_for_toolbar.clone();
+            let session_for_close = session_state_for_toolbar.clone();
 
+            div()
+                .id(SharedString::from(format!("terminal-tab-{}", term_id)))
+                .h_full()
+                .px_2()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap_1()
+                .cursor_pointer()
+                .when(is_active, |s| s.bg(border_color))
+                .hover(|s| s.bg(border_color.opacity(0.5)))
+                // 点击切换终端
+                .on_click(move |_, _window, cx| {
+                    session_for_click.update(cx, |state, cx| {
+                        state.activate_terminal_instance(&tab_id_for_click, &term_id_for_click);
+                        cx.notify();
+                    });
+                })
+                // 标签文本
+                .child(
                     div()
-                        .id(SharedString::from(format!("terminal-tab-{}", term_id)))
-                        .h_full()
-                        .px_2()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap_1()
-                        .cursor_pointer()
-                        .when(is_active, |s| s.bg(border_color))
-                        .hover(|s| s.bg(border_color.opacity(0.5)))
-                        // 点击切换终端
-                        .on_click(move |_, _window, cx| {
-                            session_for_click.update(cx, |state, cx| {
-                                state.activate_terminal_instance(
-                                    &tab_id_for_click,
-                                    &term_id_for_click,
-                                );
-                                cx.notify();
-                            });
-                        })
-                        // 标签文本
-                        .child(
-                            div()
-                                .text_xs()
-                                .max_w(px(220.))
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .text_color(if is_active { text_color } else { muted_color })
-                                .child(term_label),
-                        )
-                        .when(can_close && is_active, move |s| {
-                            s.child(
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "close-terminal-{}",
-                                        term_id_for_close.clone()
-                                    )))
-                                    .size(px(12.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(2.))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(Hsla::from(rgb(0xef4444)).opacity(0.3)))
-                                    .on_click({
-                                        let term_id = term_id_for_close.clone();
-                                        let tab_id = tab_id_for_close.clone();
-                                        let session = session_for_close.clone();
-                                        move |_, _window, cx| {
-                                            session.update(cx, |state, cx| {
-                                                state
-                                                    .close_terminal_instance(&tab_id, &term_id, cx);
-                                                cx.notify();
-                                            });
-                                            cx.stop_propagation();
-                                        }
-                                    })
-                                    .child(
-                                        svg().path(icons::X).size(px(8.)).text_color(muted_color),
-                                    ),
-                            )
-                        })
-                }),
-        )
+                        .text_xs()
+                        .max_w(px(220.))
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .text_color(if is_active { text_color } else { muted_color })
+                        .child(term_label),
+                )
+                .when(can_close && is_active, move |s| {
+                    s.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "close-terminal-{}",
+                                term_id_for_close.clone()
+                            )))
+                            .size(px(12.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(2.))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Hsla::from(rgb(0xef4444)).opacity(0.3)))
+                            .on_click({
+                                let term_id = term_id_for_close.clone();
+                                let tab_id = tab_id_for_close.clone();
+                                let session = session_for_close.clone();
+                                move |_, _window, cx| {
+                                    session.update(cx, |state, cx| {
+                                        state.close_terminal_instance(&tab_id, &term_id, cx);
+                                        cx.notify();
+                                    });
+                                    cx.stop_propagation();
+                                }
+                            })
+                            .child(svg().path(icons::X).size(px(8.)).text_color(muted_color)),
+                    )
+                })
+        }))
         // 添加按钮
         .child({
             let tab_id_for_add = tab_id_for_toolbar.clone();

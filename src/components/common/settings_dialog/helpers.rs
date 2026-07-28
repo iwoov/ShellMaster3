@@ -106,7 +106,6 @@ pub fn render_font_input_row(
     use gpui::Corner;
 
     let input_clone = input.clone();
-    let current_value = input.read(cx).value().to_string();
     let fonts = fonts.to_vec();
     let fonts_clone = fonts.clone();
 
@@ -127,45 +126,39 @@ pub fn render_font_input_row(
                 .child(label),
         )
         .child(
-            // 使用全宽按钮作为下拉触发器，anchor 设为 TopLeft 以便菜单在正下方显示
-            Button::new("font-dropdown")
+            div()
                 .w(px(200.))
-                .h(px(32.))
-                .outline()
-                .justify_start() // 内容左对齐
+                .flex()
+                .items_center()
+                .gap_1()
+                // 字体允许直接输入，兼容用户安装但不在推荐列表中的等宽字体。
+                .child(div().flex_1().child(Input::new(input).appearance(true)))
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between() // 两端对齐：文字左侧，图标右侧
-                        .w(px(180.)) // 明确设置宽度，减去按钮内边距
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().foreground)
-                                .child(current_value),
-                        )
+                    Button::new("font-dropdown")
+                        .w(px(32.))
+                        .h(px(32.))
+                        .outline()
                         .child(render_icon(
                             icons::CHEVRON_DOWN,
                             cx.theme().muted_foreground.into(),
-                        )),
-                )
-                .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
-                    let mut menu = menu.min_w(px(200.));
-                    for font in &fonts_clone {
-                        let font_name: SharedString = (*font).into();
-                        let input_for_click = input_clone.clone();
-                        let font_val = font.to_string();
-                        menu = menu.item(PopupMenuItem::new(font_name).on_click(
-                            move |_, window, cx| {
-                                input_for_click.update(cx, |state, cx| {
-                                    state.set_value(font_val.clone(), window, cx);
-                                });
-                            },
-                        ));
-                    }
-                    menu
-                }),
+                        ))
+                        .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
+                            let mut menu = menu.min_w(px(200.));
+                            for font in &fonts_clone {
+                                let font_name: SharedString = (*font).into();
+                                let input_for_click = input_clone.clone();
+                                let font_val = font.to_string();
+                                menu = menu.item(PopupMenuItem::new(font_name).on_click(
+                                    move |_, window, cx| {
+                                        input_for_click.update(cx, |state, cx| {
+                                            state.set_value(font_val.clone(), window, cx);
+                                        });
+                                    },
+                                ));
+                            }
+                            menu
+                        }),
+                ),
         )
 }
 
@@ -227,22 +220,49 @@ pub fn render_theme_select_row(
                         let theme_name: SharedString = (*theme).into();
                         let theme_val = theme.to_string();
                         let state_clone = state.clone();
-                        menu =
-                            menu.item(PopupMenuItem::new(theme_name).on_click(move |_, _, cx| {
+                        menu = menu.item(PopupMenuItem::new(theme_name).on_click(
+                            move |_, window, cx| {
+                                let p = crate::terminal::palette_for(&theme_val);
+                                let hex = |(r, g, b): (u8, u8, u8)| {
+                                    format!("#{:02x}{:02x}{:02x}", r, g, b)
+                                };
+                                let foreground = hex(p.foreground);
+                                let background = hex(p.background);
+                                let cursor = hex(p.cursor);
+                                let selection = hex(p.selection);
                                 state_clone.update(cx, |s, _| {
                                     s.settings.terminal.color_scheme = theme_val.clone();
                                     // 选择主题时同步前景/背景/光标/选择色
-                                    let p = crate::terminal::palette_for(&theme_val);
-                                    let hex = |(r, g, b): (u8, u8, u8)| {
-                                        format!("#{:02x}{:02x}{:02x}", r, g, b)
-                                    };
-                                    s.settings.terminal.foreground_color = hex(p.foreground);
-                                    s.settings.terminal.background_color = hex(p.background);
-                                    s.settings.terminal.cursor_color = hex(p.cursor);
-                                    s.settings.terminal.selection_color = hex(p.selection);
+                                    s.settings.terminal.foreground_color = foreground.clone();
+                                    s.settings.terminal.background_color = background.clone();
+                                    s.settings.terminal.cursor_color = cursor.clone();
+                                    s.settings.terminal.selection_color = selection.clone();
                                     s.mark_changed();
                                 });
-                            }));
+
+                                let inputs = {
+                                    let state = state_clone.read(cx);
+                                    (
+                                        state.terminal_foreground_input.clone(),
+                                        state.terminal_background_input.clone(),
+                                        state.terminal_cursor_color_input.clone(),
+                                        state.terminal_selection_color_input.clone(),
+                                    )
+                                };
+                                for (input, value) in [
+                                    (inputs.0, foreground.clone()),
+                                    (inputs.1, background.clone()),
+                                    (inputs.2, cursor.clone()),
+                                    (inputs.3, selection.clone()),
+                                ] {
+                                    if let Some(input) = input {
+                                        input.update(cx, |input, cx| {
+                                            input.set_value(value.clone(), window, cx);
+                                        });
+                                    }
+                                }
+                            },
+                        ));
                     }
                     menu
                 }),

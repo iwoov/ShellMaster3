@@ -85,8 +85,11 @@ impl SessionState {
         );
 
         // 初始化终端尺寸
+        let content_width =
+            crate::terminal::terminal_content_width(area_width, settings.padding, cell_width);
         terminal_state.update(cx, |t, _| {
-            t.resize(area_width, area_height, cell_width, line_height);
+            t.apply_settings(settings.clone());
+            t.resize(content_width, area_height, cell_width, line_height);
         });
 
         // 存储终端状态到对应的终端实例
@@ -104,19 +107,51 @@ impl SessionState {
             }
         }
 
-        // 启动光标闪烁定时器 (500ms 间隔)
-        if is_new_terminal_state && settings.cursor_blink {
+        // 每个新终端只启动一个可终止的光标任务；间隔与开关从实时设置读取。
+        if is_new_terminal_state {
             let terminal_for_blink = terminal_state.clone();
+            let session_for_blink = cx.entity().clone();
+            let tab_for_blink = tab_id_owned.clone();
+            let terminal_id_for_blink = terminal_instance_id.clone();
             cx.to_async()
                 .spawn(async move |async_cx| {
                     loop {
-                        // 等待 500ms
+                        let blink_state = async_cx
+                            .update(|cx| {
+                                let still_present = session_for_blink
+                                    .read(cx)
+                                    .tabs
+                                    .iter()
+                                    .find(|tab| tab.id == tab_for_blink)
+                                    .map(|tab| {
+                                        tab.terminals
+                                            .iter()
+                                            .any(|terminal| terminal.id == terminal_id_for_blink)
+                                    })
+                                    .unwrap_or(false);
+                                still_present.then(|| {
+                                    let terminal = terminal_for_blink.read(cx);
+                                    (
+                                        terminal.cursor_should_blink(),
+                                        terminal.cursor_blink_interval_ms(),
+                                    )
+                                })
+                            })
+                            .ok()
+                            .flatten();
+                        let Some((should_blink, interval_ms)) = blink_state else {
+                            break;
+                        };
+
                         async_cx
                             .background_executor()
-                            .timer(std::time::Duration::from_millis(500))
+                            .timer(std::time::Duration::from_millis(interval_ms as u64))
                             .await;
 
-                        // 切换光标可见性
+                        if !should_blink {
+                            continue;
+                        }
+
                         let result = async_cx.update(|cx| {
                             terminal_for_blink.update(cx, |t, cx| {
                                 t.toggle_cursor_visibility();
@@ -134,7 +169,8 @@ impl SessionState {
         }
 
         // 创建 PTY 请求（使用已计算的 cols/rows）
-        let pty_request = crate::terminal::create_pty_request(cols, rows, area_width, area_height);
+        let pty_request =
+            crate::terminal::create_pty_request(cols, rows, cell_width, line_height, &settings);
 
         // 异步创建 PTY channel (使用 App::spawn)
         let terminal_for_task = terminal_state.clone();
@@ -316,13 +352,9 @@ impl SessionState {
         }
 
         let bytes: &'static [u8] = if focused { b"\x1b[I" } else { b"\x1b[O" };
-        cx.to_async()
-            .spawn(async move |_async_cx| {
-                if let Err(e) = channel.write(bytes).await {
-                    error!("[Terminal] Failed to send focus report: {:?}", e);
-                }
-            })
-            .detach();
+        if let Err(e) = channel.queue_write(bytes.to_vec()) {
+            error!("[Terminal] Failed to send focus report: {:?}", e);
+        }
     }
 
     /// 将本地终端尺寸与远端 PTY 尺寸同步到给定像素区域（用于窗口/布局变化时的自动 resize）
@@ -411,18 +443,31 @@ impl SessionState {
         let settings = crate::services::storage::load_settings()
             .unwrap_or_default()
             .terminal;
-        let font_changed = terminal.read(cx).font_settings_changed(&settings);
+        let (font_changed, settings_changed) = {
+            let terminal_read = terminal.read(cx);
+            (
+                terminal_read.font_settings_changed(&settings),
+                terminal_read.settings_changed(&settings),
+            )
+        };
         let (cell_width, line_height) = if font_changed {
-            let (_, _, cell_width, line_height) =
-                crate::terminal::calculate_terminal_size(area_width, area_height, &settings, window, cx);
+            let (_, _, cell_width, line_height) = crate::terminal::calculate_terminal_size(
+                area_width,
+                area_height,
+                &settings,
+                window,
+                cx,
+            );
             (cell_width, line_height)
         } else {
             let size = terminal.read(cx).size();
             (size.cell_width, size.line_height)
         };
 
+        let content_width =
+            crate::terminal::terminal_content_width(area_width, settings.padding, cell_width);
         let new_size = crate::terminal::TerminalSize::from_pixels(
-            area_width,
+            content_width,
             area_height,
             cell_width,
             line_height,
@@ -431,10 +476,10 @@ impl SessionState {
         let rows = new_size.lines as u32;
 
         terminal.update(cx, |t, _| {
-            if font_changed {
+            if settings_changed {
                 t.apply_settings(settings.clone());
             }
-            t.resize(area_width, area_height, cell_width, line_height);
+            t.resize(content_width, area_height, cell_width, line_height);
         });
 
         let Some(channel) = channel else {
@@ -450,14 +495,11 @@ impl SessionState {
         }
 
         instance.last_sent_pty_size = Some((cols, rows));
-        let channel_for_resize = channel.clone();
-        cx.to_async()
-            .spawn(async move |_async_cx| {
-                if let Err(e) = channel_for_resize.resize(cols, rows).await {
-                    error!("[Terminal] Failed to resize PTY: {:?}", e);
-                }
-            })
-            .detach();
+        let pix_width = (cols as f32 * cell_width) as u32;
+        let pix_height = (rows as f32 * line_height) as u32;
+        if let Err(e) = channel.resize(cols, rows, pix_width, pix_height) {
+            error!("[Terminal] Failed to queue PTY resize: {:?}", e);
+        }
     }
 
     /// 添加新的终端实例到指定会话标签
@@ -541,6 +583,28 @@ impl SessionState {
                 "[Terminal] Activated terminal instance {} in tab {}",
                 terminal_id, tab_id
             );
+        }
+    }
+
+    /// 重新启动一个已结束或失败的远端 shell，保留当前终端历史。
+    pub fn restart_terminal_instance(&mut self, tab_id: &str, terminal_id: &str) {
+        let Some(instance) = self
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| {
+                tab.terminals
+                    .iter_mut()
+                    .find(|terminal| terminal.id == terminal_id)
+            })
+        else {
+            return;
+        };
+
+        if matches!(instance.pty_state, TerminalPtyState::Failed(_)) {
+            instance.pty_channel = None;
+            instance.last_sent_pty_size = None;
+            instance.pty_state = TerminalPtyState::NotStarted;
         }
     }
 

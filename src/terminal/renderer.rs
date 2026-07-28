@@ -12,7 +12,6 @@ use crate::models::settings::{CursorStyle, TerminalSettings};
 use crate::terminal::batched_run::layout_grid;
 use crate::terminal::colors::hex_to_hsla;
 use crate::terminal::state::{EventProxy, TerminalSize};
-use crate::terminal::TERMINAL_PADDING_LEFT;
 
 /// 渲染终端内容（Canvas 方式）
 pub fn render_terminal_view(
@@ -53,6 +52,7 @@ pub fn render_terminal_view(
     let font_family = settings.font_family.clone();
     let font_size = settings.font_size as f32;
     let ligatures = settings.ligatures;
+    let padding = settings.padding as f32;
     // 依据应用上报的形状（DECSCUSR）决定绘制样式：Block 时沿用用户设置。
     let cursor_kind = draw_cursor_kind(cursor.shape, &settings.cursor_style);
 
@@ -71,8 +71,7 @@ pub fn render_terminal_view(
                 // Paint 阶段：绘制内容
                 move |bounds, layout, window, cx| {
                     // 应用左侧 padding 偏移
-                    let origin =
-                        Point::new(bounds.origin.x + px(TERMINAL_PADDING_LEFT), bounds.origin.y);
+                    let origin = Point::new(bounds.origin.x + px(padding), bounds.origin.y);
 
                     // 1. 绘制背景矩形
                     for rect in &layout.background_rects {
@@ -193,14 +192,20 @@ fn paint_cursor(
             let w = px(cell_width);
             let h = px(line_height);
             // 上
-            window.paint_quad(fill(Bounds::new(Point::new(x, y), Size::new(w, t)), cursor_color));
+            window.paint_quad(fill(
+                Bounds::new(Point::new(x, y), Size::new(w, t)),
+                cursor_color,
+            ));
             // 下
             window.paint_quad(fill(
                 Bounds::new(Point::new(x, y + h - t), Size::new(w, t)),
                 cursor_color,
             ));
             // 左
-            window.paint_quad(fill(Bounds::new(Point::new(x, y), Size::new(t, h)), cursor_color));
+            window.paint_quad(fill(
+                Bounds::new(Point::new(x, y), Size::new(t, h)),
+                cursor_color,
+            ));
             // 右
             window.paint_quad(fill(
                 Bounds::new(Point::new(x + w - t, y), Size::new(t, h)),

@@ -66,12 +66,37 @@ pub fn start_reconnection(
     tab_id: String,
     terminal_id: String,
     session_state: Entity<SessionState>,
-    cx: &App,
+    cx: &mut App,
 ) {
     let settings = crate::services::storage::load_settings().unwrap_or_default();
     let max_attempts = settings.connection.reconnect_attempts;
     let interval_secs = settings.connection.reconnect_interval_secs;
     let server_label = server.label.clone();
+
+    // 同一会话只允许一个重连协调器，避免多个 PTY reader 同时建立重复连接。
+    let already_reconnecting = session_state
+        .read(cx)
+        .tabs
+        .iter()
+        .find(|tab| tab.id == tab_id)
+        .map(|tab| matches!(tab.status, SessionStatus::Reconnecting { .. }))
+        .unwrap_or(true);
+    if already_reconnecting {
+        debug!(
+            "[Reconnect] Reconnection already active or tab was closed: {}",
+            tab_id
+        );
+        return;
+    }
+    session_state.update(cx, |state, cx| {
+        if let Some(tab) = state.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.status = SessionStatus::Reconnecting {
+                attempt: 1,
+                max_attempts,
+            };
+        }
+        cx.notify();
+    });
 
     info!(
         "[Reconnect] Starting auto-reconnect for {} (max {} attempts, {}s interval)",
@@ -82,6 +107,19 @@ pub fn start_reconnection(
         let mut attempt = 1u32;
 
         while attempt <= max_attempts {
+            let tab_exists = async_cx
+                .update(|cx| {
+                    session_state
+                        .read(cx)
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.id == tab_id)
+                })
+                .unwrap_or(false);
+            if !tab_exists {
+                debug!("[Reconnect] Tab {} closed; cancel reconnect loop", tab_id);
+                return;
+            }
             // 更新 UI 显示当前重连尝试
             let tab_id_clone = tab_id.clone();
             let _ = async_cx.update(|cx| {

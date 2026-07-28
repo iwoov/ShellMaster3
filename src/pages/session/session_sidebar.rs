@@ -663,22 +663,16 @@ fn render_command_node(
                             .text_color(cx.theme().foreground)
                             .child(execute_label.clone())
                     })
-                    .on_click(move |_, _window, cx| {
+                    .on_click(move |_, _window, _cx| {
                         if let Some(channel) = &pty_for_menu {
                             let cmd = cmd_for_execute.clone();
                             let channel = Arc::clone(channel);
                             debug!("[ContextMenu] Executing command: {}", cmd);
-                            cx.spawn(async move |_| {
-                                let mut cmd_with_newline = cmd.into_bytes();
-                                cmd_with_newline.push(0x0d); // CR
-                                if let Err(e) = channel.write(&cmd_with_newline).await {
-                                    tracing::error!(
-                                        "[ContextMenu] Failed to send command: {:?}",
-                                        e
-                                    );
-                                }
-                            })
-                            .detach();
+                            let mut cmd_with_newline = cmd.into_bytes();
+                            cmd_with_newline.push(0x0d); // CR
+                            if let Err(e) = channel.queue_write(cmd_with_newline) {
+                                tracing::error!("[ContextMenu] Failed to send command: {:?}", e);
+                            }
                         }
                     })
                 })

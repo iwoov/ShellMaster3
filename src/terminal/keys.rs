@@ -19,9 +19,19 @@ pub fn keystroke_to_escape(
         return Some(bytes);
     }
 
-    // 检查 Ctrl 组合键
+    // Windows/Linux 的 AltGr 通常表现为 Ctrl+Alt；如果平台已经给出了与逻辑键
+    // 不同的文本字符，应优先发送该字符，避免把 AltGr+Q("@")误发为 Ctrl-Q。
+    if modifiers.control && modifiers.alt {
+        if let Some(key_char) = keystroke.key_char.as_ref() {
+            if !key_char.eq_ignore_ascii_case(&keystroke.key) {
+                return Some(key_char.as_bytes().to_vec());
+            }
+        }
+    }
+
+    // 检查 Ctrl 组合键；Ctrl+Alt 使用 ESC 前缀保留 Meta 语义。
     if modifiers.control {
-        return ctrl_key_to_bytes(&keystroke.key);
+        return ctrl_key_to_bytes(&keystroke.key).map(|bytes| with_alt(bytes, modifiers));
     }
 
     // 检查 Alt/Meta 组合键 (发送 ESC 前缀)
@@ -232,5 +242,62 @@ fn alt_key_to_bytes(key: &str) -> Option<Vec<u8>> {
         Some(bytes)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keystroke(key: &str, key_char: Option<&str>, modifiers: Modifiers) -> Keystroke {
+        Keystroke {
+            key: key.to_string(),
+            key_char: key_char.map(ToString::to_string),
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn altgr_prefers_composed_character() {
+        let modifiers = Modifiers {
+            control: true,
+            alt: true,
+            ..Default::default()
+        };
+        let key = keystroke("q", Some("@"), modifiers);
+        assert_eq!(
+            keystroke_to_escape(&key, &modifiers, TermMode::empty()),
+            Some(b"@".to_vec())
+        );
+    }
+
+    #[test]
+    fn ctrl_alt_keeps_meta_prefix_for_plain_key() {
+        let modifiers = Modifiers {
+            control: true,
+            alt: true,
+            ..Default::default()
+        };
+        let key = keystroke("a", Some("a"), modifiers);
+        assert_eq!(
+            keystroke_to_escape(&key, &modifiers, TermMode::empty()),
+            Some(vec![0x1b, 0x01])
+        );
+    }
+
+    #[test]
+    fn bracketed_paste_wraps_payload() {
+        assert_eq!(
+            paste_to_bytes("echo ok", TermMode::BRACKETED_PASTE),
+            b"\x1b[200~echo ok\x1b[201~".to_vec()
+        );
+    }
+
+    #[test]
+    fn application_cursor_changes_arrow_prefix() {
+        assert_eq!(
+            named_key_to_escape("up", &Modifiers::default(), TermMode::APP_CURSOR),
+            Some(b"\x1bOA".to_vec())
+        );
     }
 }

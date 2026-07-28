@@ -18,8 +18,7 @@ pub fn mouse_mode_enabled(mode: TermMode) -> bool {
 
 /// 是否应上报鼠标移动：1003（任意移动）总是上报；1002（拖动）仅在按住按钮时上报。
 pub fn should_report_motion(mode: TermMode, button_pressed: bool) -> bool {
-    mode.contains(TermMode::MOUSE_MOTION)
-        || (button_pressed && mode.contains(TermMode::MOUSE_DRAG))
+    mode.contains(TermMode::MOUSE_MOTION) || (button_pressed && mode.contains(TermMode::MOUSE_DRAG))
 }
 
 /// 将一次鼠标事件编码为上报字节。
@@ -64,5 +63,37 @@ pub fn mouse_report_bytes(
         bytes.push(cx_byte as u8);
         bytes.push(cy_byte as u8);
         Some(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sgr_mouse_encodes_position_and_release() {
+        let mode = TermMode::MOUSE_MODE | TermMode::SGR_MOUSE;
+        assert_eq!(
+            mouse_report_bytes(MOUSE_LEFT, false, false, 12, 4, &Modifiers::default(), mode,),
+            Some(b"\x1b[<0;12;4M".to_vec())
+        );
+        assert_eq!(
+            mouse_report_bytes(MOUSE_LEFT, false, true, 12, 4, &Modifiers::default(), mode,),
+            Some(b"\x1b[<0;12;4m".to_vec())
+        );
+    }
+
+    #[test]
+    fn mouse_reporting_is_disabled_without_mode() {
+        assert!(mouse_report_bytes(
+            MOUSE_LEFT,
+            false,
+            false,
+            1,
+            1,
+            &Modifiers::default(),
+            TermMode::empty(),
+        )
+        .is_none());
     }
 }

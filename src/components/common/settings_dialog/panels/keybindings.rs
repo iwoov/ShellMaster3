@@ -30,12 +30,12 @@ fn get_terminal_keybindings() -> Vec<KeyBindingItem> {
         KeyBindingItem {
             action: "settings.keybindings.copy",
             shortcut_mac: "⌘C",
-            shortcut_other: "Ctrl+C",
+            shortcut_other: "Ctrl+Shift+C",
         },
         KeyBindingItem {
             action: "settings.keybindings.paste",
             shortcut_mac: "⌘V",
-            shortcut_other: "Ctrl+V",
+            shortcut_other: "Ctrl+Shift+V",
         },
     ]
 }

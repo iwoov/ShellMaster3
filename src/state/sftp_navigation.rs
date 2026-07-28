@@ -889,18 +889,11 @@ impl SessionState {
         // 构建 cd 命令（处理路径中的特殊字符）
         let command = format!("cd '{}'\n", path.replace("'", "'\\''"));
 
-        // 在 tokio 运行时中发送命令
-        let ssh_manager = crate::ssh::manager::SshManager::global();
-        ssh_manager.runtime().spawn(async move {
-            match pty_channel.write(command.as_bytes()).await {
-                Ok(()) => {
-                    info!("[SFTP] cd command sent successfully");
-                }
-                Err(e) => {
-                    error!("[SFTP] Failed to send cd command: {:?}", e);
-                }
-            }
-        });
+        // 通过 PTY 的有序命令队列发送，避免与 resize/close 乱序。
+        match pty_channel.queue_write(command.into_bytes()) {
+            Ok(()) => info!("[SFTP] cd command queued successfully"),
+            Err(e) => error!("[SFTP] Failed to queue cd command: {:?}", e),
+        }
 
         cx.notify();
     }

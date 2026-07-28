@@ -122,6 +122,18 @@ pub struct SettingsDialogState {
     pub terminal_font_size_input: Option<Entity<InputState>>,
     pub terminal_line_height_input: Option<Entity<InputState>>,
     pub scrollback_lines_input: Option<Entity<InputState>>,
+    pub terminal_blink_interval_input: Option<Entity<InputState>>,
+    pub terminal_background_opacity_input: Option<Entity<InputState>>,
+    pub terminal_padding_input: Option<Entity<InputState>>,
+    pub terminal_scroll_multiplier_input: Option<Entity<InputState>>,
+    pub terminal_foreground_input: Option<Entity<InputState>>,
+    pub terminal_background_input: Option<Entity<InputState>>,
+    pub terminal_cursor_color_input: Option<Entity<InputState>>,
+    pub terminal_selection_color_input: Option<Entity<InputState>>,
+    pub terminal_word_separators_input: Option<Entity<InputState>>,
+    pub terminal_term_type_input: Option<Entity<InputState>>,
+    pub terminal_default_shell_input: Option<Entity<InputState>>,
+    pub terminal_shell_args_input: Option<Entity<InputState>>,
 
     // ============ 连接设置输入 ============
     pub default_port_input: Option<Entity<InputState>>,
@@ -172,6 +184,16 @@ pub struct SettingsDialogState {
     pub ai_context_lines_input: Option<Entity<InputState>>,
 }
 
+fn normalize_hex_color(value: &str) -> Option<String> {
+    let value = value.trim();
+    let digits = value.strip_prefix('#').unwrap_or(value);
+    if digits.len() == 6 && digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(format!("#{}", digits.to_ascii_lowercase()))
+    } else {
+        None
+    }
+}
+
 impl Default for SettingsDialogState {
     fn default() -> Self {
         let settings = storage::load_settings().unwrap_or_default();
@@ -188,6 +210,18 @@ impl Default for SettingsDialogState {
             terminal_font_size_input: None,
             terminal_line_height_input: None,
             scrollback_lines_input: None,
+            terminal_blink_interval_input: None,
+            terminal_background_opacity_input: None,
+            terminal_padding_input: None,
+            terminal_scroll_multiplier_input: None,
+            terminal_foreground_input: None,
+            terminal_background_input: None,
+            terminal_cursor_color_input: None,
+            terminal_selection_color_input: None,
+            terminal_word_separators_input: None,
+            terminal_term_type_input: None,
+            terminal_default_shell_input: None,
+            terminal_shell_args_input: None,
             // 连接
             default_port_input: None,
             connection_timeout_input: None,
@@ -286,6 +320,18 @@ impl SettingsDialogState {
         self.terminal_font_size_input = None;
         self.terminal_line_height_input = None;
         self.scrollback_lines_input = None;
+        self.terminal_blink_interval_input = None;
+        self.terminal_background_opacity_input = None;
+        self.terminal_padding_input = None;
+        self.terminal_scroll_multiplier_input = None;
+        self.terminal_foreground_input = None;
+        self.terminal_background_input = None;
+        self.terminal_cursor_color_input = None;
+        self.terminal_selection_color_input = None;
+        self.terminal_word_separators_input = None;
+        self.terminal_term_type_input = None;
+        self.terminal_default_shell_input = None;
+        self.terminal_shell_args_input = None;
         self.default_port_input = None;
         self.connection_timeout_input = None;
         self.keepalive_interval_input = None;
@@ -370,6 +416,71 @@ impl SettingsDialogState {
             self.scrollback_lines_input =
                 Some(create_int_number_input(value, 100, 100000, 100, window, cx));
         }
+        if self.terminal_blink_interval_input.is_none() {
+            let value = self.settings.terminal.cursor_blink_interval_ms.to_string();
+            self.terminal_blink_interval_input =
+                Some(create_int_number_input(value, 100, 2000, 50, window, cx));
+        }
+        if self.terminal_background_opacity_input.is_none() {
+            let value = self.settings.terminal.background_opacity.to_string();
+            self.terminal_background_opacity_input =
+                Some(create_int_number_input(value, 0, 100, 5, window, cx));
+        }
+        if self.terminal_padding_input.is_none() {
+            let value = self.settings.terminal.padding.to_string();
+            self.terminal_padding_input =
+                Some(create_int_number_input(value, 0, 32, 1, window, cx));
+        }
+        if self.terminal_scroll_multiplier_input.is_none() {
+            let value = format!("{:.1}", self.settings.terminal.scroll_multiplier);
+            self.terminal_scroll_multiplier_input =
+                Some(create_float_number_input(value, 0.1, 10.0, 0.1, window, cx));
+        }
+
+        macro_rules! ensure_terminal_text_input {
+            ($field:ident, $value:expr) => {
+                if self.$field.is_none() {
+                    let value = $value;
+                    self.$field = Some(cx.new(|cx| {
+                        let mut state = InputState::new(window, cx);
+                        state.set_value(value, window, cx);
+                        state
+                    }));
+                }
+            };
+        }
+        ensure_terminal_text_input!(
+            terminal_foreground_input,
+            self.settings.terminal.foreground_color.clone()
+        );
+        ensure_terminal_text_input!(
+            terminal_background_input,
+            self.settings.terminal.background_color.clone()
+        );
+        ensure_terminal_text_input!(
+            terminal_cursor_color_input,
+            self.settings.terminal.cursor_color.clone()
+        );
+        ensure_terminal_text_input!(
+            terminal_selection_color_input,
+            self.settings.terminal.selection_color.clone()
+        );
+        ensure_terminal_text_input!(
+            terminal_word_separators_input,
+            self.settings.terminal.word_separators.clone()
+        );
+        ensure_terminal_text_input!(
+            terminal_term_type_input,
+            self.settings.terminal.term_type.clone()
+        );
+        ensure_terminal_text_input!(
+            terminal_default_shell_input,
+            self.settings.terminal.default_shell.clone()
+        );
+        ensure_terminal_text_input!(
+            terminal_shell_args_input,
+            self.settings.terminal.shell_args.clone()
+        );
 
         // 连接设置
         if self.default_port_input.is_none() {
@@ -735,8 +846,55 @@ impl SettingsDialogState {
         }
         if let Some(input) = &self.scrollback_lines_input {
             if let Ok(v) = input.read(cx).value().parse::<u32>() {
-                self.settings.terminal.scrollback_lines = v;
+                self.settings.terminal.scrollback_lines = v.clamp(100, 100_000);
             }
+        }
+        if let Some(input) = &self.terminal_blink_interval_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.terminal.cursor_blink_interval_ms = v.clamp(100, 2_000);
+            }
+        }
+        if let Some(input) = &self.terminal_background_opacity_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.terminal.background_opacity = v.min(100);
+            }
+        }
+        if let Some(input) = &self.terminal_padding_input {
+            if let Ok(v) = input.read(cx).value().parse::<u32>() {
+                self.settings.terminal.padding = v.min(32);
+            }
+        }
+        if let Some(input) = &self.terminal_scroll_multiplier_input {
+            if let Ok(v) = input.read(cx).value().parse::<f32>() {
+                self.settings.terminal.scroll_multiplier = v.clamp(0.1, 10.0);
+            }
+        }
+        macro_rules! sync_terminal_text_input {
+            ($field:ident, $target:ident) => {
+                if let Some(input) = &self.$field {
+                    self.settings.terminal.$target = input.read(cx).value().to_string();
+                }
+            };
+        }
+        macro_rules! sync_terminal_color_input {
+            ($field:ident, $target:ident) => {
+                if let Some(input) = &self.$field {
+                    if let Some(color) = normalize_hex_color(&input.read(cx).value()) {
+                        self.settings.terminal.$target = color;
+                    }
+                }
+            };
+        }
+        sync_terminal_color_input!(terminal_foreground_input, foreground_color);
+        sync_terminal_color_input!(terminal_background_input, background_color);
+        sync_terminal_color_input!(terminal_cursor_color_input, cursor_color);
+        sync_terminal_color_input!(terminal_selection_color_input, selection_color);
+        sync_terminal_text_input!(terminal_word_separators_input, word_separators);
+        sync_terminal_text_input!(terminal_term_type_input, term_type);
+        sync_terminal_text_input!(terminal_default_shell_input, default_shell);
+        sync_terminal_text_input!(terminal_shell_args_input, shell_args);
+        if self.settings.terminal.term_type.trim().is_empty() {
+            self.settings.terminal.term_type = "xterm-256color".to_string();
         }
 
         // 连接

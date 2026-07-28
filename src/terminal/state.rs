@@ -17,7 +17,7 @@ use alacritty_terminal::vte::ansi::{NamedColor, Rgb};
 use alacritty_terminal::Term;
 use gpui::{px, Pixels, ScrollWheelEvent, TouchPhase};
 
-use crate::models::settings::TerminalSettings;
+use crate::models::settings::{FontWeight, Osc52Policy, TerminalSettings};
 use crate::terminal::colors::{ansi_indexed_rgb, hex_to_rgb, palette_for};
 use crate::terminal::TerminalScrollHandle;
 
@@ -38,6 +38,39 @@ pub struct TerminalOutput {
     pub clipboard_store: Option<String>,
     /// 应用请求读取系统剪贴板并回写 PTY（OSC 52 load）。
     pub clipboard_load: Vec<ClipboardLoadRequest>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn term_config_enforces_scrollback_cap_and_word_separators() {
+        let mut settings = TerminalSettings::default();
+        settings.scrollback_lines = u32::MAX;
+        settings.word_separators = " ,".to_string();
+        let config = TerminalState::term_config(&settings);
+        assert_eq!(
+            config.scrolling_history,
+            TerminalState::MAX_SCROLLBACK_LINES
+        );
+        assert_eq!(config.semantic_escape_chars, " ,");
+    }
+
+    #[test]
+    fn osc52_policy_maps_to_alacritty_security_mode() {
+        let mut settings = TerminalSettings::default();
+        settings.osc52_policy = Osc52Policy::Disabled;
+        assert_eq!(
+            TerminalState::term_config(&settings).osc52,
+            alacritty_terminal::term::Osc52::Disabled
+        );
+        settings.osc52_policy = Osc52Policy::ReadWrite;
+        assert_eq!(
+            TerminalState::term_config(&settings).osc52,
+            alacritty_terminal::term::Osc52::CopyPaste
+        );
+    }
 }
 
 /// 终端尺寸信息
@@ -146,12 +179,14 @@ pub struct TerminalState {
     scroll_px: Pixels,
     /// 光标是否可见（用于闪烁动画）
     cursor_visible: bool,
+    /// 远端应用通过 DECSCUSR 显式请求的闪烁状态。
+    cursor_blink_override: Option<bool>,
     /// 终端显示区域在窗口中的偏移原点
     bounds_origin: (f32, f32),
     /// alacritty 事件接收端（PtyWrite/Title/Bell/剪贴板/颜色查询等）
     event_rx: Receiver<AlacEvent>,
-    /// 上次测量字体的指纹（family, size, line_height），用于检测设置变化后重新测量。
-    font_fingerprint: (String, u32, f32),
+    /// 上次测量字体的指纹，用于检测设置变化后重新测量。
+    font_fingerprint: (String, u32, f32, FontWeight),
     /// 视觉响铃闪烁状态（短暂点亮后清除）。
     bell_flash: bool,
     /// 当前搜索关键字。
@@ -171,13 +206,7 @@ impl TerminalState {
         let size = TerminalSize::default();
 
         // 创建终端配置
-        let mut config = TermConfig::default();
-        config.scrolling_history =
-            (settings.scrollback_lines as usize).min(Self::MAX_SCROLLBACK_LINES);
-        // 双击选词的分隔字符（word_separators 设置）
-        if !settings.word_separators.is_empty() {
-            config.semantic_escape_chars = settings.word_separators.clone();
-        }
+        let config = Self::term_config(&settings);
 
         // 创建事件通道与代理
         let (tx, event_rx) = std::sync::mpsc::channel();
@@ -198,6 +227,7 @@ impl TerminalState {
             settings.font_family.clone(),
             settings.font_size,
             settings.line_height,
+            settings.font_weight.clone(),
         );
 
         Self {
@@ -208,6 +238,7 @@ impl TerminalState {
             scroll_handle,
             scroll_px: px(0.),
             cursor_visible: true,
+            cursor_blink_override: None,
             bounds_origin: (0.0, 0.0),
             event_rx,
             font_fingerprint,
@@ -216,6 +247,21 @@ impl TerminalState {
             search_matches: Vec::new(),
             search_current: None,
         }
+    }
+
+    fn term_config(settings: &TerminalSettings) -> TermConfig {
+        let mut config = TermConfig::default();
+        config.scrolling_history =
+            (settings.scrollback_lines as usize).min(Self::MAX_SCROLLBACK_LINES);
+        if !settings.word_separators.is_empty() {
+            config.semantic_escape_chars = settings.word_separators.clone();
+        }
+        config.osc52 = match settings.osc52_policy {
+            Osc52Policy::Disabled => alacritty_terminal::term::Osc52::Disabled,
+            Osc52Policy::WriteOnly => alacritty_terminal::term::Osc52::OnlyCopy,
+            Osc52Policy::ReadWrite => alacritty_terminal::term::Osc52::CopyPaste,
+        };
+        config
     }
 
     /// 获取终端实例的锁
@@ -233,14 +279,35 @@ impl TerminalState {
         &self.size
     }
 
-    /// 检测字体相关设置（family/size/line_height）是否相对上次测量发生变化。
+    /// 检测会影响单元格测量的字体设置是否发生变化。
     pub fn font_settings_changed(&self, settings: &TerminalSettings) -> bool {
         self.font_fingerprint
             != (
                 settings.font_family.clone(),
                 settings.font_size,
                 settings.line_height,
+                settings.font_weight.clone(),
             )
+    }
+
+    pub fn settings_changed(&self, settings: &TerminalSettings) -> bool {
+        &self.settings != settings
+    }
+
+    pub fn settings(&self) -> &TerminalSettings {
+        &self.settings
+    }
+
+    pub fn horizontal_padding(&self) -> f32 {
+        self.settings.padding as f32
+    }
+
+    pub fn cursor_should_blink(&self) -> bool {
+        self.settings.cursor_blink && self.cursor_blink_override.unwrap_or(true)
+    }
+
+    pub fn cursor_blink_interval_ms(&self) -> u32 {
+        self.settings.cursor_blink_interval_ms.clamp(100, 2_000)
     }
 
     /// 设置视觉响铃闪烁状态。
@@ -259,8 +326,13 @@ impl TerminalState {
             settings.font_family.clone(),
             settings.font_size,
             settings.line_height,
+            settings.font_weight.clone(),
         );
+        self.term.lock().set_options(Self::term_config(&settings));
         self.settings = settings;
+        if !self.cursor_should_blink() {
+            self.cursor_visible = true;
+        }
     }
 
     /// 设置终端显示区域在窗口中的偏移原点
@@ -305,6 +377,9 @@ impl TerminalState {
         {
             let mut term = self.term.lock();
             self.parser.advance(&mut *term, data);
+            if self.settings.scroll_on_output {
+                term.scroll_display(Scroll::Bottom);
+            }
         }
         self.drain_events()
     }
@@ -334,9 +409,12 @@ impl TerminalState {
                     out.pty_writes.extend_from_slice(reply.as_bytes());
                 }
                 AlacEvent::Bell => out.bell = true,
+                AlacEvent::CursorBlinkingChange => {
+                    self.cursor_blink_override = Some(self.term.lock().cursor_style().blinking);
+                    self.cursor_visible = true;
+                }
                 // 以下事件当前无需处理：内容更新已通过 cx.notify() 触发重绘。
                 AlacEvent::MouseCursorDirty
-                | AlacEvent::CursorBlinkingChange
                 | AlacEvent::Wakeup
                 | AlacEvent::Exit
                 | AlacEvent::ChildExit(_) => {}
@@ -366,7 +444,11 @@ impl TerminalState {
 
     /// 切换光标可见性（用于闪烁动画）
     pub fn toggle_cursor_visibility(&mut self) {
-        self.cursor_visible = !self.cursor_visible;
+        if self.cursor_should_blink() {
+            self.cursor_visible = !self.cursor_visible;
+        } else {
+            self.cursor_visible = true;
+        }
     }
 
     /// 获取光标可见状态

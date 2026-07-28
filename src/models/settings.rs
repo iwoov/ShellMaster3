@@ -509,7 +509,20 @@ pub enum BellStyle {
     Sound,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// 远端 OSC 52 对系统剪贴板的访问权限。
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub enum Osc52Policy {
+    /// 禁止远端读取和写入系统剪贴板。
+    Disabled,
+    /// 仅允许远端把选中文本写入系统剪贴板（安全默认值）。
+    #[default]
+    WriteOnly,
+    /// 允许远端读写系统剪贴板。
+    ReadWrite,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct TerminalSettings {
     // 字体
     pub font_family: String,
@@ -526,18 +539,26 @@ pub struct TerminalSettings {
     // 显示
     pub cursor_style: CursorStyle,
     pub cursor_blink: bool,
+    pub cursor_blink_interval_ms: u32,
     pub background_opacity: u32,
     pub scrollback_lines: u32,
+    pub padding: u32,
     // 行为
     pub copy_on_select: bool,
     pub right_click_paste: bool,
     pub trim_trailing_whitespace: bool,
     pub scroll_on_output: bool,
+    pub scroll_multiplier: f32,
     pub bell_style: BellStyle,
     pub word_separators: String,
+    pub osc52_policy: Osc52Policy,
     // Shell
+    pub term_type: String,
     pub default_shell: String,
     pub shell_args: String,
+    // 界面
+    pub show_tab_bar: bool,
+    pub show_command_input: bool,
 }
 
 impl Default for TerminalSettings {
@@ -555,16 +576,23 @@ impl Default for TerminalSettings {
             selection_color: "#3e4451".to_string(),
             cursor_style: CursorStyle::Block,
             cursor_blink: true,
+            cursor_blink_interval_ms: 500,
             background_opacity: 100,
             scrollback_lines: 10000,
+            padding: 8,
             copy_on_select: false,
             right_click_paste: true,
             trim_trailing_whitespace: true,
             scroll_on_output: true,
+            scroll_multiplier: 1.0,
             bell_style: BellStyle::None,
             word_separators: " <>()\"':;,│".to_string(),
+            osc52_policy: Osc52Policy::WriteOnly,
+            term_type: "xterm-256color".to_string(),
             default_shell: String::new(), // Use system default
             shell_args: String::new(),
+            show_tab_bar: true,
+            show_command_input: true,
         }
     }
 }
@@ -934,5 +962,29 @@ impl Default for SystemSettings {
             log_level: LogLevel::Info,
             log_retention_days: 7,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_settings_accept_older_files_without_new_fields() {
+        let mut value = serde_json::to_value(TerminalSettings::default()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("osc52_policy");
+        object.remove("cursor_blink_interval_ms");
+        object.remove("scroll_multiplier");
+        object.remove("padding");
+        object.remove("term_type");
+        object.remove("show_tab_bar");
+        object.remove("show_command_input");
+
+        let settings: TerminalSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.osc52_policy, Osc52Policy::WriteOnly);
+        assert_eq!(settings.cursor_blink_interval_ms, 500);
+        assert_eq!(settings.padding, 8);
+        assert_eq!(settings.term_type, "xterm-256color");
     }
 }

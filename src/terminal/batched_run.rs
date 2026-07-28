@@ -286,11 +286,6 @@ pub fn layout_grid(
 
         cell_count += 1;
 
-        // 跳过宽字符占位符
-        if flags.contains(Flags::WIDE_CHAR_SPACER) {
-            continue;
-        }
-
         let c = cell.c;
 
         // 检查是否在选择范围内（块选择按矩形区域判定）
@@ -367,6 +362,11 @@ pub fn layout_grid(
             }
         }
 
+        // 宽字符占位格不绘制文字，但必须参与背景、选择和搜索高亮。
+        if flags.contains(Flags::WIDE_CHAR_SPACER) {
+            continue;
+        }
+
         // 跳过空白字符（除非有特殊标记）
         if c == ' ' && !flags.intersects(Flags::UNDERLINE | Flags::STRIKEOUT) {
             // 刷新当前批次
@@ -384,13 +384,25 @@ pub fn layout_grid(
                 // 刷新当前批次，开始新批次
                 let old_run = current_run.take().unwrap();
                 text_runs.push(old_run);
-                current_run =
-                    Some(BatchedTextRun::new(display_line, col, c, fg_color, flags, default_bold));
+                current_run = Some(BatchedTextRun::new(
+                    display_line,
+                    col,
+                    c,
+                    fg_color,
+                    flags,
+                    default_bold,
+                ));
             }
         } else {
             // 开始新批次
-            current_run =
-                Some(BatchedTextRun::new(display_line, col, c, fg_color, flags, default_bold));
+            current_run = Some(BatchedTextRun::new(
+                display_line,
+                col,
+                c,
+                fg_color,
+                flags,
+                default_bold,
+            ));
         }
     }
 

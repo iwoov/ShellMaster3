@@ -20,7 +20,7 @@ use crate::terminal::{
     paste_to_bytes, render_terminal_view, should_report_motion, SendDown, SendEnter, SendEscape,
     SendLeft, SendRight, SendTab, SendUp, TerminalCopy, TerminalPaste, TerminalSearch,
     TerminalSelectAll, TerminalState, MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT, MOUSE_WHEEL_DOWN,
-    MOUSE_WHEEL_UP, TERMINAL_PADDING_LEFT,
+    MOUSE_WHEEL_UP,
 };
 
 /// 构建终端右键上下文菜单（复制/粘贴/全选/清除回滚）。
@@ -73,24 +73,23 @@ fn build_terminal_context_menu(
         if let Some(t) = t_paste.clone() {
             t.update(cx, |t, _| t.show_cursor());
         }
-        cx.spawn(async move |_| {
-            let _ = channel.write(&bytes).await;
-        })
-        .detach();
+        let _ = channel.queue_write(bytes);
     }));
 
     menu = menu.separator();
 
     // 全选
     let t_all = terminal.clone();
-    menu = menu.item(PopupMenuItem::new(select_all_label).on_click(move |_, _, cx| {
-        if let Some(terminal) = t_all.clone() {
-            terminal.update(cx, |t, cx| {
-                t.select_all();
-                cx.notify();
-            });
-        }
-    }));
+    menu = menu.item(
+        PopupMenuItem::new(select_all_label).on_click(move |_, _, cx| {
+            if let Some(terminal) = t_all.clone() {
+                terminal.update(cx, |t, cx| {
+                    t.select_all();
+                    cx.notify();
+                });
+            }
+        }),
+    );
 
     // 清除回滚
     let t_clear = terminal.clone();
@@ -107,11 +106,15 @@ fn build_terminal_context_menu(
 }
 
 /// 计算鼠标位置对应的 1-based 终端可视区坐标。
-fn mouse_grid_pos(terminal: &Entity<TerminalState>, cx: &App, pos: Point<Pixels>) -> (usize, usize) {
+fn mouse_grid_pos(
+    terminal: &Entity<TerminalState>,
+    cx: &App,
+    pos: Point<Pixels>,
+) -> (usize, usize) {
     let t = terminal.read(cx);
     let (ox, oy) = t.bounds_origin();
     let size = t.size();
-    let rel_x = (f32::from(pos.x) - ox - TERMINAL_PADDING_LEFT).max(0.0);
+    let rel_x = (f32::from(pos.x) - ox - t.horizontal_padding()).max(0.0);
     let rel_y = (f32::from(pos.y) - oy).max(0.0);
     let col = ((rel_x / size.cell_width) as usize + 1).min(size.columns.max(1));
     let row = ((rel_y / size.line_height) as usize + 1).min(size.lines.max(1));
@@ -149,10 +152,7 @@ fn try_report_mouse(
     else {
         return false;
     };
-    cx.spawn(async move |_| {
-        let _ = channel.write(&bytes).await;
-    })
-    .detach();
+    let _ = channel.queue_write(bytes);
     true
 }
 
@@ -270,7 +270,7 @@ pub fn render_terminal_panel(
                             // 获取终端区域在窗口中的偏移，转换为相对坐标（减去 padding）
                             let (origin_x, origin_y) = t.bounds_origin();
                             let rel_x: f32 =
-                                f32::from(event.position.x) - origin_x - TERMINAL_PADDING_LEFT;
+                                f32::from(event.position.x) - origin_x - t.horizontal_padding();
                             let rel_y: f32 = f32::from(event.position.y) - origin_y;
 
                             t.start_selection(rel_x, rel_y, event.click_count);
@@ -322,7 +322,7 @@ pub fn render_terminal_panel(
                         // 获取终端区域在窗口中的偏移，转换为相对坐标（减去 padding）
                         let (origin_x, origin_y) = t.bounds_origin();
                         let rel_x: f32 =
-                            f32::from(event.position.x) - origin_x - TERMINAL_PADDING_LEFT;
+                            f32::from(event.position.x) - origin_x - t.horizontal_padding();
                         let rel_y: f32 = f32::from(event.position.y) - origin_y;
 
                         // 拖动到终端上/下边缘之外时自动滚动 scrollback
@@ -386,6 +386,7 @@ pub fn render_terminal_panel(
         {
             let channel = pty_channel.clone();
             let terminal = terminal_entity.clone();
+            let right_click_paste = terminal_settings.right_click_paste;
             terminal_display =
                 terminal_display.on_mouse_down(MouseButton::Right, move |event, _window, cx| {
                     if try_report_mouse(
@@ -398,6 +399,24 @@ pub fn render_terminal_panel(
                         false,
                         &event.modifiers,
                     ) {
+                        cx.stop_propagation();
+                        return;
+                    }
+
+                    if right_click_paste && !event.modifiers.shift {
+                        let Some(channel) = channel.clone() else {
+                            return;
+                        };
+                        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
+                        else {
+                            return;
+                        };
+                        let mode = terminal
+                            .as_ref()
+                            .map(|terminal| terminal.read(cx).term_mode())
+                            .unwrap_or_else(TermMode::empty);
+                        let bytes = paste_to_bytes(&text, mode);
+                        let _ = channel.queue_write(bytes);
                         cx.stop_propagation();
                     }
                 });
@@ -468,6 +487,7 @@ pub fn render_terminal_panel(
         if terminal_entity.is_some() {
             let terminal_for_scroll = terminal_entity.clone();
             let pty_channel_for_scroll = pty_channel.clone();
+            let scroll_multiplier = terminal_settings.scroll_multiplier.clamp(0.1, 10.0);
             terminal_display = terminal_display.on_scroll_wheel(move |event, _window, cx| {
                 let Some(terminal) = terminal_for_scroll.clone() else {
                     return;
@@ -477,7 +497,8 @@ pub fn render_terminal_panel(
                 let mut handled = false;
 
                 terminal.update(cx, |t, cx| {
-                    let Some(scroll_lines) = t.determine_scroll_lines(event, 1.0) else {
+                    let Some(scroll_lines) = t.determine_scroll_lines(event, scroll_multiplier)
+                    else {
                         return;
                     };
                     if scroll_lines == 0 {
@@ -496,14 +517,20 @@ pub fn render_terminal_panel(
                         let (ox, oy) = t.bounds_origin();
                         let size = t.size();
                         let rel_x =
-                            (f32::from(event.position.x) - ox - TERMINAL_PADDING_LEFT).max(0.0);
+                            (f32::from(event.position.x) - ox - t.horizontal_padding()).max(0.0);
                         let rel_y = (f32::from(event.position.y) - oy).max(0.0);
                         let col = ((rel_x / size.cell_width) as usize + 1).min(size.columns.max(1));
                         let row = ((rel_y / size.line_height) as usize + 1).min(size.lines.max(1));
                         let mut content = Vec::new();
                         for _ in 0..scroll_lines.abs() {
                             if let Some(b) = mouse_report_bytes(
-                                base, false, false, col, row, &event.modifiers, mode,
+                                base,
+                                false,
+                                false,
+                                col,
+                                row,
+                                &event.modifiers,
+                                mode,
                             ) {
                                 content.extend_from_slice(&b);
                             }
@@ -551,12 +578,9 @@ pub fn render_terminal_panel(
                 if let (Some(channel), Some(bytes)) =
                     (pty_channel_for_scroll.clone(), bytes_to_send)
                 {
-                    cx.spawn(async move |_async_cx| {
-                        if let Err(e) = channel.write(&bytes).await {
-                            tracing::error!("[Terminal] PTY write error: {:?}", e);
-                        }
-                    })
-                    .detach();
+                    if let Err(e) = channel.queue_write(bytes) {
+                        tracing::error!("[Terminal] PTY write error: {:?}", e);
+                    }
                 }
             });
         }
@@ -571,10 +595,7 @@ pub fn render_terminal_panel(
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
-                    cx.spawn(async move |_| {
-                        let _ = channel.write(&[0x09]).await; // Tab = 0x09
-                    })
-                    .detach();
+                    let _ = channel.queue_write(vec![0x09]); // Tab = 0x09
                 }
             });
         }
@@ -587,10 +608,7 @@ pub fn render_terminal_panel(
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
-                    cx.spawn(async move |_| {
-                        let _ = channel.write(&[0x0D]).await; // Enter = 0x0D
-                    })
-                    .detach();
+                    let _ = channel.queue_write(vec![0x0D]); // Enter = 0x0D
                 }
             });
         }
@@ -603,10 +621,7 @@ pub fn render_terminal_panel(
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
-                    cx.spawn(async move |_| {
-                        let _ = channel.write(&[0x1B]).await; // Escape = 0x1B
-                    })
-                    .detach();
+                    let _ = channel.queue_write(vec![0x1B]); // Escape = 0x1B
                 }
             });
         }
@@ -625,10 +640,7 @@ pub fn render_terminal_panel(
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
-                    cx.spawn(async move |_| {
-                        let _ = channel.write(&bytes).await;
-                    })
-                    .detach();
+                    let _ = channel.queue_write(bytes);
                 }
             });
         }
@@ -647,10 +659,7 @@ pub fn render_terminal_panel(
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
-                    cx.spawn(async move |_| {
-                        let _ = channel.write(&bytes).await;
-                    })
-                    .detach();
+                    let _ = channel.queue_write(bytes);
                 }
             });
         }
@@ -669,10 +678,7 @@ pub fn render_terminal_panel(
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
-                    cx.spawn(async move |_| {
-                        let _ = channel.write(&bytes).await;
-                    })
-                    .detach();
+                    let _ = channel.queue_write(bytes);
                 }
             });
         }
@@ -691,10 +697,7 @@ pub fn render_terminal_panel(
                     if let Some(terminal) = terminal.clone() {
                         terminal.update(cx, |t, _| t.show_cursor());
                     }
-                    cx.spawn(async move |_| {
-                        let _ = channel.write(&bytes).await;
-                    })
-                    .detach();
+                    let _ = channel.queue_write(bytes);
                 }
             });
         }
@@ -720,13 +723,12 @@ pub fn render_terminal_panel(
         // 搜索：切换搜索栏
         {
             let session = session_state.clone();
-            terminal_display =
-                terminal_display.on_action(move |_: &TerminalSearch, window, cx| {
-                    session.update(cx, |state, cx| {
-                        state.toggle_terminal_search(window, cx);
-                    });
-                    cx.stop_propagation();
+            terminal_display = terminal_display.on_action(move |_: &TerminalSearch, window, cx| {
+                session.update(cx, |state, cx| {
+                    state.toggle_terminal_search(window, cx);
                 });
+                cx.stop_propagation();
+            });
         }
         // 全选：选中整个缓冲区（含 scrollback）
         {
@@ -763,13 +765,9 @@ pub fn render_terminal_panel(
                                 terminal.update(cx, |t, _| t.show_cursor());
                             }
 
-                            // 发送到 PTY
-                            cx.spawn(async move |_| {
-                                if let Err(e) = channel.write(&bytes).await {
-                                    tracing::error!("[Terminal] PTY write error on paste: {:?}", e);
-                                }
-                            })
-                            .detach();
+                            if let Err(e) = channel.queue_write(bytes) {
+                                tracing::error!("[Terminal] PTY write error on paste: {:?}", e);
+                            }
                         }
                     }
                 }
@@ -837,13 +835,9 @@ pub fn render_terminal_panel(
                     });
                 }
 
-                // 发送到 PTY (异步)
-                cx.spawn(async move |_async_cx| {
-                    if let Err(e) = channel.write(&bytes).await {
-                        tracing::error!("[Terminal] PTY write error: {:?}", e);
-                    }
-                })
-                .detach();
+                if let Err(e) = channel.queue_write(bytes) {
+                    tracing::error!("[Terminal] PTY write error: {:?}", e);
+                }
 
                 // 阻止事件冒泡，确保 Tab 等按键不会被其他组件拦截
                 cx.stop_propagation();
@@ -863,7 +857,15 @@ pub fn render_terminal_panel(
     // 添加终端内容
     terminal_display = terminal_display.child(if let Some(error) = pty_error {
         // PTY 失败 - 显示错误信息
-        render_error_terminal(&terminal_settings, &error, cx).into_any_element()
+        render_error_terminal(
+            &terminal_settings,
+            &error,
+            tab.id.clone(),
+            active_terminal_id.clone().unwrap_or_default(),
+            session_state.clone(),
+            cx,
+        )
+        .into_any_element()
     } else if let Some(ref terminal) = terminal_entity {
         // 有终端实例 - 渲染真实终端内容
         // 如果处于重连或断开状态，在终端内容上叠加状态覆盖层
@@ -959,7 +961,11 @@ pub fn render_terminal_panel(
                 // 阻止在搜索栏上的鼠标操作触发终端选择
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(svg().path(icons::SEARCH).size(px(12.)).text_color(muted))
-                .child(div().w(px(150.)).child(Input::new(&search_input).appearance(false)))
+                .child(
+                    div()
+                        .w(px(150.))
+                        .child(Input::new(&search_input).appearance(false)),
+                )
                 .child(div().text_xs().text_color(muted).child(count_text))
                 .child(icon_btn("terminal-search-prev", icons::ARROW_UP).on_click(
                     move |_, _window, cx| {
@@ -974,19 +980,21 @@ pub fn render_terminal_panel(
                         });
                     },
                 ))
-                .child(icon_btn("terminal-search-next", icons::CHEVRON_DOWN).on_click(
-                    move |_, _window, cx| {
-                        sess_next.update(cx, |state, cx| {
-                            if let Some(t) = state.active_terminal_entity() {
-                                t.update(cx, |t, cx| {
-                                    t.search_next_match();
-                                    cx.notify();
-                                });
-                            }
-                            cx.notify();
-                        });
-                    },
-                ))
+                .child(
+                    icon_btn("terminal-search-next", icons::CHEVRON_DOWN).on_click(
+                        move |_, _window, cx| {
+                            sess_next.update(cx, |state, cx| {
+                                if let Some(t) = state.active_terminal_entity() {
+                                    t.update(cx, |t, cx| {
+                                        t.search_next_match();
+                                        cx.notify();
+                                    });
+                                }
+                                cx.notify();
+                            });
+                        },
+                    ),
+                )
                 .child(icon_btn("terminal-search-close", icons::X).on_click(
                     move |_, window, cx| {
                         sess_close.update(cx, |state, cx| {
@@ -999,15 +1007,10 @@ pub fn render_terminal_panel(
         }
     }
 
-    // 右键上下文菜单：非鼠标模式时启用（鼠标模式下右键留给应用上报）
-    let mouse_active = terminal_entity
-        .as_ref()
-        .map(|t| crate::terminal::mouse_mode_enabled(t.read(cx).term_mode()))
-        .unwrap_or(false);
-    let menu_lang = crate::services::storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or_default();
-    let terminal_area: AnyElement = if mouse_active || terminal_entity.is_none() {
+    // 右键菜单始终注册；鼠标上报或直接粘贴成功时会停止事件传播。
+    // 因而 Shift+右键仍可强制打开本地菜单。
+    let menu_lang = settings.theme.language.clone();
+    let terminal_area: AnyElement = if terminal_entity.is_none() {
         terminal_display.into_any_element()
     } else {
         let ct = terminal_entity.clone();
@@ -1030,9 +1033,7 @@ pub fn render_terminal_panel(
     let muted_color = cx.theme().muted_foreground;
 
     // 加载当前语言设置（用于动态翻译标签）
-    let lang = crate::services::storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or_default();
+    let lang = settings.theme.language.clone();
     let terminal_label_prefix = crate::i18n::t(&lang, "session.terminal.tab_label");
 
     let terminal_toolbar = div()
@@ -1093,6 +1094,9 @@ pub fn render_terminal_panel(
                         .child(
                             div()
                                 .text_xs()
+                                .max_w(px(220.))
+                                .overflow_hidden()
+                                .text_ellipsis()
                                 .text_color(if is_active { text_color } else { muted_color })
                                 .child(term_label),
                         )
@@ -1163,17 +1167,19 @@ pub fn render_terminal_panel(
         .flex()
         .flex_col()
         // 终端顶部工具栏区域
-        .child(terminal_toolbar)
+        .children(terminal_settings.show_tab_bar.then_some(terminal_toolbar))
         // 终端显示区域（占据剩余空间）
         .child(terminal_area)
         // 命令输入区域（下方）
-        .child(render_command_input(
-            border_color,
-            command_input,
-            pty_channel,
-            terminal_entity,
-            cx,
-        ))
+        .children(terminal_settings.show_command_input.then(|| {
+            render_command_input(
+                border_color,
+                command_input,
+                pty_channel,
+                terminal_entity,
+                cx,
+            )
+        }))
 }
 
 /// 渲染真实终端内容
@@ -1207,7 +1213,10 @@ fn render_terminal_content(
 fn render_error_terminal(
     settings: &crate::models::settings::TerminalSettings,
     error: &str,
-    _cx: &App,
+    tab_id: String,
+    terminal_id: String,
+    session_state: Entity<SessionState>,
+    cx: &App,
 ) -> Div {
     let bg_color = hex_to_hsla(&settings.background_color);
 
@@ -1218,6 +1227,7 @@ fn render_error_terminal(
 
     // 判断是否是断开连接
     let is_disconnected = error == "terminal.disconnected";
+    let is_shell_exited = error == "terminal.shell_exited";
 
     // 根据类型选择颜色和图标
     let (color, icon, message) = if is_disconnected {
@@ -1225,6 +1235,12 @@ fn render_error_terminal(
             Hsla::from(rgb(0xf59e0b)), // 橙色 (amber-500)
             icons::CIRCLE,
             crate::i18n::t(&lang, "terminal.disconnected").to_string(),
+        )
+    } else if is_shell_exited {
+        (
+            Hsla::from(rgb(0xf59e0b)),
+            icons::TERMINAL,
+            crate::i18n::t(&lang, "terminal.shell_exited").to_string(),
         )
     } else {
         (
@@ -1234,6 +1250,7 @@ fn render_error_terminal(
         )
     };
 
+    let primary = cx.theme().primary;
     div()
         .size_full()
         .bg(bg_color)
@@ -1247,7 +1264,27 @@ fn render_error_terminal(
                 .items_center()
                 .gap_2()
                 .child(svg().path(icon).size(px(32.)).text_color(color))
-                .child(div().text_color(color).text_sm().child(message)),
+                .child(div().text_color(color).text_sm().child(message))
+                .children(is_shell_exited.then(|| {
+                    div()
+                        .id("restart-shell-btn")
+                        .mt_2()
+                        .px_4()
+                        .py_2()
+                        .rounded_md()
+                        .bg(primary)
+                        .text_color(Hsla::from(rgb(0xffffff)))
+                        .text_sm()
+                        .cursor_pointer()
+                        .hover(|style| style.opacity(0.9))
+                        .child(crate::i18n::t(&lang, "terminal.restart_shell"))
+                        .on_click(move |_, _, cx| {
+                            session_state.update(cx, |state, cx| {
+                                state.restart_terminal_instance(&tab_id, &terminal_id);
+                                cx.notify();
+                            });
+                        })
+                })),
         )
 }
 
@@ -1488,13 +1525,9 @@ fn render_command_input(
                                 });
                             }
 
-                            // 异步发送到 PTY
-                            cx.spawn(async move |_async_cx| {
-                                if let Err(e) = channel.write(&bytes).await {
-                                    tracing::error!("[Terminal] PTY write error: {:?}", e);
-                                }
-                            })
-                            .detach();
+                            if let Err(e) = channel.queue_write(bytes) {
+                                tracing::error!("[Terminal] PTY write error: {:?}", e);
+                            }
 
                             // 清空输入框
                             input.update(cx, |state, cx| {

@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use russh::client::Handle;
 use russh::client::Msg;
-use russh::{ChannelMsg, ChannelReadHalf, ChannelWriteHalf};
-use tokio::sync::Mutex;
+use russh::{ChannelMsg, ChannelReadHalf};
+use tokio::sync::{oneshot, Mutex};
 
 use super::error::SshError;
 use super::handler::SshClientHandler;
@@ -27,6 +27,8 @@ pub struct PtyRequest {
     pub pix_height: u32,
     /// 终端模式
     pub modes: Vec<(russh::Pty, u32)>,
+    /// 可选的远端启动命令；为空时请求服务器默认 shell。
+    pub command: Option<String>,
 }
 
 impl Default for PtyRequest {
@@ -38,6 +40,7 @@ impl Default for PtyRequest {
             pix_width: 0,
             pix_height: 0,
             modes: vec![],
+            command: None,
         }
     }
 }
@@ -91,7 +94,7 @@ impl SshSession {
 
     /// 检查会话是否活跃
     pub fn is_alive(&self) -> bool {
-        self.is_connected.load(Ordering::Relaxed)
+        self.is_connected.load(Ordering::Relaxed) && !self.handle.is_closed()
     }
 
     /// 标记会话断开
@@ -133,8 +136,11 @@ impl SshSession {
             .await
             .map_err(SshError::from)?;
 
-        // 请求 Shell
-        channel.request_shell(true).await.map_err(SshError::from)?;
+        if let Some(command) = pty.command.filter(|command| !command.trim().is_empty()) {
+            channel.exec(true, command).await.map_err(SshError::from)?;
+        } else {
+            channel.request_shell(true).await.map_err(SshError::from)?;
+        }
 
         Ok(TerminalChannel::new(channel, self.handle.clone()))
     }
@@ -217,8 +223,14 @@ impl SshSession {
     /// 关闭会话
     pub async fn close(&self) -> Result<(), SshError> {
         self.mark_disconnected();
-        // Handle 会在 drop 时自动关闭连接
-        Ok(())
+        self.handle
+            .disconnect(
+                russh::Disconnect::ByApplication,
+                "ShellMaster session closed",
+                "en",
+            )
+            .await
+            .map_err(SshError::from)
     }
 }
 
@@ -231,31 +243,75 @@ type RusshChannel = russh::Channel<Msg>;
 /// - 写：使用 handle.data()，直接通过 handle 发送数据
 /// - 控制：使用 write_half.window_change()/eof()，独立于读取循环
 pub struct TerminalChannel {
-    id: russh::ChannelId,
-    handle: Arc<Handle<SshClientHandler>>,
     read_half: Mutex<ChannelReadHalf>,
-    write_half: Mutex<ChannelWriteHalf<Msg>>,
+    command_tx: tokio::sync::mpsc::UnboundedSender<TerminalCommand>,
+}
+
+enum TerminalCommand {
+    Write(Vec<u8>),
+    Resize {
+        cols: u32,
+        rows: u32,
+        pix_width: u32,
+        pix_height: u32,
+    },
+    Close(oneshot::Sender<Result<(), String>>),
 }
 
 impl TerminalChannel {
     fn new(channel: RusshChannel, handle: Arc<Handle<SshClientHandler>>) -> Self {
         let id = channel.id();
         let (read_half, write_half) = channel.split();
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let writer_handle = handle.clone();
+        crate::ssh::manager::SshManager::global()
+            .runtime()
+            .spawn(async move {
+                while let Some(command) = command_rx.recv().await {
+                    match command {
+                        TerminalCommand::Write(data) => {
+                            if writer_handle.data(id, data.into()).await.is_err() {
+                                tracing::error!("[Terminal] Ordered PTY writer stopped");
+                                break;
+                            }
+                        }
+                        TerminalCommand::Resize {
+                            cols,
+                            rows,
+                            pix_width,
+                            pix_height,
+                        } => {
+                            if let Err(error) = write_half
+                                .window_change(cols, rows, pix_width, pix_height)
+                                .await
+                            {
+                                tracing::error!("[Terminal] PTY resize failed: {:?}", error);
+                            }
+                        }
+                        TerminalCommand::Close(reply) => {
+                            let result = async {
+                                write_half.eof().await?;
+                                write_half.close().await
+                            }
+                            .await
+                            .map_err(|error| error.to_string());
+                            let _ = reply.send(result);
+                            break;
+                        }
+                    }
+                }
+            });
         Self {
-            id,
             read_half: Mutex::new(read_half),
-            write_half: Mutex::new(write_half),
-            handle,
+            command_tx,
         }
     }
 
-    /// 写入数据到终端
-    /// 直接通过 handle 发送，不阻塞读取循环
-    pub async fn write(&self, data: &[u8]) -> Result<(), SshError> {
-        self.handle
-            .data(self.id, data.to_vec().into())
-            .await
-            .map_err(|_| SshError::Channel("Failed to send data to channel".to_string()))
+    /// 将数据按调用顺序送入单一 PTY writer，避免按键/鼠标任务相互乱序。
+    pub fn queue_write(&self, data: impl Into<Vec<u8>>) -> Result<(), SshError> {
+        self.command_tx
+            .send(TerminalCommand::Write(data.into()))
+            .map_err(|_| SshError::Channel("PTY writer is closed".to_string()))
     }
 
     /// 读取终端输出
@@ -277,21 +333,33 @@ impl TerminalChannel {
 
     /// 调整终端大小
     /// 使用 write_half 独立于读取循环，不会被阻塞
-    pub async fn resize(&self, cols: u32, rows: u32) -> Result<(), SshError> {
-        let write_half = self.write_half.lock().await;
-        write_half
-            .window_change(cols, rows, 0, 0)
-            .await
-            .map_err(|e| SshError::Channel(e.to_string()))
+    pub fn resize(
+        &self,
+        cols: u32,
+        rows: u32,
+        pix_width: u32,
+        pix_height: u32,
+    ) -> Result<(), SshError> {
+        self.command_tx
+            .send(TerminalCommand::Resize {
+                cols,
+                rows,
+                pix_width,
+                pix_height,
+            })
+            .map_err(|_| SshError::Channel("PTY writer is closed".to_string()))
     }
 
     /// 关闭通道
     pub async fn close(&self) -> Result<(), SshError> {
-        let write_half = self.write_half.lock().await;
-        write_half
-            .eof()
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.command_tx
+            .send(TerminalCommand::Close(reply_tx))
+            .map_err(|_| SshError::Channel("PTY writer is closed".to_string()))?;
+        reply_rx
             .await
-            .map_err(|e| SshError::Channel(e.to_string()))
+            .map_err(|_| SshError::Channel("PTY close was cancelled".to_string()))?
+            .map_err(SshError::Channel)
     }
 }
 

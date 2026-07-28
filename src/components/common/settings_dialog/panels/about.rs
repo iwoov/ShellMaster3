@@ -53,7 +53,7 @@ pub fn render_about_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl 
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("v1.0.0"),
+                        .child(concat!("v", env!("CARGO_PKG_VERSION"))),
                 ),
         )
         // 技术信息

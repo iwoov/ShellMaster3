@@ -18,20 +18,16 @@ jobs:
   package:
     name: Package (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
-    # 单个平台失败/超时不阻塞整体 release（配合 matrix.experimental）。
-    # macOS Intel(macos-13) runner 经常长时间排不到队，设为不阻塞。
-    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: macOS (Apple Silicon)
-            os: macos-14
+            os: macos-15
             formats: dmg
           - label: macOS (Intel)
-            os: macos-13
+            os: macos-15-intel
             formats: dmg
-            experimental: true
           - label: Windows
             os: windows-latest
             formats: nsis

@@ -3,6 +3,19 @@
 use alacritty_terminal::term::TermMode;
 use gpui::{Keystroke, Modifiers};
 
+/// 可打印文本必须交给平台文本输入接口，才能支持 IME composition。
+/// 控制键和终端 Meta 组合仍由 `keystroke_to_escape` 直接编码。
+pub fn should_use_platform_text_input(keystroke: &Keystroke) -> bool {
+    let modifiers = &keystroke.modifiers;
+    !modifiers.control
+        && !modifiers.alt
+        && !modifiers.platform
+        && !modifiers.function
+        && (keystroke.key_char.is_some() || keystroke.is_ime_in_progress())
+        // 这些键由 Terminal action 处理；保留回退路径，避免未注册 action 时失效。
+        && !matches!(keystroke.key.as_str(), "tab" | "enter")
+}
+
 /// 将 GPUI Keystroke 转换为终端转义序列
 pub fn keystroke_to_escape(
     keystroke: &Keystroke,
@@ -299,5 +312,41 @@ mod tests {
             named_key_to_escape("up", &Modifiers::default(), TermMode::APP_CURSOR),
             Some(b"\x1bOA".to_vec())
         );
+    }
+
+    #[test]
+    fn shift_tab_is_backtab_csi_sequence() {
+        let modifiers = Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            named_key_to_escape("tab", &modifiers, TermMode::empty()),
+            Some(b"\x1b[Z".to_vec())
+        );
+    }
+
+    #[test]
+    fn printable_text_is_reserved_for_platform_input_handler() {
+        assert!(should_use_platform_text_input(&keystroke(
+            "a",
+            Some("a"),
+            Modifiers::default()
+        )));
+        assert!(should_use_platform_text_input(&keystroke(
+            "a",
+            None,
+            Modifiers::default()
+        )));
+
+        let control = Modifiers {
+            control: true,
+            ..Default::default()
+        };
+        assert!(!should_use_platform_text_input(&keystroke(
+            "a",
+            Some("a"),
+            control
+        )));
     }
 }

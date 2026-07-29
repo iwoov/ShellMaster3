@@ -1,5 +1,6 @@
 // 终端状态管理 - 封装 alacritty_terminal::Term
 
+use std::ops::Range;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi;
 use alacritty_terminal::vte::ansi::{NamedColor, Rgb};
 use alacritty_terminal::Term;
-use gpui::{px, Pixels, ScrollWheelEvent, TouchPhase};
+use gpui::{px, Bounds, Pixels, Point, ScrollWheelEvent, Size, TouchPhase};
 
 use crate::models::settings::{FontWeight, Osc52Policy, TerminalSettings};
 use crate::terminal::colors::{ansi_indexed_rgb, hex_to_rgb, palette_for};
@@ -70,6 +71,20 @@ mod tests {
             TerminalState::term_config(&settings).osc52,
             alacritty_terminal::term::Osc52::CopyPaste
         );
+    }
+
+    #[test]
+    fn ime_preedit_ranges_use_utf16_offsets() {
+        let mut state = TerminalState::new(TerminalSettings::default());
+        state.set_ime_preedit("a中😀", Some(2..4));
+
+        assert_eq!(state.ime_marked_range(), Some(0..4));
+        assert_eq!(state.ime_selected_range(), 2..4);
+        assert_eq!(state.ime_text_for_range(2..4).as_deref(), Some("😀"));
+
+        state.clear_ime_preedit();
+        assert_eq!(state.ime_marked_range(), None);
+        assert_eq!(state.ime_selected_range(), 0..0);
     }
 }
 
@@ -195,6 +210,10 @@ pub struct TerminalState {
     search_matches: Vec<Match>,
     /// 当前定位到的命中索引。
     search_current: Option<usize>,
+    /// 系统输入法正在组合但尚未提交的文本（UTF-8）。
+    ime_preedit: String,
+    /// 输入法在 preedit 中选择的范围（UTF-16 code units）。
+    ime_selected_range: Range<usize>,
 }
 
 impl TerminalState {
@@ -246,6 +265,8 @@ impl TerminalState {
             search_query: String::new(),
             search_matches: Vec::new(),
             search_current: None,
+            ime_preedit: String::new(),
+            ime_selected_range: 0..0,
         }
     }
 
@@ -463,6 +484,54 @@ impl TerminalState {
 
     pub fn term_mode(&self) -> TermMode {
         *self.term.lock().mode()
+    }
+
+    // ==================== 系统输入法 / IME API ====================
+
+    pub(crate) fn set_ime_preedit(&mut self, text: &str, selected_range: Option<Range<usize>>) {
+        self.ime_preedit.clear();
+        self.ime_preedit.push_str(text);
+        let len = text.encode_utf16().count();
+        self.ime_selected_range = selected_range
+            .map(|range| range.start.min(len)..range.end.min(len))
+            .unwrap_or(len..len);
+    }
+
+    pub(crate) fn clear_ime_preedit(&mut self) {
+        self.ime_preedit.clear();
+        self.ime_selected_range = 0..0;
+    }
+
+    pub(crate) fn ime_selected_range(&self) -> Range<usize> {
+        self.ime_selected_range.clone()
+    }
+
+    pub(crate) fn ime_marked_range(&self) -> Option<Range<usize>> {
+        (!self.ime_preedit.is_empty()).then(|| 0..self.ime_preedit.encode_utf16().count())
+    }
+
+    pub(crate) fn ime_text_for_range(&self, range: Range<usize>) -> Option<String> {
+        let utf16: Vec<u16> = self.ime_preedit.encode_utf16().collect();
+        (range.start <= range.end && range.end <= utf16.len())
+            .then(|| String::from_utf16_lossy(&utf16[range]))
+    }
+
+    /// 返回终端光标在窗口内的像素 bounds，供系统定位输入法候选框。
+    pub(crate) fn ime_cursor_bounds(&self, element_bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        let term = self.term.lock();
+        let content = term.renderable_content();
+        let cursor = content.cursor.point;
+        let display_line = (cursor.line.0 + content.display_offset as i32)
+            .clamp(0, self.size.lines.saturating_sub(1) as i32);
+
+        Bounds::new(
+            Point::new(
+                element_bounds.origin.x
+                    + px(self.horizontal_padding() + cursor.column.0 as f32 * self.size.cell_width),
+                element_bounds.origin.y + px(display_line as f32 * self.size.line_height),
+            ),
+            Size::new(px(self.size.cell_width), px(self.size.line_height)),
+        )
     }
 
     pub fn scroll_page_up(&mut self) {

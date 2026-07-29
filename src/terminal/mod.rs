@@ -2,6 +2,7 @@
 
 mod batched_run;
 mod colors;
+mod input;
 mod keys;
 mod mouse;
 mod renderer;
@@ -11,6 +12,7 @@ mod terminal_bridge;
 
 // pub use batched_run::*; // 内部使用，不导出
 pub use colors::*;
+pub use input::*;
 pub use keys::*;
 pub use mouse::*;
 pub use renderer::*;
@@ -25,6 +27,7 @@ actions!(
     terminal,
     [
         SendTab,
+        SendBackTab,
         SendEscape,
         SendEnter,
         SendUp,
@@ -49,6 +52,9 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         // Tab 键：发送到终端而非切换焦点
         KeyBinding::new("tab", SendTab, Some(TERMINAL_CONTEXT)),
+        // Root 默认把 Shift+Tab 用于向前切换焦点；终端上下文必须显式覆盖，
+        // 否则 Codex/Claude Code 等 TUI 永远收不到反向 Tab。
+        KeyBinding::new("shift-tab", SendBackTab, Some(TERMINAL_CONTEXT)),
         // 其他常用按键
         KeyBinding::new("escape", SendEscape, Some(TERMINAL_CONTEXT)),
         KeyBinding::new("enter", SendEnter, Some(TERMINAL_CONTEXT)),

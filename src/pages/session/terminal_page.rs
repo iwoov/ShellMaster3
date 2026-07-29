@@ -17,10 +17,10 @@ use crate::ssh::session::TerminalChannel;
 use crate::state::{SessionState, SessionStatus, SessionTab};
 use crate::terminal::{
     hex_to_hsla, keystroke_to_escape, mouse_mode_enabled, mouse_report_bytes, named_key_to_escape,
-    paste_to_bytes, render_terminal_view, should_report_motion, SendDown, SendEnter, SendEscape,
-    SendLeft, SendRight, SendTab, SendUp, TerminalCopy, TerminalPaste, TerminalSearch,
-    TerminalSelectAll, TerminalState, MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT, MOUSE_WHEEL_DOWN,
-    MOUSE_WHEEL_UP,
+    paste_to_bytes, render_terminal_view, should_report_motion, should_use_platform_text_input,
+    SendBackTab, SendDown, SendEnter, SendEscape, SendLeft, SendRight, SendTab, SendUp,
+    TerminalCopy, TerminalInputHandler, TerminalPaste, TerminalSearch, TerminalSelectAll,
+    TerminalState, MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT, MOUSE_WHEEL_DOWN, MOUSE_WHEEL_UP,
 };
 
 /// 构建终端右键上下文菜单（复制/粘贴/全选/清除回滚）。
@@ -201,6 +201,9 @@ pub fn render_terminal_panel(
     let tab_id = tab.id.clone();
     let session_state_for_resize = session_state.clone();
     let terminal_for_bounds = terminal_entity.clone();
+    let terminal_for_input = terminal_entity.clone();
+    let channel_for_input = pty_channel.clone();
+    let focus_for_input = terminal_focus_handle.clone();
     terminal_display = terminal_display.child(
         canvas(
             move |bounds, window, cx| {
@@ -228,7 +231,19 @@ pub fn render_terminal_panel(
                     });
                 }
             },
-            |_, _, _, _| {},
+            move |bounds, _, window, cx| {
+                if let (Some(focus), Some(terminal), Some(channel)) = (
+                    focus_for_input.as_ref(),
+                    terminal_for_input.clone(),
+                    channel_for_input.clone(),
+                ) {
+                    window.handle_input(
+                        focus,
+                        TerminalInputHandler::new(terminal, channel, bounds),
+                        cx,
+                    );
+                }
+            },
         )
         .absolute()
         .size_full(),
@@ -420,6 +435,25 @@ pub fn render_terminal_panel(
                         cx.stop_propagation();
                     }
                 });
+        }
+        // Shift+Tab / BackTab（CSI Z）
+        {
+            let channel = pty_channel.clone();
+            let terminal = terminal_entity.clone();
+            terminal_display = terminal_display.on_action(move |_: &SendBackTab, _window, cx| {
+                if let Some(channel) = channel.clone() {
+                    let modifiers = Modifiers {
+                        shift: true,
+                        ..Default::default()
+                    };
+                    let bytes = named_key_to_escape("tab", &modifiers, TermMode::empty())
+                        .unwrap_or_else(|| b"\x1b[Z".to_vec());
+                    if let Some(terminal) = terminal.clone() {
+                        terminal.update(cx, |t, _| t.show_cursor());
+                    }
+                    let _ = channel.queue_write(bytes);
+                }
+            });
         }
 
         // 右键释放：鼠标模式下上报
@@ -781,6 +815,13 @@ pub fn render_terminal_panel(
         let pty_channel_for_key = pty_channel.clone();
         terminal_display = terminal_display.on_key_down(move |event, _window, cx| {
             let key = event.keystroke.key.as_str();
+
+            // 不要在 keydown 阶段发送可打印字符。让平台 InputHandler 处理它们，
+            // 否则拼音的每个字母会被提前写入 PTY，系统输入法永远无法进入组合态。
+            // 控制键、Alt/Meta 和具名键仍继续走下方的终端转义序列映射。
+            if should_use_platform_text_input(&event.keystroke) {
+                return;
+            }
 
             if matches!(key, "pageup" | "pagedown")
                 && !event.keystroke.modifiers.control

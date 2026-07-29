@@ -178,6 +178,14 @@ fn zh_cn(key: &'static str) -> &'static str {
         // 关于
         "settings.about.platform" => "平台",
         "settings.about.arch" => "架构",
+        "settings.about.whats_new" => "本次更新",
+        "settings.about.release_0_1_3.ime" => "新增终端中文输入法（IME）支持，候选框跟随光标。",
+        "settings.about.release_0_1_3.backtab" => {
+            "修复 Codex、Claude Code 等 TUI 中 Shift+Tab 无法切换模式的问题。"
+        }
+        "settings.about.release_0_1_3.input_routing" => {
+            "优化文本、控制键与终端快捷键的输入处理，避免字符重复或被提前发送。"
+        }
         "settings.about.copyright" => "© 2024 ShellMaster. All rights reserved.",
 
         // 侧边栏
@@ -679,6 +687,13 @@ fn en_us(key: &'static str) -> &'static str {
         // About
         "settings.about.platform" => "Platform",
         "settings.about.arch" => "Architecture",
+        "settings.about.whats_new" => "What's New",
+        "settings.about.release_0_1_3.ime" =>
+            "Added terminal IME support for Chinese input, with the candidate window following the cursor.",
+        "settings.about.release_0_1_3.backtab" =>
+            "Fixed Shift+Tab mode switching in TUI apps such as Codex and Claude Code.",
+        "settings.about.release_0_1_3.input_routing" =>
+            "Improved routing for text, control keys, and terminal shortcuts to prevent premature or duplicate input.",
         "settings.about.copyright" => "© 2024 ShellMaster. All rights reserved.",
 
         // Sidebar

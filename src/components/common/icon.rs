@@ -2,6 +2,8 @@
 
 use gpui::*;
 
+use crate::constants::icons;
+
 /// 渲染 SVG 图标
 pub fn render_icon(path: &'static str, color: Hsla) -> impl IntoElement {
     svg().path(path).size_4().text_color(color)
@@ -10,6 +12,42 @@ pub fn render_icon(path: &'static str, color: Hsla) -> impl IntoElement {
 /// 渲染 SVG/PNG 图标，保留原始颜色（用于品牌图标等）
 pub fn render_colored_icon(path: &'static str, size: f32) -> impl IntoElement {
     img(path).w(px(size)).h(px(size))
+}
+
+/// 根据已采集的 OS 名称或连接配置文本识别 Linux 发行版图标。
+pub fn distribution_icon(
+    os_name: Option<&str>,
+    name: &str,
+    description: &str,
+) -> Option<&'static str> {
+    let source = format!("{} {} {}", os_name.unwrap_or_default(), name, description).to_lowercase();
+
+    if source.contains("ubuntu") {
+        Some(icons::DISTRO_UBUNTU)
+    } else if source.contains("debian") {
+        Some(icons::DISTRO_DEBIAN)
+    } else if source.contains("rocky") {
+        Some(icons::DISTRO_ROCKY)
+    } else if source.contains("centos") {
+        Some(icons::DISTRO_CENTOS)
+    } else if source.contains("fedora") {
+        Some(icons::DISTRO_FEDORA)
+    } else if source.contains("alpine") {
+        Some(icons::DISTRO_ALPINE)
+    } else if source.contains("arch linux") || source.contains("archlinux") {
+        Some(icons::DISTRO_ARCH)
+    } else if source.contains("red hat")
+        || source.contains("redhat")
+        || source.contains("rhel")
+        || source.contains("alma")
+        || source.contains("oracle linux")
+    {
+        Some(icons::DISTRO_REDHAT)
+    } else if source.contains("opensuse") || source.contains("suse") {
+        Some(icons::DISTRO_OPENSUSE)
+    } else {
+        None
+    }
 }
 
 /// 渲染字母头像（用于自定义供应商：圆底 + 名称首字符）

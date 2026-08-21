@@ -122,16 +122,57 @@ pub fn render_known_hosts_content(
 fn render_header(lang: &Language, colors: CardColors, count: usize) -> impl IntoElement {
     div()
         .flex_shrink_0()
-        .p_6()
+        .px_6()
+        .pt_6()
         .pb_4()
         .flex()
-        .items_center()
+        .flex_wrap()
+        .items_end()
+        .justify_between()
         .gap_3()
         .child(
             div()
-                .text_sm()
-                .text_color(colors.muted_foreground)
-                .child(format!("{} {}", count, i18n::t(lang, "known_hosts.items"))),
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_2xl()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(colors.foreground)
+                        .child(i18n::t(lang, "known_hosts.page_title")),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(colors.muted_foreground)
+                        .child(i18n::t(lang, "known_hosts.page_description")),
+                ),
+        )
+        .child(
+            div()
+                .h_8()
+                .px_3()
+                .rounded_full()
+                .bg(colors.bg)
+                .border_1()
+                .border_color(colors.border)
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(colors.foreground)
+                        .child(count.to_string()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(colors.muted_foreground)
+                        .child(i18n::t(lang, "known_hosts.items")),
+                ),
         )
 }
 
@@ -162,13 +203,13 @@ fn render_host_card(
 
     div()
         .id(SharedString::from(format!("known-host-{}", host_key)))
-        .w(px(280.))
+        .w(px(320.))
         .bg(colors.bg)
-        .rounded_lg()
+        .rounded_xl()
         .border_1()
         .border_color(colors.border)
         .p_4()
-        .hover(move |s| s.border_color(colors.primary.opacity(0.5)).shadow_md())
+        .hover(move |s| s.border_color(colors.primary.opacity(0.65)).shadow_md())
         .flex()
         .flex_col()
         .gap_3()
@@ -189,6 +230,8 @@ fn render_host_card(
                                 .h_10()
                                 .rounded_lg()
                                 .bg(colors.primary.opacity(0.1))
+                                .border_1()
+                                .border_color(colors.primary.opacity(0.2))
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -236,10 +279,12 @@ fn render_host_card(
         // 指纹信息
         .child(
             div()
-                .px_2()
-                .py_1()
-                .bg(colors.muted_foreground.opacity(0.05))
-                .rounded_md()
+                .px_3()
+                .py_2()
+                .bg(colors.muted_foreground.opacity(0.06))
+                .border_1()
+                .border_color(colors.border)
+                .rounded_lg()
                 .child(
                     div()
                         .text_xs()

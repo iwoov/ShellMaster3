@@ -7,27 +7,26 @@ use crate::components::common::icon::render_icon;
 use crate::constants::icons;
 use crate::state::{SessionState, SessionStatus};
 
-/// 渲染 Home 按钮（紧凑版本，不占用 sidebar 宽度）
+/// 渲染品牌区，并作为返回主页的入口。
 pub fn render_home_button(session_state: Entity<SessionState>, cx: &App) -> impl IntoElement {
-    let bg = crate::theme::titlebar_color(cx); // 使用标题栏背景色
+    let bg = crate::theme::titlebar_color(cx);
     let border = cx.theme().title_bar_border;
-    let icon_color = cx.theme().muted_foreground;
     let session_state_for_click = session_state.clone();
 
     // macOS: 红绿灯在左侧，Home 按钮需要在红绿灯右边留出空间
     // Windows: Home 按钮直接在最左侧
     let left_padding = if cfg!(target_os = "macos") {
-        px(80.) // 为 macOS 红绿灯留出空间
+        px(76.)
     } else {
-        px(8.) // Windows 只需要小间距
+        px(12.)
     };
 
-    // 注意：GPUI 的 hover 闭包中使用 move 捕获变量会导致悬浮效果失效
-    // 因此这里使用硬编码的 rgba 值（半透明灰色）
     div()
-        .h(px(44.)) // 标题栏高度
-        .bg(bg) // 标题栏背景色
-        .border_b_1() // 底部边框
+        .w(px(220.))
+        .h(px(48.))
+        .bg(bg)
+        .border_b_1()
+        .border_r_1()
         .border_color(border)
         .flex()
         .flex_shrink_0()
@@ -37,20 +36,27 @@ pub fn render_home_button(session_state: Entity<SessionState>, cx: &App) -> impl
         .child(
             div()
                 .id("home-btn")
-                .w_9()
                 .h_9()
-                .rounded_md()
+                .px_2()
+                .rounded_lg()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgba(0x80808040))) // 半透明灰色悬浮效果
+                .hover(|s| s.bg(rgba(0x80808024)))
                 .flex()
                 .items_center()
-                .justify_center()
+                .gap_2()
                 .on_click(move |_, _, cx| {
                     session_state_for_click.update(cx, |state, _| {
                         state.show_home = true;
                     });
                 })
-                .child(render_icon(icons::HOME, icon_color.into())),
+                .child(render_icon(icons::HOME, cx.theme().primary.into()))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().foreground)
+                        .child("ShellMaster"),
+                ),
         )
 }
 
@@ -64,22 +70,36 @@ pub fn render_titlebar(cx: &App) -> impl IntoElement {
     let border = cx.theme().title_bar_border;
 
     div()
-        .h(px(44.)) // 与 Home 按钮区域高度相同
+        .h(px(48.))
         .w_full()
         .bg(bg)
         .border_b_1()
         .border_color(border)
         .flex() // Added flex
         .items_center() // Added items_center
-        .justify_end() // Align items to the right (if simple div) or use spacer
         .child(
             div()
                 .id("titlebar-drag-area")
                 .flex_1()
                 .h_full()
-                .window_control_area(WindowControlArea::Drag),
-        ) // Spacer with drag functionality
-        .child(render_windows_controls(cx)) // Add window controls
+                .px_5()
+                .window_control_area(WindowControlArea::Drag)
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(render_icon(
+                    icons::GLOBE,
+                    cx.theme().muted_foreground.into(),
+                ))
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(cx.theme().muted_foreground)
+                        .child("REMOTE WORKSPACE"),
+                ),
+        )
+        .child(render_windows_controls(cx))
 }
 
 /// 渲染会话标题栏（带标签页）
@@ -97,7 +117,7 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
     let active_tab_id = state.active_tab_id.clone();
 
     div()
-        .h(px(44.)) // 与 Home 按钮区域高度相同
+        .h(px(48.))
         .w_full()
         .bg(bg)
         .border_b_1()

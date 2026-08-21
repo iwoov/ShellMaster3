@@ -202,6 +202,18 @@ pub fn update_server_last_connected(server_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// 保存连接后采集到的操作系统发行版，供主页显示对应品牌图标。
+pub fn update_server_os(server_id: &str, os_name: &str) -> Result<()> {
+    let mut config = load_servers()?;
+    if let Some(server) = config.servers.iter_mut().find(|s| s.id == server_id) {
+        if server.os_name.as_deref() != Some(os_name) {
+            server.os_name = Some(os_name.to_string());
+            save_servers(&config)?;
+        }
+    }
+    Ok(())
+}
+
 /// 删除服务器
 pub fn delete_server(server_id: &str) -> Result<()> {
     let mut config = load_servers()?;

@@ -190,6 +190,8 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // 侧边栏
         "sidebar.hosts" => "服务器",
+        "sidebar.workspace" => "工作区",
+        "sidebar.no_history" => "连接过服务器后会显示在这里",
         "sidebar.monitor" => "主机监控",
         "sidebar.snippets" => "快捷命令",
 
@@ -240,6 +242,10 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // 服务器列表
         "server_list.add_server" => "添加服务器",
+        "server_list.search_placeholder" => "搜索名称、地址、账号或端口",
+        "server_list.no_results_title" => "没有匹配的服务器",
+        "server_list.no_results_description" => "尝试搜索其他名称、地址、账号或端口",
+        "server_list.group_servers" => "台",
         "server_list.empty_title" => "暂无服务器",
         "server_list.empty_description" => "点击下方按钮添加您的第一台服务器",
         "server_list.header.server" => "服务器",
@@ -436,6 +442,11 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // Snippets 快捷命令
         "snippets.add_group" => "新建组",
+        "snippets.page_title" => "快捷命令",
+        "snippets.page_description" => "整理常用命令，在终端工作流中快速复用",
+        "snippets.groups_count" => "个分组",
+        "snippets.commands_count" => "条命令",
+        "snippets.items" => "项",
         "snippets.add_command" => "新建命令",
         "snippets.breadcrumb.all" => "全部",
         "snippets.empty.title" => "暂无快捷命令",
@@ -505,6 +516,8 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // 已知主机
         "known_hosts.empty.title" => "暂无已知主机",
+        "known_hosts.page_title" => "已知主机",
+        "known_hosts.page_description" => "检查和管理已信任服务器的主机密钥指纹",
         "known_hosts.empty.description" => "连接服务器并信任主机密钥后，会在这里显示",
         "known_hosts.items" => "项",
 
@@ -698,6 +711,8 @@ fn en_us(key: &'static str) -> &'static str {
 
         // Sidebar
         "sidebar.hosts" => "Hosts",
+        "sidebar.workspace" => "WORKSPACE",
+        "sidebar.no_history" => "Recent connections will appear here",
         "sidebar.monitor" => "Monitor",
         "sidebar.snippets" => "Snippets",
 
@@ -748,6 +763,10 @@ fn en_us(key: &'static str) -> &'static str {
 
         // Server List
         "server_list.add_server" => "Add Server",
+        "server_list.search_placeholder" => "Search name, address, account, or port",
+        "server_list.no_results_title" => "No matching servers",
+        "server_list.no_results_description" => "Try another name, address, account, or port",
+        "server_list.group_servers" => "servers",
         "server_list.empty_title" => "No Servers",
         "server_list.empty_description" => "Click the button below to add your first server",
         "server_list.header.server" => "Server",
@@ -944,6 +963,11 @@ fn en_us(key: &'static str) -> &'static str {
 
         // Snippets
         "snippets.add_group" => "New Group",
+        "snippets.page_title" => "Snippets",
+        "snippets.page_description" => "Organize reusable commands for your terminal workflow",
+        "snippets.groups_count" => "groups",
+        "snippets.commands_count" => "commands",
+        "snippets.items" => "items",
         "snippets.add_command" => "New Command",
         "snippets.breadcrumb.all" => "All",
         "snippets.empty.title" => "No Snippets",
@@ -1009,6 +1033,8 @@ fn en_us(key: &'static str) -> &'static str {
 
         // Known Hosts
         "known_hosts.empty.title" => "No Known Hosts",
+        "known_hosts.page_title" => "Known Hosts",
+        "known_hosts.page_description" => "Review trusted host key fingerprints for your servers",
         "known_hosts.empty.description" => "Connect to a server and trust its key to see it here",
         "known_hosts.items" => "hosts",
 

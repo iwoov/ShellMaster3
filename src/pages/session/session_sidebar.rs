@@ -728,7 +728,6 @@ fn render_ai_chat_panel(
     let foreground = cx.theme().foreground;
     let muted_foreground = cx.theme().muted_foreground;
     let border = cx.theme().border;
-    let primary = cx.theme().primary;
 
     // 当前可用供应商（内置 + 自定义）与当前生效供应商
     let settings = crate::services::storage::load_settings().unwrap_or_default();
@@ -736,134 +735,83 @@ fn render_ai_chat_panel(
     let has_any = !verified_refs.is_empty();
     let active_ref = session_state.read(cx).resolve_ai_provider_ref(&tab_id);
     let active_resolved = active_ref.as_ref().and_then(|r| settings.ai.resolve(r));
+    let has_messages = !chat.messages.is_empty() || chat.pending;
 
     // 输入框（如果存在）
     let input_entity = session_state.read(cx).get_ai_chat_input(&tab_id);
 
-    // ===== 顶部：供应商选择 + 清空 =====
+    // ===== 顶部：Zed 风格的窄面板工具栏 =====
     let header = {
         let session_for_clear = session_state.clone();
         let tab_id_for_clear = tab_id.clone();
-        let tab_id_for_pick = tab_id.clone();
-        let session_for_pick = session_state.clone();
-        let clear_tooltip = crate::i18n::t(lang, "ai_chat.clear");
-        // 预先算好菜单项：(ref, 名称, 内置品牌图标路径)
-        let menu_items: Vec<(ProviderRef, String, Option<&'static str>)> = verified_refs
-            .iter()
-            .map(|r| match r {
-                ProviderRef::Builtin(id) => {
-                    (r.clone(), id.label().to_string(), Some(id.icon_path()))
-                }
-                ProviderRef::Custom(_) => (
-                    r.clone(),
-                    settings.ai.resolve(r).map(|x| x.name).unwrap_or_default(),
-                    None,
-                ),
-            })
-            .collect();
+        let new_thread_tooltip = crate::i18n::t(lang, "ai_chat.new_thread");
+        let header_title: SharedString = if has_messages {
+            SharedString::from(tab.server_label.clone())
+        } else {
+            crate::i18n::t(lang, "ai_chat.new_thread").into()
+        };
+        let provider_icon: AnyElement = match (&active_ref, &active_resolved) {
+            (Some(ProviderRef::Builtin(id)), _) => img(id.icon_path())
+                .w(px(15.))
+                .h(px(15.))
+                .flex_shrink_0()
+                .into_any_element(),
+            (Some(ProviderRef::Custom(_)), Some(provider)) => {
+                render_letter_avatar(ProviderRef::avatar_char(&provider.name), 15.)
+                    .into_any_element()
+            }
+            _ => svg()
+                .path(icons::SPARKLES)
+                .size(px(14.))
+                .text_color(muted_foreground)
+                .into_any_element(),
+        };
 
         div()
-            .h(px(44.))
+            .h(px(36.))
             .flex_shrink_0()
             .flex()
             .items_center()
             .justify_between()
-            .px_3()
+            .px_2()
             .gap_2()
             .border_b_1()
             .border_color(border)
-            .child({
-                let trigger_label: SharedString = match &active_resolved {
-                    Some(r) => SharedString::from(r.name.clone()),
-                    None => crate::i18n::t(lang, "ai_chat.no_provider_short").into(),
-                };
-                let trigger_color = if has_any {
-                    foreground
-                } else {
-                    muted_foreground
-                };
-                // 图标：内置品牌 / 自定义字母头像
-                let trigger_icon: Option<AnyElement> = match (&active_ref, &active_resolved) {
-                    (Some(ProviderRef::Builtin(id)), _) => Some(
-                        img(id.icon_path())
-                            .w(px(15.))
-                            .h(px(15.))
-                            .flex_shrink_0()
-                            .into_any_element(),
-                    ),
-                    (Some(ProviderRef::Custom(_)), Some(r)) => Some(
-                        render_letter_avatar(ProviderRef::avatar_char(&r.name), 16.)
-                            .into_any_element(),
-                    ),
-                    _ => None,
-                };
-                Button::new("ai-chat-provider-btn")
-                    .ghost()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(5.))
-                            .min_w_0()
-                            .children(trigger_icon)
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(trigger_color)
-                                    .overflow_hidden()
-                                    .child(trigger_label),
-                            )
-                            .child(render_icon(icons::CHEVRON_DOWN, muted_foreground.into())),
-                    )
-                    .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
-                        let mut menu = menu.min_w(px(180.));
-                        for (r, name, builtin_icon) in &menu_items {
-                            let r_owned = r.clone();
-                            let label: SharedString = SharedString::from(name.clone());
-                            let builtin_icon = *builtin_icon;
-                            let avatar_char = ProviderRef::avatar_char(name);
-                            let session = session_for_pick.clone();
-                            let tab_id_owned = tab_id_for_pick.clone();
-                            menu = menu.item(
-                                PopupMenuItem::element(move |_window, cx| {
-                                    let icon: AnyElement = match builtin_icon {
-                                        Some(p) => img(p).w(px(16.)).h(px(16.)).into_any_element(),
-                                        None => render_letter_avatar(avatar_char, 16.)
-                                            .into_any_element(),
-                                    };
-                                    div().flex().items_center().gap(px(8.)).child(icon).child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(cx.theme().foreground)
-                                            .child(label.clone()),
-                                    )
-                                })
-                                .on_click(move |_, _, cx| {
-                                    session.update(cx, |s, cx| {
-                                        s.set_ai_chat_provider(&tab_id_owned, r_owned.clone());
-                                        cx.notify();
-                                    });
-                                }),
-                            );
-                        }
-                        menu
-                    })
-            })
             .child(
                 div()
-                    .id("ai-chat-clear")
+                    .flex()
+                    .flex_1()
+                    .items_center()
+                    .min_w_0()
+                    .gap(px(7.))
+                    .child(provider_icon)
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_sm()
+                            .font_medium()
+                            .text_color(foreground)
+                            .child(header_title),
+                    ),
+            )
+            .child(
+                div()
+                    .id("ai-chat-new-thread")
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(28.))
-                    .rounded(px(6.))
+                    .size(px(24.))
+                    .rounded(px(5.))
                     .cursor_pointer()
                     .hover(|s| s.bg(muted_foreground.opacity(0.12)))
-                    .tooltip(move |window, cx| Tooltip::new(clear_tooltip).build(window, cx))
+                    .tooltip(move |window, cx| Tooltip::new(new_thread_tooltip).build(window, cx))
                     .child(
                         svg()
-                            .path(icons::TRASH)
-                            .size(px(15.))
+                            .path(icons::PLUS)
+                            .size(px(14.))
                             .text_color(muted_foreground),
                     )
                     .on_click(move |_, _, cx| {
@@ -874,50 +822,18 @@ fn render_ai_chat_panel(
             )
     };
 
-    // ===== 中部：消息列表 =====
-    let messages_view = if chat.messages.is_empty() && !chat.pending {
-        div()
-            .id("ai-chat-empty")
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_3()
-            .child(
-                // 圆形渐隐图标容器，空状态更精致
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(52.))
-                    .rounded_full()
-                    .bg(primary.opacity(0.1))
-                    .child(
-                        svg()
-                            .path(icons::SPARKLES)
-                            .size(px(24.))
-                            .text_color(primary),
-                    ),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted_foreground)
-                    .child(crate::i18n::t(lang, "ai_chat.empty")),
-            )
-            .into_any_element()
-    } else {
+    // ===== 中部：用户消息为编辑器卡片，Agent 回复直接铺排 =====
+    // Zed 在空 thread 时完全不渲染消息空状态，message editor 会占满这里。
+    let messages_view = has_messages.then(|| {
         div()
             .id("ai-chat-messages")
             .flex_1()
             .min_h_0()
             .overflow_y_scrollbar()
-            .px_2()
-            .py_3()
+            .py_2()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_1()
             .children(
                 chat.messages
                     .iter()
@@ -935,9 +851,13 @@ fn render_ai_chat_panel(
                                 .unwrap_or(true))
                     })
                     .map(|(idx, msg)| {
+                        let is_streaming = chat.pending
+                            && idx + 1 == chat.messages.len()
+                            && msg.role == crate::services::ai::ChatRole::Assistant;
                         render_ai_chat_message(
                             idx,
                             msg,
+                            is_streaming,
                             session_state.clone(),
                             tab_id.clone(),
                             lang,
@@ -959,36 +879,31 @@ fn render_ai_chat_panel(
                         .unwrap_or(true),
                 |this| {
                     this.child(
-                        // 思考中：带图标的占位气泡（左对齐，不撑满宽度）
-                        div().flex().child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .px_3()
-                                .py_2()
-                                .rounded(px(10.))
-                                .bg(cx.theme().muted)
-                                .child(
-                                    svg()
-                                        .path(icons::SPARKLES)
-                                        .size(px(13.))
-                                        .text_color(primary),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(muted_foreground)
-                                        .child(crate::i18n::t(lang, "ai_chat.thinking")),
-                                ),
-                        ),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(7.))
+                            .px_5()
+                            .py_1()
+                            .child(
+                                svg()
+                                    .path(icons::SPARKLES)
+                                    .size(px(13.))
+                                    .text_color(muted_foreground),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted_foreground)
+                                    .child(crate::i18n::t(lang, "ai_chat.thinking")),
+                            ),
                     )
                 },
             )
             .into_any_element()
-    };
+    });
 
-    // ===== 底部：合并式输入框（内嵌模型下拉 + 发送图标） =====
+    // ===== 底部：Zed 风格 message editor + 工具栏 =====
     let input_area = {
         let session_for_send = session_state.clone();
         let tab_id_for_send = tab_id.clone();
@@ -1017,6 +932,106 @@ fn render_ai_chat_panel(
             }
         };
 
+        // 供应商选择器与模型一起归入 message editor 底栏。
+        let provider_dropdown = {
+            let tab_id_for_pick = tab_id.clone();
+            let session_for_pick = session_state.clone();
+            let menu_items: Vec<(ProviderRef, String, Option<&'static str>)> = verified_refs
+                .iter()
+                .map(|provider_ref| match provider_ref {
+                    ProviderRef::Builtin(id) => (
+                        provider_ref.clone(),
+                        id.label().to_string(),
+                        Some(id.icon_path()),
+                    ),
+                    ProviderRef::Custom(_) => (
+                        provider_ref.clone(),
+                        settings
+                            .ai
+                            .resolve(provider_ref)
+                            .map(|provider| provider.name)
+                            .unwrap_or_default(),
+                        None,
+                    ),
+                })
+                .collect();
+            let trigger_label: SharedString = active_resolved
+                .as_ref()
+                .map(|provider| SharedString::from(provider.name.clone()))
+                .unwrap_or_else(|| crate::i18n::t(lang, "ai_chat.no_provider_short").into());
+            let trigger_icon: Option<AnyElement> = match (&active_ref, &active_resolved) {
+                (Some(ProviderRef::Builtin(id)), _) => Some(
+                    img(id.icon_path())
+                        .w(px(14.))
+                        .h(px(14.))
+                        .flex_shrink_0()
+                        .into_any_element(),
+                ),
+                (Some(ProviderRef::Custom(_)), Some(provider)) => Some(
+                    render_letter_avatar(ProviderRef::avatar_char(&provider.name), 14.)
+                        .into_any_element(),
+                ),
+                _ => None,
+            };
+
+            Button::new("ai-chat-provider-btn")
+                .ghost()
+                .xsmall()
+                .compact()
+                .disabled(!has_any)
+                .tooltip(trigger_label)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .min_w_0()
+                        .gap(px(3.))
+                        .children(trigger_icon)
+                        .child(
+                            svg()
+                                .path(icons::CHEVRON_DOWN)
+                                .size(px(11.))
+                                .text_color(muted_foreground),
+                        ),
+                )
+                .dropdown_menu_with_anchor(Corner::BottomLeft, move |menu, _, _| {
+                    let mut menu = menu.min_w(px(180.));
+                    for (provider_ref, name, builtin_icon) in &menu_items {
+                        let provider_ref = provider_ref.clone();
+                        let label: SharedString = SharedString::from(name.clone());
+                        let builtin_icon = *builtin_icon;
+                        let avatar_char = ProviderRef::avatar_char(name);
+                        let session = session_for_pick.clone();
+                        let tab_id = tab_id_for_pick.clone();
+                        menu = menu.item(
+                            PopupMenuItem::element(move |_window, cx| {
+                                let icon: AnyElement = match builtin_icon {
+                                    Some(path) => {
+                                        img(path).w(px(16.)).h(px(16.)).into_any_element()
+                                    }
+                                    None => {
+                                        render_letter_avatar(avatar_char, 16.).into_any_element()
+                                    }
+                                };
+                                div().flex().items_center().gap(px(8.)).child(icon).child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().foreground)
+                                        .child(label.clone()),
+                                )
+                            })
+                            .on_click(move |_, _, cx| {
+                                session.update(cx, |state, cx| {
+                                    state.set_ai_chat_provider(&tab_id, provider_ref.clone());
+                                    cx.notify();
+                                });
+                            }),
+                        );
+                    }
+                    menu
+                })
+        };
+
         // 模型下拉触发器
         let model_dropdown = {
             let models = model_list.clone();
@@ -1042,7 +1057,7 @@ fn render_ai_chat_panel(
                             div()
                                 .text_xs()
                                 .text_color(label_color)
-                                .max_w(px(160.))
+                                .max_w(px(76.))
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
@@ -1068,15 +1083,15 @@ fn render_ai_chat_panel(
                 })
         };
 
-        // 发送按钮：仅图标、无背景
+        // Zed 使用填充式发送按钮，让主动作在密集的工具栏里仍然明确。
         let send_disabled = pending || !has_any || !has_input;
         let send_icon_color = if send_disabled {
             muted_foreground
         } else {
-            primary
+            cx.theme().primary_foreground
         };
         let send_btn = Button::new("ai-chat-send")
-            .ghost()
+            .primary()
             .xsmall()
             .compact()
             .disabled(send_disabled)
@@ -1093,31 +1108,66 @@ fn render_ai_chat_panel(
                 });
             });
 
-        div()
-            .flex_shrink_0()
-            .border_t_1()
-            .border_color(border)
-            .p_2()
+        let context_enabled = settings.ai.context.enabled;
+        let context_status = div()
+            .flex()
+            .items_center()
+            .min_w_0()
+            .gap(px(5.))
+            .text_color(muted_foreground)
             .child(
-                // 合并式 composer 容器
+                svg()
+                    .path(icons::TERMINAL)
+                    .size(px(13.))
+                    .flex_shrink_0()
+                    .text_color(muted_foreground),
+            )
+            .child(
                 div()
+                    .max_w(px(82.))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .child(crate::i18n::t(
+                        lang,
+                        if context_enabled {
+                            "ai_chat.terminal_context"
+                        } else {
+                            "ai_chat.context_off"
+                        },
+                    )),
+            );
+
+        let input_control = input_entity.as_ref().map(|input| {
+            let input = Input::new(input).appearance(false);
+            if has_messages {
+                input
+            } else {
+                input.h_full()
+            }
+        });
+
+        div()
+            .bg(cx.theme().background)
+            .when(has_messages, |this| {
+                this.flex_shrink_0().border_t_1().border_color(border)
+            })
+            .when(!has_messages, |this| this.flex_1().min_h_0())
+            .child(
+                div()
+                    .size_full()
                     .flex()
                     .flex_col()
-                    .rounded(px(12.))
-                    .border_1()
-                    .border_color(border)
-                    .bg(cx.theme().background)
-                    .overflow_hidden()
-                    // 多行输入（去掉自带边框/背景，融入容器）
                     .child(
-                        div().px_2().pt_2().children(
-                            input_entity
-                                .as_ref()
-                                .map(|input| Input::new(input).appearance(false)),
-                        ),
+                        div()
+                            .min_h(px(54.))
+                            .px_3()
+                            .pt_3()
+                            .pb_2()
+                            .when(!has_messages, |this| this.flex_1().min_h_0())
+                            .children(input_control),
                     )
-                    // 底部工具条：模型下拉（左）+ 发送图标（右）。
-                    // 模型名有 max_w 上限并省略截断，保证发送按钮始终在右侧可见。
                     .child(
                         div()
                             .flex()
@@ -1126,9 +1176,17 @@ fn render_ai_chat_panel(
                             .gap_2()
                             .px_2()
                             .pb_2()
-                            .pt_1()
-                            .child(model_dropdown)
-                            .child(send_btn),
+                            .child(context_status)
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .child(provider_dropdown)
+                                    .child(model_dropdown)
+                                    .child(send_btn),
+                            ),
                     ),
             )
     };
@@ -1139,13 +1197,14 @@ fn render_ai_chat_panel(
         .flex()
         .flex_col()
         .child(header)
-        .child(messages_view)
+        .children(messages_view)
         .child(input_area)
 }
 
 fn render_ai_chat_message(
     idx: usize,
     msg: &crate::state::AiChatMessage,
+    is_streaming: bool,
     session_state: Entity<SessionState>,
     tab_id: String,
     lang: &crate::models::settings::Language,
@@ -1156,13 +1215,6 @@ fn render_ai_chat_message(
     use gpui_component::text::TextView;
 
     let is_user = msg.role == ChatRole::User;
-    let bg = if msg.error {
-        cx.theme().danger.opacity(0.12)
-    } else if is_user {
-        cx.theme().primary.opacity(0.12)
-    } else {
-        cx.theme().muted
-    };
     let text_color = if msg.error {
         cx.theme().danger
     } else {
@@ -1171,10 +1223,13 @@ fn render_ai_chat_message(
     let muted_fg = cx.theme().muted_foreground;
     let border = cx.theme().border;
 
-    // 气泡内容：用户/错误纯文本；助手 markdown，整体限制为 text_xs 与思考过程一致
-    let body: AnyElement = if is_user || msg.error {
+    // gpui-component 的 Markdown TextView 会等待 200ms 无更新后再解析；连续 token
+    // 会一直重置计时器。生成期间先直接绘制文本，结束后再切换为完整 Markdown，
+    // 这样正文和 reasoning 一样能逐 token 出现，又保留最终的富文本效果。
+    let body: AnyElement = if is_user || msg.error || is_streaming {
         div()
-            .text_xs()
+            .text_sm()
+            .line_height(relative(1.45))
             .text_color(text_color)
             .whitespace_normal()
             .child(SharedString::from(msg.content.clone()))
@@ -1182,21 +1237,17 @@ fn render_ai_chat_message(
     } else {
         use gpui::StyleRefinement;
         use gpui_component::text::TextViewStyle;
-        // 代码块样式：深色背景 + 边框 + 等宽小字号，与气泡区分开
+        // Zed 的 Agent 回复没有外层气泡；代码块自身用编辑器底色承载。
         let code_bg = if cx.theme().mode.is_dark() {
-            gpui::black().opacity(0.45)
+            gpui::black().opacity(0.36)
         } else {
             cx.theme().secondary
         };
-        let code_style = StyleRefinement::default()
-            .bg(code_bg)
-            .rounded(px(6.))
-            .p_3()
-            .border_1()
-            .border_color(cx.theme().border);
+        let code_style = StyleRefinement::default().bg(code_bg).rounded(px(5.)).p_2();
 
         div()
-            .text_xs()
+            .text_sm()
+            .line_height(relative(1.45))
             .child(
                 TextView::markdown(
                     SharedString::from(format!("ai-md-{}", idx)),
@@ -1206,7 +1257,7 @@ fn render_ai_chat_message(
                 )
                 .style(
                     TextViewStyle::default()
-                        .paragraph_gap(gpui::rems(0.5))
+                        .paragraph_gap(gpui::rems(0.65))
                         .code_block(code_style),
                 )
                 .selectable(true)
@@ -1235,7 +1286,8 @@ fn render_ai_chat_message(
             .into_any_element()
     };
 
-    // 思考过程块（DeepSeek-R1 等会带 reasoning），可折叠
+    // 思考过程块（DeepSeek-R1 等会带 reasoning），可折叠。
+    // Zed 使用一行低对比度标题，展开内容再以缩进竖线承载。
     let reasoning_block: Option<AnyElement> = msg.reasoning.as_ref().and_then(|r| {
         let r_owned = r.trim().to_string();
         if r_owned.is_empty() {
@@ -1246,28 +1298,36 @@ fn render_ai_chat_message(
         let tab_id_for_toggle = tab_id.clone();
         Some(
             div()
-                .mb_1()
-                .p_2()
-                .rounded(px(4.))
-                .border_l_2()
-                .border_color(border)
-                .bg(muted_fg.opacity(0.08))
+                .mb_2()
                 .flex()
                 .flex_col()
                 .gap_1()
                 .child(
                     div()
                         .id(SharedString::from(format!("ai-reason-toggle-{}", idx)))
+                        .w_full()
                         .flex()
                         .items_center()
-                        .gap_1()
+                        .justify_between()
+                        .gap_2()
                         .cursor_pointer()
-                        .child(render_icon(icons::SPARKLES, muted_fg.into()))
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(muted_fg)
-                                .child(crate::i18n::t(lang, "ai_chat.reasoning")),
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .child(
+                                    svg()
+                                        .path(icons::SPARKLES)
+                                        .size(px(12.))
+                                        .text_color(muted_fg),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(muted_fg)
+                                        .child(crate::i18n::t(lang, "ai_chat.reasoning")),
+                                ),
                         )
                         .child(
                             svg()
@@ -1288,7 +1348,13 @@ fn render_ai_chat_message(
                 .when(!collapsed, |this| {
                     this.child(
                         div()
+                            .ml(px(5.))
+                            .pl_3()
+                            .py_1()
+                            .border_l_1()
+                            .border_color(border)
                             .text_xs()
+                            .line_height(relative(1.45))
                             .text_color(muted_fg)
                             .whitespace_normal()
                             .child(SharedString::from(r_owned)),
@@ -1298,31 +1364,39 @@ fn render_ai_chat_message(
         )
     });
 
-    // 气泡：助手占满宽度（用 w_full 而非 flex_1，避免 flex 计算把 markdown 内部压到 0 宽）
-    // 用户气泡最大 85% 宽，自然收缩。
-    // overflow_hidden 兜底：极窄场景下宽代码块直接裁掉，不破坏布局或触发 TextView 零尺寸渲染。
-    let bubble = div()
+    // 与 Zed 一致：用户输入是全宽 editor card，Agent 输出直接落在正文画布上。
+    let message = div()
         .id(SharedString::from(format!("ai-msg-{}", idx)))
-        .px_3()
-        .py_2()
-        .rounded(px(10.))
-        .bg(bg)
+        .w_full()
         .flex()
         .flex_col()
         .overflow_hidden()
-        // 助手气泡加一圈淡边框，与背景区分；用户气泡保持纯色块
-        .when(!is_user && !msg.error, |this| {
-            this.border_1().border_color(border)
+        .when(is_user, |this| {
+            this.px_2()
+                .py_3()
+                .rounded(px(8.))
+                .bg(cx.theme().background)
+                .border_1()
+                .border_color(border)
+                .shadow_sm()
         })
-        .when(is_user, |this| this.max_w(relative(0.85)))
-        .when(!is_user, |this| this.w_full())
+        .when(msg.error, |this| {
+            this.w_full()
+                .px_3()
+                .py_2()
+                .rounded(px(6.))
+                .bg(cx.theme().danger.opacity(0.1))
+                .border_1()
+                .border_color(cx.theme().danger.opacity(0.3))
+        })
+        .when(!is_user && !msg.error, |this| this.w_full().px_3().py_2())
         .children(reasoning_block)
         .child(body);
 
     div()
         .w_full()
-        .flex()
         .overflow_hidden()
-        .when(is_user, |this| this.justify_end())
-        .child(bubble)
+        .when(is_user, |this| this.px_2())
+        .when(!is_user && !msg.error, |this| this.px_2())
+        .child(message)
 }

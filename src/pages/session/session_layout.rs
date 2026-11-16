@@ -248,8 +248,9 @@ pub fn render_session_layout(
                     .child(resizable_panel().child(left_area))
                     .child(
                         resizable_panel()
-                            .size(px(230.))
-                            .size_range(px(220.)..px(2000.))
+                            // Zed 当前 Agent Panel 的默认宽度为 300px；内容区仍可拖动扩展。
+                            .size(px(300.))
+                            .size_range(px(260.)..px(2000.))
                             .child(render_session_sidebar(
                                 tab,
                                 active_panel,

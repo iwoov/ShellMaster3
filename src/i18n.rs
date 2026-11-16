@@ -504,11 +504,14 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // AI 对话
         "ai_chat.empty" => "开始一段新对话吧",
-        "ai_chat.placeholder" => "向 AI 提问…",
+        "ai_chat.placeholder" => "询问当前终端…",
         "ai_chat.send" => "发送",
         "ai_chat.thinking" => "思考中…",
         "ai_chat.reasoning" => "思考过程",
         "ai_chat.clear" => "清空",
+        "ai_chat.new_thread" => "新建对话",
+        "ai_chat.terminal_context" => "终端上下文",
+        "ai_chat.context_off" => "上下文关闭",
         "ai_chat.no_provider" => {
             "尚未配置任何已通过测试的 AI 供应商，请先在「设置 → AI 配置」中添加并测试。"
         }
@@ -1023,11 +1026,14 @@ fn en_us(key: &'static str) -> &'static str {
 
         // AI Chat
         "ai_chat.empty" => "Start a new conversation",
-        "ai_chat.placeholder" => "Ask the AI…",
+        "ai_chat.placeholder" => "Ask about this terminal…",
         "ai_chat.send" => "Send",
         "ai_chat.thinking" => "Thinking…",
         "ai_chat.reasoning" => "Reasoning",
         "ai_chat.clear" => "Clear",
+        "ai_chat.new_thread" => "New conversation",
+        "ai_chat.terminal_context" => "Terminal context",
+        "ai_chat.context_off" => "Context off",
         "ai_chat.no_provider" => "No verified AI provider configured. Add one under Settings → AI and run the connectivity test.",
         "ai_chat.no_provider_short" => "Unconfigured",
 

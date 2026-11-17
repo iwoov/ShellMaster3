@@ -4,6 +4,7 @@ pub mod panels;
 
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::color_picker::{ColorPickerEvent, ColorPickerState};
 use gpui_component::input::InputState;
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::ActiveTheme;
@@ -14,6 +15,7 @@ use crate::constants::icons;
 use crate::i18n;
 use crate::models::settings::{AiProviderId, ApiFormat, AppSettings, CustomProvider, ProviderRef};
 use crate::services::storage;
+use crate::terminal::{hex_to_hsla, hsla_to_hex};
 
 // 导入辅助函数
 use helpers::create_float_number_input;
@@ -126,10 +128,11 @@ pub struct SettingsDialogState {
     pub terminal_background_opacity_input: Option<Entity<InputState>>,
     pub terminal_padding_input: Option<Entity<InputState>>,
     pub terminal_scroll_multiplier_input: Option<Entity<InputState>>,
-    pub terminal_foreground_input: Option<Entity<InputState>>,
-    pub terminal_background_input: Option<Entity<InputState>>,
-    pub terminal_cursor_color_input: Option<Entity<InputState>>,
-    pub terminal_selection_color_input: Option<Entity<InputState>>,
+    /// 配色：前景/背景/光标/选区颜色选择器（变更时通过事件实时写入 settings）
+    pub terminal_foreground_picker: Option<Entity<ColorPickerState>>,
+    pub terminal_background_picker: Option<Entity<ColorPickerState>>,
+    pub terminal_cursor_picker: Option<Entity<ColorPickerState>>,
+    pub terminal_selection_picker: Option<Entity<ColorPickerState>>,
     pub terminal_word_separators_input: Option<Entity<InputState>>,
     pub terminal_term_type_input: Option<Entity<InputState>>,
     pub terminal_default_shell_input: Option<Entity<InputState>>,
@@ -184,16 +187,6 @@ pub struct SettingsDialogState {
     pub ai_context_lines_input: Option<Entity<InputState>>,
 }
 
-fn normalize_hex_color(value: &str) -> Option<String> {
-    let value = value.trim();
-    let digits = value.strip_prefix('#').unwrap_or(value);
-    if digits.len() == 6 && digits.chars().all(|c| c.is_ascii_hexdigit()) {
-        Some(format!("#{}", digits.to_ascii_lowercase()))
-    } else {
-        None
-    }
-}
-
 impl Default for SettingsDialogState {
     fn default() -> Self {
         let settings = storage::load_settings().unwrap_or_default();
@@ -214,10 +207,10 @@ impl Default for SettingsDialogState {
             terminal_background_opacity_input: None,
             terminal_padding_input: None,
             terminal_scroll_multiplier_input: None,
-            terminal_foreground_input: None,
-            terminal_background_input: None,
-            terminal_cursor_color_input: None,
-            terminal_selection_color_input: None,
+            terminal_foreground_picker: None,
+            terminal_background_picker: None,
+            terminal_cursor_picker: None,
+            terminal_selection_picker: None,
             terminal_word_separators_input: None,
             terminal_term_type_input: None,
             terminal_default_shell_input: None,
@@ -324,10 +317,10 @@ impl SettingsDialogState {
         self.terminal_background_opacity_input = None;
         self.terminal_padding_input = None;
         self.terminal_scroll_multiplier_input = None;
-        self.terminal_foreground_input = None;
-        self.terminal_background_input = None;
-        self.terminal_cursor_color_input = None;
-        self.terminal_selection_color_input = None;
+        self.terminal_foreground_picker = None;
+        self.terminal_background_picker = None;
+        self.terminal_cursor_picker = None;
+        self.terminal_selection_picker = None;
         self.terminal_word_separators_input = None;
         self.terminal_term_type_input = None;
         self.terminal_default_shell_input = None;
@@ -437,6 +430,35 @@ impl SettingsDialogState {
                 Some(create_float_number_input(value, 0.1, 10.0, 0.1, window, cx));
         }
 
+        // 颜色选择器：选色/回车确认后通过事件实时写入 settings（预览卡片与色块标签直接读取 settings），
+        // 保存时不再从控件回读，避免未修改的颜色被 hex↔hsla 转换改写。
+        macro_rules! ensure_color_picker {
+            ($field:ident, $setting:ident) => {
+                if self.$field.is_none() {
+                    let initial = hex_to_hsla(&self.settings.terminal.$setting);
+                    let picker =
+                        cx.new(|cx| ColorPickerState::new(window, cx).default_value(initial));
+                    cx.subscribe_in(
+                        &picker,
+                        window,
+                        |this, _, event: &ColorPickerEvent, _, cx| {
+                            if let ColorPickerEvent::Change(Some(color)) = event {
+                                this.settings.terminal.$setting = hsla_to_hex(*color);
+                                this.mark_changed();
+                                cx.notify();
+                            }
+                        },
+                    )
+                    .detach();
+                    self.$field = Some(picker);
+                }
+            };
+        }
+        ensure_color_picker!(terminal_foreground_picker, foreground_color);
+        ensure_color_picker!(terminal_background_picker, background_color);
+        ensure_color_picker!(terminal_cursor_picker, cursor_color);
+        ensure_color_picker!(terminal_selection_picker, selection_color);
+
         macro_rules! ensure_terminal_text_input {
             ($field:ident, $value:expr) => {
                 if self.$field.is_none() {
@@ -449,22 +471,6 @@ impl SettingsDialogState {
                 }
             };
         }
-        ensure_terminal_text_input!(
-            terminal_foreground_input,
-            self.settings.terminal.foreground_color.clone()
-        );
-        ensure_terminal_text_input!(
-            terminal_background_input,
-            self.settings.terminal.background_color.clone()
-        );
-        ensure_terminal_text_input!(
-            terminal_cursor_color_input,
-            self.settings.terminal.cursor_color.clone()
-        );
-        ensure_terminal_text_input!(
-            terminal_selection_color_input,
-            self.settings.terminal.selection_color.clone()
-        );
         ensure_terminal_text_input!(
             terminal_word_separators_input,
             self.settings.terminal.word_separators.clone()
@@ -876,19 +882,7 @@ impl SettingsDialogState {
                 }
             };
         }
-        macro_rules! sync_terminal_color_input {
-            ($field:ident, $target:ident) => {
-                if let Some(input) = &self.$field {
-                    if let Some(color) = normalize_hex_color(&input.read(cx).value()) {
-                        self.settings.terminal.$target = color;
-                    }
-                }
-            };
-        }
-        sync_terminal_color_input!(terminal_foreground_input, foreground_color);
-        sync_terminal_color_input!(terminal_background_input, background_color);
-        sync_terminal_color_input!(terminal_cursor_color_input, cursor_color);
-        sync_terminal_color_input!(terminal_selection_color_input, selection_color);
+        // 前景/背景/光标/选区颜色由颜色选择器事件实时写入 settings，这里无需回读。
         sync_terminal_text_input!(terminal_word_separators_input, word_separators);
         sync_terminal_text_input!(terminal_term_type_input, term_type);
         sync_terminal_text_input!(terminal_default_shell_input, default_shell);

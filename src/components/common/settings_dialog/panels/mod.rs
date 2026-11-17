@@ -9,6 +9,7 @@ pub mod sftp;
 pub mod sync;
 pub mod system;
 pub mod terminal;
+mod terminal_preview;
 pub mod theme;
 
 pub use about::render_about_panel;

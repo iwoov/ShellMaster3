@@ -536,6 +536,10 @@ pub struct TerminalSettings {
     pub background_color: String,
     pub cursor_color: String,
     pub selection_color: String,
+    /// 客户端关键字高亮（error/IP/路径等，取色自当前主题 ANSI 调色板）
+    pub keyword_highlight: bool,
+    /// 连接后自动向远端 shell 注入 `alias ls='ls --color=auto'`（会话级，不改服务器文件）
+    pub auto_color_ls: bool,
     // 显示
     pub cursor_style: CursorStyle,
     pub cursor_blink: bool,
@@ -574,6 +578,8 @@ impl Default for TerminalSettings {
             background_color: "#282c34".to_string(),
             cursor_color: "#528bff".to_string(),
             selection_color: "#3e4451".to_string(),
+            keyword_highlight: true,
+            auto_color_ls: false,
             cursor_style: CursorStyle::Block,
             cursor_blink: true,
             cursor_blink_interval_ms: 500,
@@ -980,11 +986,15 @@ mod tests {
         object.remove("term_type");
         object.remove("show_tab_bar");
         object.remove("show_command_input");
+        object.remove("keyword_highlight");
+        object.remove("auto_color_ls");
 
         let settings: TerminalSettings = serde_json::from_value(value).unwrap();
         assert_eq!(settings.osc52_policy, Osc52Policy::WriteOnly);
         assert_eq!(settings.cursor_blink_interval_ms, 500);
         assert_eq!(settings.padding, 8);
         assert_eq!(settings.term_type, "xterm-256color");
+        assert!(settings.keyword_highlight);
+        assert!(!settings.auto_color_ls);
     }
 }

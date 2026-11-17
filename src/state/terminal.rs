@@ -172,6 +172,8 @@ impl SessionState {
         let pty_request =
             crate::terminal::create_pty_request(cols, rows, cell_width, line_height, &settings);
 
+        let ls_color_injection = crate::terminal::ls_color_injection(&settings);
+
         // 异步创建 PTY channel (使用 App::spawn)
         let terminal_for_task = terminal_state.clone();
         let session_state_for_task = cx.entity().clone();
@@ -270,6 +272,22 @@ impl SessionState {
                                 error!("[Terminal] Failed to close orphan PTY channel: {:?}", e);
                             }
                             return;
+                        }
+
+                        // 可选：等 shell 就绪后注入 ls 颜色 alias。
+                        // 提前写入也会被 PTY 缓冲，但回显可能落在登录横幅之前，所以稍等一下。
+                        if let Some(command) = ls_color_injection {
+                            let channel_for_inject = channel.clone();
+                            async_cx
+                                .spawn(async move |acx| {
+                                    acx.background_executor()
+                                        .timer(std::time::Duration::from_millis(600))
+                                        .await;
+                                    if let Err(e) = channel_for_inject.queue_write(command) {
+                                        error!("[Terminal] ls color injection failed: {:?}", e);
+                                    }
+                                })
+                                .detach();
                         }
 
                         // 启动 PTY 读取循环

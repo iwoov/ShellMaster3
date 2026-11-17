@@ -12,12 +12,15 @@ use crate::i18n;
 use crate::models::settings::{
     BellStyle, CursorStyle, FontWeight as TerminalFontWeight, Osc52Policy,
 };
+use crate::terminal::{palette_for, rgb_to_hsla};
 
 use super::super::helpers::{
-    render_font_input_row, render_input_row, render_number_row, render_section_title,
-    render_switch_row, render_theme_select_row, TERMINAL_FONTS, TERMINAL_THEMES,
+    render_color_picker_row, render_font_input_row, render_input_row, render_number_row,
+    render_section_title, render_switch_row, render_theme_select_row, TERMINAL_FONTS,
+    TERMINAL_THEMES,
 };
 use super::super::SettingsDialogState;
+use super::terminal_preview::render_terminal_preview;
 
 /// 渲染终端设置面板
 pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
@@ -34,14 +37,17 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
     let opacity_input = state_read.terminal_background_opacity_input.clone();
     let padding_input = state_read.terminal_padding_input.clone();
     let scroll_multiplier_input = state_read.terminal_scroll_multiplier_input.clone();
-    let foreground_input = state_read.terminal_foreground_input.clone();
-    let background_input = state_read.terminal_background_input.clone();
-    let cursor_color_input = state_read.terminal_cursor_color_input.clone();
-    let selection_color_input = state_read.terminal_selection_color_input.clone();
+    let foreground_picker = state_read.terminal_foreground_picker.clone();
+    let background_picker = state_read.terminal_background_picker.clone();
+    let cursor_picker = state_read.terminal_cursor_picker.clone();
+    let selection_picker = state_read.terminal_selection_picker.clone();
     let word_separators_input = state_read.terminal_word_separators_input.clone();
     let term_type_input = state_read.terminal_term_type_input.clone();
     let default_shell_input = state_read.terminal_default_shell_input.clone();
     let shell_args_input = state_read.terminal_shell_args_input.clone();
+
+    // 调色板弹窗顶部的快捷色
+    let featured_colors = theme_featured_colors(&terminal.color_scheme);
 
     // 光标样式选项
     let cursor_style = terminal.cursor_style.clone();
@@ -139,31 +145,41 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
                             state.clone(),
                             cx,
                         ))
-                        .children(foreground_input.as_ref().map(|input| {
-                            render_input_row(
+                        // 模拟终端预览：实时反映下面的颜色、上面的字体，以及显示区的光标样式
+                        .child(render_terminal_preview(state_read, cx))
+                        .children(foreground_picker.as_ref().map(|picker| {
+                            render_color_picker_row(
                                 i18n::t(lang, "settings.terminal.foreground_color"),
-                                input,
+                                picker,
+                                &terminal.foreground_color,
+                                featured_colors.clone(),
                                 cx,
                             )
                         }))
-                        .children(background_input.as_ref().map(|input| {
-                            render_input_row(
+                        .children(background_picker.as_ref().map(|picker| {
+                            render_color_picker_row(
                                 i18n::t(lang, "settings.terminal.background_color"),
-                                input,
+                                picker,
+                                &terminal.background_color,
+                                featured_colors.clone(),
                                 cx,
                             )
                         }))
-                        .children(cursor_color_input.as_ref().map(|input| {
-                            render_input_row(
+                        .children(cursor_picker.as_ref().map(|picker| {
+                            render_color_picker_row(
                                 i18n::t(lang, "settings.terminal.cursor_color"),
-                                input,
+                                picker,
+                                &terminal.cursor_color,
+                                featured_colors.clone(),
                                 cx,
                             )
                         }))
-                        .children(selection_color_input.as_ref().map(|input| {
-                            render_input_row(
+                        .children(selection_picker.as_ref().map(|picker| {
+                            render_color_picker_row(
                                 i18n::t(lang, "settings.terminal.selection_color"),
-                                input,
+                                picker,
+                                &terminal.selection_color,
+                                featured_colors.clone(),
                                 cx,
                             )
                         }))
@@ -173,7 +189,23 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
                                 input,
                                 cx,
                             )
-                        })),
+                        }))
+                        .child(render_switch_row(
+                            "terminal-keyword-highlight",
+                            i18n::t(lang, "settings.terminal.keyword_highlight"),
+                            terminal.keyword_highlight,
+                            state.clone(),
+                            |s, v| s.settings.terminal.keyword_highlight = v,
+                            cx,
+                        ))
+                        .child(render_switch_row(
+                            "terminal-auto-color-ls",
+                            i18n::t(lang, "settings.terminal.auto_color_ls"),
+                            terminal.auto_color_ls,
+                            state.clone(),
+                            |s, v| s.settings.terminal.auto_color_ls = v,
+                            cx,
+                        )),
                 ),
         )
         // 显示
@@ -346,6 +378,30 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
                     render_input_row(i18n::t(lang, "settings.terminal.shell_args"), input, cx)
                 })),
         )
+}
+
+/// 调色板弹窗顶部的快捷色：当前主题的 背景/前景/光标/选区 + ANSI 红绿黄蓝品青（最多 10 个）。
+fn theme_featured_colors(scheme: &str) -> Vec<Hsla> {
+    let palette = palette_for(scheme);
+    let mut colors: Vec<(u8, u8, u8)> = Vec::with_capacity(10);
+    for rgb in [
+        palette.background,
+        palette.foreground,
+        palette.cursor,
+        palette.selection,
+    ]
+    .into_iter()
+    .chain(palette.ansi[1..=6].iter().copied())
+    {
+        // 部分主题的光标色与前景色相同：重复的色块没有意义，还会让弹窗里出现 id 相同的元素
+        if !colors.contains(&rgb) {
+            colors.push(rgb);
+        }
+    }
+    colors
+        .into_iter()
+        .map(|(r, g, b)| rgb_to_hsla(r, g, b))
+        .collect()
 }
 
 /// 渲染光标样式选择行
@@ -543,4 +599,41 @@ fn render_choice_row(
                         })
                 }),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    // 不要写 `use super::*`：父模块里的 `use gpui::*` 会把 `#[gpui::test]` 一并带进来，
+    // 盖过内置的 `#[test]`，导致宏展开递归超限。
+    use super::super::super::helpers::TERMINAL_THEMES;
+    use super::theme_featured_colors;
+    use crate::terminal::{hsla_to_hex, palette_for};
+
+    #[test]
+    fn featured_colors_are_unique_and_start_with_the_background() {
+        for scheme in TERMINAL_THEMES {
+            let hexes: Vec<String> = theme_featured_colors(scheme)
+                .into_iter()
+                .map(hsla_to_hex)
+                .collect();
+
+            let mut unique = hexes.clone();
+            unique.sort();
+            unique.dedup();
+            assert_eq!(
+                hexes.len(),
+                unique.len(),
+                "{scheme}: duplicates in {hexes:?}"
+            );
+            // 背景、前景、光标、选区 + 6 个 ANSI 色；光标与前景同色的主题少 1 个
+            assert!(
+                (9..=10).contains(&hexes.len()),
+                "{scheme}: unexpected count {}",
+                hexes.len()
+            );
+
+            let (r, g, b) = palette_for(scheme).background;
+            assert_eq!(hexes[0], format!("#{r:02x}{g:02x}{b:02x}"), "{scheme}");
+        }
+    }
 }

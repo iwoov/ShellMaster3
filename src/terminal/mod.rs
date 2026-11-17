@@ -2,6 +2,7 @@
 
 mod batched_run;
 mod colors;
+pub mod highlight;
 mod input;
 mod keys;
 mod mouse;

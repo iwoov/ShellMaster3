@@ -112,6 +112,18 @@ fn terminal_command(settings: &TerminalSettings) -> Option<String> {
     })
 }
 
+/// 连接后注入远端 shell 的命令：让 `ls` 输出目录/可执行文件等颜色。
+///
+/// - 开头的空格让 bash/zsh 不把它记入历史（需 ignorespace，默认多数发行版已开）；
+/// - 先探测 `ls --color=auto` 是否被支持，BSD/macOS 的 ls 不认该参数，避免每次 `ls` 都报错；
+/// - 指定了自定义 shell 命令（exec 通道，没有交互 shell）时不注入。
+pub fn ls_color_injection(settings: &TerminalSettings) -> Option<Vec<u8>> {
+    if !settings.auto_color_ls || terminal_command(settings).is_some() {
+        return None;
+    }
+    Some(b" ls --color=auto -d . >/dev/null 2>&1 && alias ls='ls --color=auto'\n".to_vec())
+}
+
 /// 启动 PTY 读取循环 (fire-and-forget)
 /// 读取循环会持续运行直到通道关闭
 pub fn start_pty_reader(
@@ -398,6 +410,17 @@ mod tests {
         settings.shell_args = "-l".to_string();
         let request = create_pty_request(80, 24, 8.0, 16.0, &settings);
         assert_eq!(request.command.as_deref(), Some("/bin/zsh -l"));
+    }
+
+    #[test]
+    fn ls_color_injection_only_when_enabled_and_interactive_shell() {
+        let mut settings = TerminalSettings::default();
+        assert!(ls_color_injection(&settings).is_none());
+        settings.auto_color_ls = true;
+        let cmd = String::from_utf8(ls_color_injection(&settings).unwrap()).unwrap();
+        assert!(cmd.starts_with(' ') && cmd.ends_with('\n') && cmd.contains("alias ls="));
+        settings.default_shell = "/bin/zsh".to_string();
+        assert!(ls_color_injection(&settings).is_none());
     }
 }
 

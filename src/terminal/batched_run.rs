@@ -11,6 +11,7 @@ use gpui::FontFeatures;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::search::Match;
+use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 use alacritty_terminal::Term;
 
@@ -18,6 +19,7 @@ use crate::models::settings::TerminalSettings;
 use crate::terminal::colors::{
     alac_rgb_to_hsla, ansi_indexed_color, hex_to_hsla, palette_for, TerminalPalette,
 };
+use crate::terminal::highlight::classify_line;
 use crate::terminal::state::EventProxy;
 
 /// 批量文本运行 - 合并相邻同样式的单元格
@@ -270,6 +272,10 @@ pub fn layout_grid(
     // 获取选择范围
     let selection = content.selection;
 
+    // 关键字高亮：全屏程序（vim/htop/less）使用备用屏幕，不染色
+    let highlight = (settings.keyword_highlight && !term.mode().contains(TermMode::ALT_SCREEN))
+        .then(|| classify_grid(term, display_offset));
+
     let mut text_runs: Vec<BatchedTextRun> = Vec::with_capacity(200);
     let mut background_rects: Vec<BackgroundRect> = Vec::with_capacity(100);
     let mut selection_rects: Vec<BackgroundRect> = Vec::with_capacity(50);
@@ -345,7 +351,17 @@ pub fn layout_grid(
         };
 
         // 转换颜色
-        let fg_color = convert_color(fg, fg_default, settings, &palette);
+        let mut fg_color = convert_color(fg, fg_default, settings, &palette);
+        // 只给「默认前景色」且非反色的格子上色；程序自己输出的颜色保持原样
+        if !flags.contains(Flags::INVERSE) && fg == AnsiColor::Named(NamedColor::Foreground) {
+            if let Some(slot) = highlight
+                .as_ref()
+                .and_then(|h| h.get(usize::try_from(display_line).ok()?))
+                .and_then(|row| row.get(col as usize).copied().flatten())
+            {
+                fg_color = palette.ansi_hsla(slot);
+            }
+        }
         let bg_color = convert_color(bg, bg_default, settings, &palette);
 
         // 处理背景（非默认背景才需要绘制）
@@ -425,6 +441,53 @@ pub fn layout_grid(
         selection_rects,
         search_rects,
     }
+}
+
+/// 预扫可见网格：按行聚合文本，调用关键字分类器，得到每行「按列」的调色板索引。
+/// 返回值以显示行号（`point.line + display_offset`）为下标。
+fn classify_grid(term: &Term<EventProxy>, display_offset: i32) -> Vec<Vec<Option<u8>>> {
+    let columns = term.grid().columns();
+    let mut rows: Vec<Vec<Option<u8>>> = vec![Vec::new(); term.grid().screen_lines()];
+
+    let mut current: Option<usize> = None;
+    let mut text = String::new();
+    // 字符下标 → 列号（宽字符占两列，但只有一个字符）
+    let mut cols: Vec<usize> = Vec::new();
+
+    let mut flush = |line: Option<usize>, text: &mut String, cols: &mut Vec<usize>| {
+        if let Some(row) = line.and_then(|l| rows.get_mut(l)) {
+            let spans = classify_line(text);
+            if !spans.is_empty() {
+                let mut slots = vec![None; columns];
+                for (range, slot) in spans {
+                    for &col in &cols[range] {
+                        slots[col] = Some(slot);
+                    }
+                }
+                *row = slots;
+            }
+        }
+        text.clear();
+        cols.clear();
+    };
+
+    for indexed in term.renderable_content().display_iter {
+        let Ok(line) = usize::try_from(indexed.point.line.0 + display_offset) else {
+            continue;
+        };
+        if current != Some(line) {
+            flush(current, &mut text, &mut cols);
+            current = Some(line);
+        }
+        if indexed.cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            continue;
+        }
+        text.push(indexed.cell.c);
+        cols.push(indexed.point.column.0);
+    }
+    flush(current, &mut text, &mut cols);
+
+    rows
 }
 
 /// 转换 ANSI 颜色到 Hsla。0-15 号色取自主题调色板；256 色立方体走计算。

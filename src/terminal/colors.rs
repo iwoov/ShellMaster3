@@ -1,6 +1,6 @@
 // 终端颜色转换 - ANSI 颜色到 GPUI Hsla
 
-use gpui::Hsla;
+use gpui::{Hsla, Rgba};
 
 /// 16 色 ANSI 调色板（One Dark 风格）
 pub const ANSI_COLORS: [[u8; 3]; 16] = [
@@ -42,6 +42,22 @@ pub fn hex_to_rgb(hex: &str) -> (u8, u8, u8) {
 pub fn hex_to_hsla(hex: &str) -> Hsla {
     let (r, g, b) = hex_to_rgb(hex);
     rgb_to_hsla(r, g, b)
+}
+
+/// 将 Hsla 转换为 `#rrggbb`（小写，忽略 alpha）。
+///
+/// 各通道四舍五入，保证 `hex_to_hsla` → `hsla_to_hex` 往返无损。
+/// 不使用 gpui-component 的 `Colorize::to_hex`：它按 `as u32` 截断且输出大写，
+/// 会让 `#abb2bf` 漂移成 `#AAB1BE`。
+pub fn hsla_to_hex(c: Hsla) -> String {
+    let rgba = Rgba::from(c);
+    let channel = |x: f32| (x * 255.0).round().clamp(0.0, 255.0) as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        channel(rgba.r),
+        channel(rgba.g),
+        channel(rgba.b)
+    )
 }
 
 /// 从 RGB 转换为 Hsla
@@ -251,5 +267,63 @@ pub fn palette_for(scheme: &str) -> TerminalPalette {
                 "#56b6c2", "#ffffff",
             ]),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hsla_to_hex_round_trips_palette_colors() {
+        for scheme in [
+            "One Dark",
+            "Dracula",
+            "Solarized Dark",
+            "Solarized Light",
+            "Nord",
+            "Monokai",
+            "Gruvbox Dark",
+            "Tokyo Night",
+            "GitHub Dark",
+        ] {
+            let p = palette_for(scheme);
+            let colors = [p.foreground, p.background, p.cursor, p.selection]
+                .into_iter()
+                .chain(p.ansi);
+            for (r, g, b) in colors {
+                let hex = format!("#{:02x}{:02x}{:02x}", r, g, b);
+                assert_eq!(hsla_to_hex(hex_to_hsla(&hex)), hex, "scheme {scheme}");
+            }
+        }
+    }
+
+    #[test]
+    fn hsla_to_hex_round_trips_rgb_cube() {
+        // 步长取互质数，覆盖各通道的奇偶/边界值，同时保持测试足够快。
+        let axis = |step: usize| (0..=255u8).step_by(step).chain([255u8]);
+        for r in axis(7) {
+            for g in axis(11) {
+                for b in axis(13) {
+                    let hex = format!("#{:02x}{:02x}{:02x}", r, g, b);
+                    assert_eq!(hsla_to_hex(rgb_to_hsla(r, g, b)), hex);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hsla_to_hex_does_not_truncate_like_colorize() {
+        // gpui-component 的 `to_hex` 会把 #abb2bf 截断成 #AAB1BE。
+        assert_eq!(hsla_to_hex(hex_to_hsla("#abb2bf")), "#abb2bf");
+    }
+
+    #[test]
+    fn hsla_to_hex_ignores_alpha() {
+        let translucent = Hsla {
+            a: 0.25,
+            ..hex_to_hsla("#528bff")
+        };
+        assert_eq!(hsla_to_hex(translucent), "#528bff");
     }
 }

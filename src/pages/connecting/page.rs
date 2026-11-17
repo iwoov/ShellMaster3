@@ -8,7 +8,7 @@ use crate::constants::icons;
 use crate::i18n;
 use crate::models::settings::Language;
 use crate::services::storage;
-use crate::ssh::event::{ConnectionStage, LogEntry, LogLevel};
+use crate::ssh::event::{ConnectionStage, HostKeyAction, HostKeyResponder, LogEntry, LogLevel};
 use crate::state::{SessionState, SessionTab};
 
 /// 连接详情
@@ -32,10 +32,8 @@ pub struct ConnectingProgress {
     pub is_completed: bool,
     /// 是否已启动连接
     pub connection_started: bool,
-    /// Host key 验证状态
+    /// 待用户确认的主机密钥（含应答通道）
     pub host_key_verification: Option<HostKeyVerificationState>,
-    /// Host key 响应发送器（用于发送用户选择）
-    host_key_tx: Option<tokio::sync::oneshot::Sender<crate::ssh::event::HostKeyAction>>,
     /// 连接详情
     pub connection_details: Option<ConnectionDetails>,
 }
@@ -47,7 +45,11 @@ pub struct HostKeyVerificationState {
     pub port: u16,
     pub key_type: String,
     pub fingerprint: String,
+    /// 密钥变化时，known hosts 中保存的原指纹
+    pub expected_fingerprint: Option<String>,
     pub is_mismatch: bool, // true 表示密钥已变化（可能安全风险）
+    /// 用户选择后通过它回传给连接任务
+    pub responder: HostKeyResponder,
 }
 
 impl ConnectingProgress {
@@ -59,7 +61,6 @@ impl ConnectingProgress {
             is_completed: false,
             connection_started: false,
             host_key_verification: None,
-            host_key_tx: None,
             connection_details: None,
         }
     }
@@ -87,42 +88,23 @@ impl ConnectingProgress {
         self.connection_started = true;
     }
 
-    /// 设置 host key 验证状态
-    pub fn set_host_key_verification(
-        &mut self,
-        host: String,
-        port: u16,
-        key_type: String,
-        fingerprint: String,
-        is_mismatch: bool,
-    ) {
-        self.host_key_verification = Some(HostKeyVerificationState {
-            host,
-            port,
-            key_type,
-            fingerprint,
-            is_mismatch,
-        });
+    /// 显示主机密钥确认面板
+    pub fn set_host_key_verification(&mut self, verification: HostKeyVerificationState) {
+        self.host_key_verification = Some(verification);
     }
 
-    /// 清除 host key 验证状态
+    /// 清除 host key 验证状态（未应答的确认按拒绝处理）
     pub fn clear_host_key_verification(&mut self) {
-        self.host_key_verification = None;
+        if let Some(verification) = self.host_key_verification.take() {
+            verification.responder.respond(HostKeyAction::Reject);
+        }
     }
 
-    /// 设置 host key 响应发送器
-    pub fn set_host_key_tx(
-        &mut self,
-        tx: tokio::sync::oneshot::Sender<crate::ssh::event::HostKeyAction>,
-    ) {
-        self.host_key_tx = Some(tx);
-    }
-
-    /// 取出 host key 响应发送器
-    pub fn take_host_key_tx(
-        &mut self,
-    ) -> Option<tokio::sync::oneshot::Sender<crate::ssh::event::HostKeyAction>> {
-        self.host_key_tx.take()
+    /// 回传用户对当前主机密钥的选择
+    pub fn respond_host_key(&mut self, action: HostKeyAction) {
+        if let Some(verification) = self.host_key_verification.take() {
+            verification.responder.respond(action);
+        }
     }
 
     /// 设置连接详情
@@ -581,6 +563,37 @@ pub fn render_connecting_page(
                                     ),
                             ),
                     )
+                    // 密钥变化时显示 known hosts 中保存的原指纹，便于核对
+                    .children(hk.expected_fingerprint.clone().map(|expected| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted_foreground)
+                                    .flex_shrink_0()
+                                    .child(i18n::t(
+                                        &lang,
+                                        "connecting.host_key.expected_fingerprint",
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_1()
+                                    .bg(cx.theme().secondary.opacity(0.3))
+                                    .rounded_md()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_family("monospace")
+                                            .text_color(muted_foreground)
+                                            .child(expected),
+                                    ),
+                            )
+                    }))
                     // 操作按钮
                     .child({
                         let ps_accept = progress_state.clone();
@@ -603,12 +616,7 @@ pub fn render_connecting_page(
                                     .hover(|s| s.opacity(0.9))
                                     .on_click(move |_, _, cx| {
                                         ps_accept.update(cx, |state, _| {
-                                            if let Some(tx) = state.take_host_key_tx() {
-                                                let _ = tx.send(
-                                                    crate::ssh::event::HostKeyAction::AcceptAndSave,
-                                                );
-                                            }
-                                            state.clear_host_key_verification();
+                                            state.respond_host_key(HostKeyAction::AcceptAndSave);
                                         });
                                     })
                                     .child(
@@ -634,12 +642,7 @@ pub fn render_connecting_page(
                                     .hover(|s| s.bg(cx.theme().secondary_hover))
                                     .on_click(move |_, _, cx| {
                                         ps_once.update(cx, |state, _| {
-                                            if let Some(tx) = state.take_host_key_tx() {
-                                                let _ = tx.send(
-                                                    crate::ssh::event::HostKeyAction::AcceptOnce,
-                                                );
-                                            }
-                                            state.clear_host_key_verification();
+                                            state.respond_host_key(HostKeyAction::AcceptOnce);
                                         });
                                     })
                                     .child(
@@ -665,11 +668,7 @@ pub fn render_connecting_page(
                                     .hover(|s| s.bg(destructive.opacity(0.2)))
                                     .on_click(move |_, _, cx| {
                                         ps_reject.update(cx, |state, _| {
-                                            if let Some(tx) = state.take_host_key_tx() {
-                                                let _ = tx
-                                                    .send(crate::ssh::event::HostKeyAction::Reject);
-                                            }
-                                            state.clear_host_key_verification();
+                                            state.respond_host_key(HostKeyAction::Reject);
                                         });
                                     })
                                     .child(

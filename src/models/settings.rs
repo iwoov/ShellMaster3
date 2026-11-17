@@ -4,9 +4,19 @@ use serde::{Deserialize, Serialize};
 
 // ======================== 主配置结构 ========================
 
+/// 当前设置文件格式版本（用于一次性迁移旧配置）
+pub const CURRENT_SETTINGS_VERSION: u32 = 1;
+
+/// 旧版本的默认心跳间隔。旧版本还设置了 30 秒空闲断开，实际断线检测靠它；
+/// 去掉空闲断开后改由心跳检测，60 秒的间隔太慢。
+const LEGACY_DEFAULT_KEEPALIVE_SECS: u32 = 60;
+
 /// 应用设置（持久化用）
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppSettings {
+    /// 设置文件格式版本；旧文件没有该字段，按 0 处理
+    #[serde(default)]
+    pub settings_version: u32,
     pub theme: ThemeSettings,
     pub terminal: TerminalSettings,
     pub sftp: SftpSettings,
@@ -21,6 +31,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            settings_version: CURRENT_SETTINGS_VERSION,
             theme: ThemeSettings::default(),
             terminal: TerminalSettings::default(),
             sftp: SftpSettings::default(),
@@ -30,6 +41,25 @@ impl Default for AppSettings {
             system: SystemSettings::default(),
             ai: AiSettings::default(),
         }
+    }
+}
+
+impl AppSettings {
+    /// 把旧版本的设置升级到当前格式，返回是否有改动（需要写回文件）
+    pub fn migrate(&mut self) -> bool {
+        if self.settings_version >= CURRENT_SETTINGS_VERSION {
+            return false;
+        }
+        if self.settings_version < 1 {
+            // v1：心跳成为唯一的断线检测手段，仍是旧默认值 60 秒的改为 15 秒
+            // （连续 4 次无响应约 1 分钟判定断开）；用户自定义过的值保持不变。
+            if self.connection.keepalive_interval_secs == LEGACY_DEFAULT_KEEPALIVE_SECS {
+                self.connection.keepalive_interval_secs =
+                    ConnectionSettings::default().keepalive_interval_secs;
+            }
+        }
+        self.settings_version = CURRENT_SETTINGS_VERSION;
+        true
     }
 }
 
@@ -800,7 +830,7 @@ impl Default for ConnectionSettings {
         Self {
             default_port: 22,
             connection_timeout_secs: 30,
-            keepalive_interval_secs: 60,
+            keepalive_interval_secs: 15,
             compression: false,
             strict_host_key_checking: false,
             auto_reconnect: true,
@@ -996,5 +1026,35 @@ mod tests {
         assert_eq!(settings.term_type, "xterm-256color");
         assert!(settings.keyword_highlight);
         assert!(!settings.auto_color_ls);
+    }
+
+    fn legacy_settings(keepalive_secs: u32) -> AppSettings {
+        let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("settings_version");
+        object["connection"]["keepalive_interval_secs"] = keepalive_secs.into();
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn migration_lowers_legacy_default_keepalive_once() {
+        let mut settings = legacy_settings(60);
+        assert_eq!(settings.settings_version, 0);
+        assert!(settings.migrate());
+        assert_eq!(settings.connection.keepalive_interval_secs, 15);
+        assert_eq!(settings.settings_version, CURRENT_SETTINGS_VERSION);
+
+        // 迁移后用户再改回 60 秒，不会被再次修改
+        settings.connection.keepalive_interval_secs = 60;
+        assert!(!settings.migrate());
+        assert_eq!(settings.connection.keepalive_interval_secs, 60);
+    }
+
+    #[test]
+    fn migration_keeps_custom_keepalive() {
+        let mut settings = legacy_settings(30);
+        assert!(settings.migrate());
+        assert_eq!(settings.connection.keepalive_interval_secs, 30);
+        assert!(!AppSettings::default().migrate());
     }
 }

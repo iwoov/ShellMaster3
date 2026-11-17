@@ -25,13 +25,25 @@ pub enum SshError {
     #[error("Key error: {0}")]
     Key(String),
 
-    /// 代理错误（预留）
+    /// 主机密钥校验未通过（用户拒绝、密钥变化等）
+    #[error("Host key verification failed: {0}")]
+    HostKey(String),
+
+    /// 代理错误
     #[error("Proxy error: {0}")]
     Proxy(String),
 
-    /// 跳板机错误（预留）
+    /// 跳板机错误（如无法经跳板机建立到目标主机的转发通道）
     #[error("Jump host error: {0}")]
     JumpHost(String),
+
+    /// 连接跳板机本身时出错，附带出错的跳板机名称
+    #[error("Jump host '{label}': {source}")]
+    Hop {
+        label: String,
+        #[source]
+        source: Box<SshError>,
+    },
 
     /// 连接超时
     #[error("Connection timeout after {0}s")]
@@ -44,10 +56,22 @@ pub enum SshError {
     /// 会话已断开
     #[error("Session disconnected: {0}")]
     Disconnected(String),
+}
 
-    /// 连接已取消
-    #[error("Connection cancelled")]
-    Cancelled,
+impl SshError {
+    /// 是否值得自动重试。
+    ///
+    /// 认证失败、主机密钥校验失败、配置错误等重试也不会成功，
+    /// 自动重连遇到这类错误应立即停止并提示用户。
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            SshError::Config(_) | SshError::Auth(_) | SshError::Key(_) | SshError::HostKey(_) => {
+                false
+            }
+            SshError::Hop { source, .. } => source.is_retryable(),
+            _ => true,
+        }
+    }
 }
 
 impl From<russh::Error> for SshError {

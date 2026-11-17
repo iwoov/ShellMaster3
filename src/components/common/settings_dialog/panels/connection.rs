@@ -2,11 +2,27 @@
 
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 use crate::i18n;
+use crate::models::settings::GlobalProxyType;
 
-use super::super::helpers::{render_number_row, render_section_title, render_switch_row};
+use super::super::helpers::{
+    render_input_row, render_number_row, render_section_title, render_select_row,
+    render_switch_row,
+};
 use super::super::SettingsDialogState;
+
+/// 渲染设置项下方的说明文字
+fn render_hint(text: &'static str, cx: &App) -> impl IntoElement {
+    div()
+        .px_4()
+        .mt(px(-4.))
+        .mb_2()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(text)
+}
 
 /// 渲染连接设置面板
 pub fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
@@ -20,6 +36,15 @@ pub fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> 
     let keepalive_interval_input = state_read.keepalive_interval_input.clone();
     let reconnect_attempts_input = state_read.reconnect_attempts_input.clone();
     let reconnect_interval_input = state_read.reconnect_interval_input.clone();
+    let proxy_host_input = state_read.global_proxy_host_input.clone();
+    let proxy_port_input = state_read.global_proxy_port_input.clone();
+    let proxy_username_input = state_read.global_proxy_username_input.clone();
+    let proxy_password_input = state_read.global_proxy_password_input.clone();
+
+    let proxy_type = conn.global_proxy_type.clone();
+    let proxy_enabled = proxy_type != GlobalProxyType::None;
+    // SOCKS4 没有密码
+    let proxy_has_password = matches!(proxy_type, GlobalProxyType::Http | GlobalProxyType::Socks5);
 
     div()
         .flex()
@@ -68,6 +93,18 @@ pub fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> 
                             state.clone(),
                             |s, v| s.settings.connection.compression = v,
                             cx,
+                        ))
+                        .child(render_switch_row(
+                            "conn-strict-host-key",
+                            i18n::t(lang, "settings.connection.strict_host_key"),
+                            conn.strict_host_key_checking,
+                            state.clone(),
+                            |s, v| s.settings.connection.strict_host_key_checking = v,
+                            cx,
+                        ))
+                        .child(render_hint(
+                            i18n::t(lang, "settings.connection.strict_host_key_hint"),
+                            cx,
                         )),
                 ),
         )
@@ -108,6 +145,80 @@ pub fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> 
                                 cx,
                             )
                         })),
+                ),
+        )
+        // 全局代理
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title(
+                    i18n::t(lang, "settings.connection.global_proxy"),
+                    cx,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(render_select_row(
+                            "conn-global-proxy-type",
+                            i18n::t(lang, "settings.connection.global_proxy_type"),
+                            &proxy_type,
+                            vec![
+                                (
+                                    GlobalProxyType::None,
+                                    i18n::t(lang, "settings.connection.global_proxy_none"),
+                                ),
+                                (GlobalProxyType::Http, "HTTP"),
+                                (GlobalProxyType::Socks4, "SOCKS4"),
+                                (GlobalProxyType::Socks5, "SOCKS5"),
+                            ],
+                            state.clone(),
+                            |s, v| s.settings.connection.global_proxy_type = v,
+                            cx,
+                        ))
+                        .when(proxy_enabled, |section| {
+                            section
+                                .children(proxy_host_input.as_ref().map(|input| {
+                                    render_input_row(
+                                        i18n::t(lang, "settings.connection.global_proxy_host"),
+                                        input,
+                                        cx,
+                                    )
+                                }))
+                                .children(proxy_port_input.as_ref().map(|input| {
+                                    render_input_row(
+                                        i18n::t(lang, "settings.connection.global_proxy_port"),
+                                        input,
+                                        cx,
+                                    )
+                                }))
+                                .children(proxy_username_input.as_ref().map(|input| {
+                                    render_input_row(
+                                        i18n::t(lang, "settings.connection.global_proxy_username"),
+                                        input,
+                                        cx,
+                                    )
+                                }))
+                                .when(proxy_has_password, |section| {
+                                    section.children(proxy_password_input.as_ref().map(|input| {
+                                        render_input_row(
+                                            i18n::t(
+                                                lang,
+                                                "settings.connection.global_proxy_password",
+                                            ),
+                                            input,
+                                            cx,
+                                        )
+                                    }))
+                                })
+                        })
+                        .child(render_hint(
+                            i18n::t(lang, "settings.connection.global_proxy_hint"),
+                            cx,
+                        )),
                 ),
         )
 }

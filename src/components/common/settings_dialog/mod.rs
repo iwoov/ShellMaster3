@@ -20,6 +20,7 @@ use crate::terminal::{hex_to_hsla, hsla_to_hex};
 // 导入辅助函数
 use helpers::create_float_number_input;
 use helpers::create_int_number_input;
+use helpers::create_text_input;
 
 // 导入面板函数
 use panels::{
@@ -144,6 +145,10 @@ pub struct SettingsDialogState {
     pub keepalive_interval_input: Option<Entity<InputState>>,
     pub reconnect_attempts_input: Option<Entity<InputState>>,
     pub reconnect_interval_input: Option<Entity<InputState>>,
+    pub global_proxy_host_input: Option<Entity<InputState>>,
+    pub global_proxy_port_input: Option<Entity<InputState>>,
+    pub global_proxy_username_input: Option<Entity<InputState>>,
+    pub global_proxy_password_input: Option<Entity<InputState>>,
 
     // ============ 监控设置输入 ============
     pub history_retention_input: Option<Entity<InputState>>,
@@ -221,6 +226,10 @@ impl Default for SettingsDialogState {
             keepalive_interval_input: None,
             reconnect_attempts_input: None,
             reconnect_interval_input: None,
+            global_proxy_host_input: None,
+            global_proxy_port_input: None,
+            global_proxy_username_input: None,
+            global_proxy_password_input: None,
             // 监控
             history_retention_input: None,
             cpu_threshold_input: None,
@@ -330,6 +339,10 @@ impl SettingsDialogState {
         self.keepalive_interval_input = None;
         self.reconnect_attempts_input = None;
         self.reconnect_interval_input = None;
+        self.global_proxy_host_input = None;
+        self.global_proxy_port_input = None;
+        self.global_proxy_username_input = None;
+        self.global_proxy_password_input = None;
         self.history_retention_input = None;
         self.cpu_threshold_input = None;
         self.memory_threshold_input = None;
@@ -512,6 +525,45 @@ impl SettingsDialogState {
             let value = self.settings.connection.reconnect_interval_secs.to_string();
             self.reconnect_interval_input =
                 Some(create_int_number_input(value, 1, 300, 1, window, cx));
+        }
+        // 全局代理
+        let conn = self.settings.connection.clone();
+        let lang = self.settings.theme.language.clone();
+        if self.global_proxy_host_input.is_none() {
+            self.global_proxy_host_input = Some(create_text_input(
+                conn.global_proxy_host.clone(),
+                i18n::t(&lang, "settings.connection.global_proxy_host"),
+                false,
+                window,
+                cx,
+            ));
+        }
+        if self.global_proxy_port_input.is_none() {
+            let value = if conn.global_proxy_port == 0 {
+                String::new()
+            } else {
+                conn.global_proxy_port.to_string()
+            };
+            self.global_proxy_port_input =
+                Some(create_text_input(value, "1080", false, window, cx));
+        }
+        if self.global_proxy_username_input.is_none() {
+            self.global_proxy_username_input = Some(create_text_input(
+                conn.global_proxy_username.clone(),
+                i18n::t(&lang, "settings.connection.global_proxy_username"),
+                false,
+                window,
+                cx,
+            ));
+        }
+        if self.global_proxy_password_input.is_none() {
+            self.global_proxy_password_input = Some(create_text_input(
+                conn.global_proxy_password.clone(),
+                i18n::t(&lang, "settings.connection.global_proxy_password"),
+                true,
+                window,
+                cx,
+            ));
         }
 
         // 监控设置
@@ -917,6 +969,24 @@ impl SettingsDialogState {
                 self.settings.connection.reconnect_interval_secs = v;
             }
         }
+        if let Some(input) = &self.global_proxy_host_input {
+            self.settings.connection.global_proxy_host = input.read(cx).value().trim().to_string();
+        }
+        if let Some(input) = &self.global_proxy_port_input {
+            let value = input.read(cx).value().trim().to_string();
+            if value.is_empty() {
+                self.settings.connection.global_proxy_port = 0;
+            } else if let Ok(v) = value.parse::<u16>() {
+                self.settings.connection.global_proxy_port = v;
+            }
+        }
+        if let Some(input) = &self.global_proxy_username_input {
+            self.settings.connection.global_proxy_username =
+                input.read(cx).value().trim().to_string();
+        }
+        if let Some(input) = &self.global_proxy_password_input {
+            self.settings.connection.global_proxy_password = input.read(cx).value().to_string();
+        }
 
         // 监控
         if let Some(input) = &self.history_retention_input {
@@ -1269,6 +1339,8 @@ fn render_right_content(
 
     div()
         .flex_1()
+        // 允许收缩到可用宽度：否则较长的说明文字会按单行宽度撑开内容区，挤压左侧菜单并被裁切
+        .min_w_0()
         .h_full()
         .flex()
         .flex_col()

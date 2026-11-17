@@ -1,6 +1,9 @@
 // SSH 连接事件定义
 
+use std::sync::{Arc, Mutex};
+
 use chrono::{DateTime, Local};
+use tokio::sync::oneshot;
 
 /// 连接事件（用于 UI 显示）
 #[derive(Clone, Debug)]
@@ -9,25 +12,32 @@ pub enum ConnectionEvent {
     StageChanged(ConnectionStage),
     /// 日志消息
     Log(LogEntry),
-    /// 连接成功
+    /// 连接成功（会话已注册到 SshManager，可直接打开通道）
     Connected { session_id: String },
     /// 连接失败
-    Failed { error: String },
-    /// 连接断开
-    Disconnected { reason: String },
+    Failed {
+        error: String,
+        /// 是否值得自动重试（认证失败、主机密钥被拒等为 false）
+        retryable: bool,
+    },
     /// 需要用户确认未知主机
     HostKeyVerification {
         host: String,
         port: u16,
         key_type: String,
         fingerprint: String,
+        /// 用户作出选择后通过它回传
+        responder: HostKeyResponder,
     },
     /// 主机密钥变化警告（可能安全风险）
     HostKeyMismatch {
         host: String,
         port: u16,
+        key_type: String,
         expected_fingerprint: String,
         actual_fingerprint: String,
+        /// 用户作出选择后通过它回传
+        responder: HostKeyResponder,
     },
 }
 
@@ -40,6 +50,34 @@ pub enum HostKeyAction {
     AcceptOnce,
     /// 拒绝连接
     Reject,
+}
+
+/// 主机密钥确认的应答通道。
+///
+/// 每次确认请求各自携带一个，经跳板机连接时可能先后需要确认多台主机。
+/// 所有副本都被丢弃而未应答时，等待方按“拒绝”处理。
+#[derive(Clone)]
+pub struct HostKeyResponder(Arc<Mutex<Option<oneshot::Sender<HostKeyAction>>>>);
+
+impl HostKeyResponder {
+    pub(crate) fn new() -> (Self, oneshot::Receiver<HostKeyAction>) {
+        let (tx, rx) = oneshot::channel();
+        (Self(Arc::new(Mutex::new(Some(tx)))), rx)
+    }
+
+    /// 回传用户的选择；同一个确认请求只有第一次应答生效
+    pub fn respond(&self, action: HostKeyAction) {
+        let sender = self.0.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(sender) = sender {
+            let _ = sender.send(action);
+        }
+    }
+}
+
+impl std::fmt::Debug for HostKeyResponder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HostKeyResponder")
+    }
 }
 
 /// 连接阶段

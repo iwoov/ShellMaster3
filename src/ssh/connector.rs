@@ -1,113 +1,43 @@
 // SSH 连接启动器
 // 负责从 UI 层接收连接请求，并启动异步连接任务
 
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
 use gpui::{App, Entity};
-use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::models::server::ProxyType as ModelProxyType;
 use crate::models::ServerData;
-use crate::pages::connecting::page::ConnectionDetails;
+use crate::pages::connecting::page::{ConnectionDetails, HostKeyVerificationState};
 use crate::pages::connecting::ConnectingProgress;
+use crate::services::storage;
 use crate::state::{SessionState, SessionStatus};
 
-use super::config::{AuthMethod, KeepaliveConfig, ProxyConfig, ProxyType, SshConfig};
-use super::event::{ConnectionEvent, ConnectionStage, LogEntry};
+use super::config::{HostKeyPolicy, SshConfig};
+use super::event::ConnectionEvent;
 
-/// 从 ServerData 构建 SshConfig
-fn build_ssh_config(server: &ServerData) -> SshConfig {
-    let auth = match &server.auth_type {
-        crate::models::server::AuthType::Password => {
-            // 密码需要解密（暂时直接使用加密的值，后续实现解密）
-            AuthMethod::Password(server.password_encrypted.clone().unwrap_or_default())
-        }
-        crate::models::server::AuthType::PublicKey => {
-            // 优先使用新字段 private_key_filename，从keys目录构建完整路径
-            // 如果不存在则回退到旧字段 private_key_path（向后兼容）
-            let key_path = if let Some(filename) = &server.private_key_filename {
-                // 新格式：从文件名构建完整路径
-                crate::services::storage::get_keys_dir()
-                    .map(|dir| dir.join(filename))
-                    .unwrap_or_else(|_| filename.into())
-            } else if let Some(old_path) = &server.private_key_path {
-                // 旧格式：直接使用完整路径
-                old_path.into()
-            } else {
-                "".into()
-            };
-
-            AuthMethod::PublicKey {
-                key_path,
-                passphrase: server.key_passphrase_encrypted.clone(),
-            }
-        }
-    };
-
-    // 从用户设置中读取连接配置
-    let settings = crate::services::storage::load_settings().unwrap_or_default();
-    let connection_settings = &settings.connection;
-
-    // 构建心跳配置
-    let keepalive = KeepaliveConfig {
-        enabled: connection_settings.keepalive_interval_secs > 0,
-        interval: connection_settings.keepalive_interval_secs as u64,
-        max_retries: 3,
-    };
-
-    // 构建代理配置
-    let proxy = server.proxy.as_ref().and_then(|p| {
-        if p.enabled {
-            Some(ProxyConfig {
-                proxy_type: match p.proxy_type {
-                    ModelProxyType::Http => ProxyType::Http,
-                    ModelProxyType::Socks5 => ProxyType::Socks5,
-                },
-                host: p.host.clone(),
-                port: p.port,
-                auth: match (&p.username, &p.password_encrypted) {
-                    (Some(u), Some(pw)) if !u.is_empty() => Some((u.clone(), pw.clone())),
-                    _ => None,
-                },
-            })
-        } else {
-            None
-        }
-    });
-
-    SshConfig {
-        host: server.host.clone(),
-        port: server.port,
-        username: server.username.clone(),
-        auth,
-        connect_timeout: connection_settings.connection_timeout_secs as u64,
-        jump_host: None, // TODO: 从 server.jump_host_id 加载
-        proxy,
-        keepalive,
+/// 连接页面上展示的连接方式
+fn connection_details(config: &SshConfig) -> ConnectionDetails {
+    let jump_chain = config.jump_chain();
+    ConnectionDetails {
+        host: config.host.clone(),
+        port: config.port,
+        proxy_desc: config.first_hop_proxy().map(|proxy| {
+            format!(
+                "{} Proxy ({}:{})",
+                proxy.proxy_type.label(),
+                proxy.host,
+                proxy.port
+            )
+        }),
+        jump_host_desc: (!jump_chain.is_empty()).then(|| {
+            jump_chain
+                .iter()
+                .map(|hop| format!("{} ({}:{})", hop.display_name(), hop.host, hop.port))
+                .collect::<Vec<_>>()
+                .join(" → ")
+        }),
     }
-}
-
-/// UI 更新消息
-enum UiUpdate {
-    Stage(ConnectionStage),
-    Log(LogEntry),
-    Connected(String),
-    Failed(String),
-    Disconnected(String),
-    /// 需要用户确认未知主机
-    HostKeyVerification {
-        host: String,
-        port: u16,
-        key_type: String,
-        fingerprint: String,
-    },
-    /// 主机密钥变化警告
-    HostKeyMismatch {
-        host: String,
-        port: u16,
-        expected_fingerprint: String,
-        actual_fingerprint: String,
-    },
 }
 
 /// 启动 SSH 连接
@@ -121,209 +51,171 @@ pub fn start_ssh_connection(
     session_state: Entity<SessionState>,
     cx: &mut App,
 ) {
-    // 构建 SSH 配置
-    let config = build_ssh_config(&server);
+    let settings = storage::load_settings().unwrap_or_default();
+    let servers = storage::load_servers()
+        .map(|config| config.servers)
+        .unwrap_or_default();
+    let policy = HostKeyPolicy {
+        interactive: true,
+        strict: settings.connection.strict_host_key_checking,
+        trusted: HashMap::new(),
+    };
+
+    let config = match SshConfig::from_server(&server, &settings.connection, &servers, policy) {
+        Ok(config) => config,
+        Err(e) => {
+            error!("[SSH] [{}] Invalid connection settings: {}", server.label, e);
+            progress_state.update(cx, |p, cx| {
+                p.set_error(e.to_string());
+                cx.notify();
+            });
+            return;
+        }
+    };
+
+    progress_state.update(cx, |p, _| {
+        p.set_connection_details(connection_details(&config));
+    });
+
     let server_label = server.label.clone();
     let server_id = server.id.clone();
 
-    // 构建连接详情
-    let mut details = ConnectionDetails {
-        host: server.host.clone(),
-        port: server.port,
-        proxy_desc: None,
-        jump_host_desc: None,
-    };
-
-    // 解析代理描述
-    if let Some(proxy) = &server.proxy {
-        if proxy.enabled {
-            let type_str = match proxy.proxy_type {
-                ModelProxyType::Http => "HTTP",
-                ModelProxyType::Socks5 => "SOCKS5",
-            };
-            details.proxy_desc = Some(format!(
-                "{} Proxy ({}:{})",
-                type_str, proxy.host, proxy.port
-            ));
-        }
-    }
-
-    // 解析跳板机描述
-    if let Some(jump_id) = &server.jump_host_id {
-        if let Ok(config) = crate::services::storage::load_servers() {
-            if let Some(jump_server) = config.servers.iter().find(|s| s.id == *jump_id) {
-                details.jump_host_desc = Some(format!(
-                    "{} ({}:{})",
-                    jump_server.label, jump_server.host, jump_server.port
-                ));
-            }
-        }
-    }
-
-    // 更新 UI 显示连接详情
-    progress_state.update(cx, |p, _| {
-        p.set_connection_details(details);
-    });
-
-    // 克隆用于异步任务
-    let progress_for_result = progress_state.clone();
-    let session_state_for_result = session_state.clone();
-    let tab_id_for_result = tab_id.clone();
-    let server_label_for_log = server_label.clone();
-    let server_for_reconnect = server.clone();
-
-    // 启动 GPUI 任务：先延迟，再启动连接，再轮询状态
+    // 启动 GPUI 任务：先延迟，再启动连接，再按事件更新界面
     cx.spawn(async move |async_cx| {
         // 阶段1: 300ms 初始动画延迟 - 让连接页面有时间展示"开始连接"动画
         debug!("[SSH] 开始初始连接动画（300ms）...");
         async_cx
             .background_executor()
-            .timer(std::time::Duration::from_millis(300))
+            .timer(Duration::from_millis(300))
             .await;
         debug!("[SSH] 初始动画完成，开始发起后端连接...");
 
-        // 阶段2: 初始动画完成后，启动实际的后端SSH连接
-        let start_time = std::time::Instant::now();
+        // 动画期间用户可能已取消/关闭标签页：这时 close_session 还没有可取消的连接，
+        // 必须在这里放弃，否则会为已关闭的标签建立一条没人管理的连接。
+        // （检查与下面的 connect 之间没有 await，不会与关闭标签交错）
+        let still_connecting = async_cx
+            .update(|cx| {
+                session_state
+                    .read(cx)
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == tab_id && tab.status == SessionStatus::Connecting)
+            })
+            .unwrap_or(false);
+        if !still_connecting {
+            debug!("[SSH] Tab {} was closed before connecting; skip", tab_id);
+            return;
+        }
 
-        // 创建 UI 更新通道（使用 tokio unbounded channel 实现事件驱动）
-        let (ui_sender, mut ui_receiver) = tokio::sync::mpsc::unbounded_channel::<UiUpdate>();
+        // 阶段2: 启动实际的后端 SSH 连接
+        let start_time = Instant::now();
+        let mut event_rx = crate::ssh::SshManager::global()
+            .connect(config, tab_id.clone())
+            .event_rx;
 
-        // 启动 SSH 连接任务，获取连接句柄
-        let connection_handle = crate::ssh::SshManager::global().connect(config, tab_id.clone());
-
-        // 将 host_key_tx 包装成可共享的 Arc<Mutex>，以便在需要时使用
-        let host_key_tx = Arc::new(Mutex::new(Some(connection_handle.host_key_tx)));
-
-        // 在 SSH 运行时中启动事件处理任务
-        let ui_sender_for_events = ui_sender.clone();
-        crate::ssh::SshManager::global()
-            .runtime()
-            .spawn(async move {
-                handle_connection_events(connection_handle.event_rx, ui_sender_for_events).await;
-            });
-
-        // 阶段3: 异步接收 UI 更新事件（事件驱动，无需轮询）
-        while let Some(update) = ui_receiver.recv().await {
-            let mut should_break = false;
-
-            match update {
-                UiUpdate::Stage(stage) => {
+        // 阶段3: 按事件更新界面（连接任务被取消时通道关闭，循环随之结束）
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                ConnectionEvent::StageChanged(stage) => {
                     let _ = async_cx.update(|cx| {
-                        progress_for_result.update(cx, |p, cx| {
+                        progress_state.update(cx, |p, cx| {
                             p.set_stage(stage);
                             cx.notify();
                         });
                     });
                 }
-                UiUpdate::Log(log) => {
+                ConnectionEvent::Log(log) => {
                     let _ = async_cx.update(|cx| {
-                        progress_for_result.update(cx, |p, cx| {
+                        progress_state.update(cx, |p, cx| {
                             p.add_log(log);
                             cx.notify();
                         });
                     });
                 }
-                UiUpdate::HostKeyVerification {
+                ConnectionEvent::HostKeyVerification {
                     host,
                     port,
                     key_type,
                     fingerprint,
+                    responder,
                 } => {
                     info!(
                         "[SSH] Host key verification needed for {}:{} ({}): {}",
                         host, port, key_type, fingerprint
                     );
-
-                    // 取出 host_key_tx 传给 UI，以便用户选择后发送响应
-                    let tx = host_key_tx.lock().unwrap().take();
-
-                    // 更新 UI 状态显示 host key 确认面板
                     let _ = async_cx.update(|cx| {
-                        progress_for_result.update(cx, |p, cx| {
-                            p.set_host_key_verification(
-                                host.clone(),
+                        progress_state.update(cx, |p, cx| {
+                            p.set_host_key_verification(HostKeyVerificationState {
+                                host,
                                 port,
-                                key_type.clone(),
-                                fingerprint.clone(),
-                                false, // 不是 mismatch
-                            );
-                            // 将发送端存入状态，以便按钮点击时使用
-                            if let Some(tx) = tx {
-                                p.set_host_key_tx(tx);
-                            }
+                                key_type,
+                                fingerprint,
+                                expected_fingerprint: None,
+                                is_mismatch: false,
+                                responder,
+                            });
                             cx.notify();
                         });
                     });
                 }
-                UiUpdate::HostKeyMismatch {
+                ConnectionEvent::HostKeyMismatch {
                     host,
                     port,
+                    key_type,
                     expected_fingerprint,
                     actual_fingerprint,
+                    responder,
                 } => {
                     warn!(
                         "[SSH] WARNING: Host key mismatch for {}:{}! Expected: {}, Got: {}",
                         host, port, expected_fingerprint, actual_fingerprint
                     );
-
-                    // 取出 host_key_tx 传给 UI
-                    let tx = host_key_tx.lock().unwrap().take();
-
-                    // 更新 UI 状态显示警告面板
                     let _ = async_cx.update(|cx| {
-                        progress_for_result.update(cx, |p, cx| {
-                            p.set_host_key_verification(
-                                host.clone(),
+                        progress_state.update(cx, |p, cx| {
+                            p.set_host_key_verification(HostKeyVerificationState {
+                                host,
                                 port,
-                                String::new(), // mismatch 时 key_type 不重要
-                                actual_fingerprint.clone(),
-                                true, // 是 mismatch
-                            );
-                            // 将发送端存入状态
-                            if let Some(tx) = tx {
-                                p.set_host_key_tx(tx);
-                            }
+                                key_type,
+                                fingerprint: actual_fingerprint,
+                                expected_fingerprint: Some(expected_fingerprint),
+                                is_mismatch: true,
+                                responder,
+                            });
                             cx.notify();
                         });
                     });
                 }
-                UiUpdate::Connected(session_id) => {
-                    let duration = start_time.elapsed();
+                ConnectionEvent::Connected { session_id } => {
                     info!(
                         "[SSH] [{}] Connection successful! Session: {}",
-                        server_label_for_log, session_id
+                        server_label, session_id
                     );
                     info!(
                         "[SSH] Total connection time: {:.2}s",
-                        duration.as_secs_f64()
+                        start_time.elapsed().as_secs_f64()
                     );
 
                     // 更新服务器最后连接时间
-                    if let Err(e) =
-                        crate::services::storage::update_server_last_connected(&server_id)
-                    {
+                    if let Err(e) = storage::update_server_last_connected(&server_id) {
                         error!("[SSH] Failed to update last connected time: {}", e);
                     }
 
                     // 阶段4: 300ms 成功动画延迟，让用户看到"连接成功"状态
-                    debug!("[SSH] 开始连接成功动画（300ms）...");
                     async_cx
                         .background_executor()
-                        .timer(std::time::Duration::from_millis(300))
+                        .timer(Duration::from_millis(300))
                         .await;
-                    debug!("[SSH] 成功动画完成，跳转到session...");
 
                     // 阶段5: 更新会话状态为已连接，触发跳转到session
-                    let tab_id_clone = tab_id_for_result.clone();
-                    let server_data_clone = server_for_reconnect.clone();
+                    let tab_id = tab_id.clone();
+                    let server = server.clone();
                     let _ = async_cx.update(|cx| {
-                        session_state_for_result.update(cx, |state, cx| {
-                            state.update_tab_status(&tab_id_clone, SessionStatus::Connected);
+                        session_state.update(cx, |state, cx| {
+                            state.update_tab_status(&tab_id, SessionStatus::Connected);
 
                             // 存储 server_data 用于重连
-                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
-                            {
-                                tab.server_data = Some(server_data_clone);
+                            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                tab.server_data = Some(server);
                             }
 
                             // Monitor 和 SFTP 服务将在终端 PTY 创建成功后启动
@@ -332,102 +224,21 @@ pub fn start_ssh_connection(
                             cx.notify();
                         });
                     });
-
-                    should_break = true;
+                    break;
                 }
-                UiUpdate::Failed(error) => {
-                    error!(
-                        "[SSH] [{}] Connection failed: {}",
-                        server_label_for_log, error
-                    );
-
+                ConnectionEvent::Failed { error, .. } => {
+                    error!("[SSH] [{}] Connection failed: {}", server_label, error);
                     let _ = async_cx.update(|cx| {
-                        progress_for_result.update(cx, |p, cx| {
+                        progress_state.update(cx, |p, cx| {
+                            p.clear_host_key_verification();
                             p.set_error(error);
                             cx.notify();
                         });
                     });
-
-                    should_break = true;
+                    break;
                 }
-                UiUpdate::Disconnected(reason) => {
-                    info!("[SSH] [{}] Disconnected: {}", server_label_for_log, reason);
-                    should_break = true;
-                }
-            }
-
-            if should_break {
-                break;
             }
         }
     })
     .detach();
-}
-
-/// 处理连接事件，转发到 UI 更新通道
-async fn handle_connection_events(
-    mut receiver: mpsc::UnboundedReceiver<ConnectionEvent>,
-    ui_sender: mpsc::UnboundedSender<UiUpdate>,
-) {
-    while let Some(event) = receiver.recv().await {
-        match event {
-            ConnectionEvent::StageChanged(stage) => {
-                let _ = ui_sender.send(UiUpdate::Stage(stage));
-            }
-            ConnectionEvent::Log(entry) => {
-                let _ = ui_sender.send(UiUpdate::Log(entry));
-            }
-            ConnectionEvent::Connected { session_id } => {
-                debug!("[SSH Event] Connected! Session ID: {}", session_id);
-                let _ = ui_sender.send(UiUpdate::Connected(session_id));
-            }
-            ConnectionEvent::Failed { error } => {
-                debug!("[SSH Event] Failed: {}", error);
-                let _ = ui_sender.send(UiUpdate::Failed(error));
-            }
-            ConnectionEvent::Disconnected { reason } => {
-                debug!("[SSH Event] Disconnected: {}", reason);
-                let _ = ui_sender.send(UiUpdate::Disconnected(reason));
-            }
-            ConnectionEvent::HostKeyVerification {
-                host,
-                port,
-                key_type,
-                fingerprint,
-            } => {
-                debug!(
-                    "[SSH Event] Host key verification: {}:{} ({}) {}",
-                    host, port, key_type, fingerprint
-                );
-
-                // 通知 UI 显示确认面板，用户会在 UI 中选择操作
-                // host_key_tx 会在 UI 轮询循环中传给 ConnectingProgress
-                let _ = ui_sender.send(UiUpdate::HostKeyVerification {
-                    host,
-                    port,
-                    key_type,
-                    fingerprint,
-                });
-            }
-            ConnectionEvent::HostKeyMismatch {
-                host,
-                port,
-                expected_fingerprint,
-                actual_fingerprint,
-            } => {
-                debug!(
-                    "[SSH Event] Host key MISMATCH: {}:{} expected {} got {}",
-                    host, port, expected_fingerprint, actual_fingerprint
-                );
-
-                // 通知 UI 显示警告面板，用户会在 UI 中选择操作
-                let _ = ui_sender.send(UiUpdate::HostKeyMismatch {
-                    host,
-                    port,
-                    expected_fingerprint,
-                    actual_fingerprint,
-                });
-            }
-        }
-    }
 }

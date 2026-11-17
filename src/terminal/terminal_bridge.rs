@@ -235,13 +235,7 @@ pub fn start_pty_reader(
                         }
                     }
                 }
-                Ok(Some(_)) => {
-                    // 空数据，短暂等待后继续
-                    async_cx
-                        .background_executor()
-                        .timer(std::time::Duration::from_millis(10))
-                        .await;
-                }
+                Ok(Some(_)) => {}
                 Ok(None) => {
                     debug!("[PTY Reader] Channel closed");
                     break true;
@@ -257,21 +251,28 @@ pub fn start_pty_reader(
         {
             let tab_id_for_check = tab_id.clone();
             let terminal_id_for_check = terminal_id.clone();
-            let terminal_still_present = async_cx
+            // 终端仍在使用这条通道才需要处理：终端被关闭，或重连后已被重置/换上新通道时，
+            // 这个读取循环属于旧连接，直接退出，避免把新连接上的终端误判为断开。
+            let terminal_owns_channel = async_cx
                 .update(|cx| {
                     session_state
                         .read(cx)
                         .tabs
                         .iter()
                         .find(|t| t.id == tab_id_for_check)
-                        .map(|tab| tab.terminals.iter().any(|t| t.id == terminal_id_for_check))
-                        .unwrap_or(false)
+                        .and_then(|tab| {
+                            tab.terminals
+                                .iter()
+                                .find(|t| t.id == terminal_id_for_check)
+                        })
+                        .and_then(|instance| instance.pty_channel.as_ref())
+                        .is_some_and(|current| Arc::ptr_eq(current, &channel))
                 })
                 .unwrap_or(false);
 
-            if !terminal_still_present {
+            if !terminal_owns_channel {
                 debug!(
-                    "[PTY Reader] Terminal {} in tab {} was closed by user; skip reconnect",
+                    "[PTY Reader] Terminal {} in tab {} was closed or already reset; skip reconnect",
                     terminal_id, tab_id
                 );
                 return;
@@ -331,12 +332,10 @@ pub fn start_pty_reader(
 
                     // 启动自动重连
                     let tab_id_clone = tab_id.clone();
-                    let terminal_id_clone = terminal_id.clone();
                     let _ = async_cx.update(|cx| {
                         crate::ssh::start_reconnection(
                             server,
                             tab_id_clone,
-                            terminal_id_clone,
                             session_state.clone(),
                             cx,
                         );

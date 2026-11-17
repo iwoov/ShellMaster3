@@ -2120,7 +2120,7 @@ impl SessionState {
                         return;
                     }
 
-                    if output.exit_code == 0 {
+                    if output.is_success() {
                         let stdout = String::from_utf8_lossy(&output.stdout);
                         let size_str = stdout.trim();
                         match size_str.parse::<u64>() {

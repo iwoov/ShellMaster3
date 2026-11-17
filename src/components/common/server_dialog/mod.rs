@@ -14,6 +14,7 @@ use crate::i18n;
 use crate::models::server::{AuthType, ProxyConfig, ProxyType, ServerData};
 use crate::models::settings::Language;
 use crate::services::storage;
+use crate::ssh::config::resolve_jump_server;
 
 use panels::{
     render_basic_info_form, render_jump_host_form, render_other_settings_form,
@@ -28,6 +29,15 @@ pub enum DialogSection {
     JumpHost,
     ProxySettings,
     OtherSettings,
+}
+
+/// 可选作跳板机的服务器
+#[derive(Clone, Debug)]
+pub struct JumpHostCandidate {
+    pub id: String,
+    pub label: String,
+    /// user@host:port
+    pub address: String,
 }
 
 /// 服务器弹窗状态
@@ -61,9 +71,14 @@ pub struct ServerDialogState {
     pub auth_type: AuthType,
     pub private_key_input: Option<Entity<InputState>>,
     pub passphrase_input: Option<Entity<InputState>>,
-    // 跳板机数据
+    // 跳板机数据：从已保存的服务器中选择
     pub enable_jump_host: bool,
-    pub jump_host_input: Option<Entity<InputState>>,
+    /// 选中的跳板机服务器 ID
+    pub jump_host_id: Option<String>,
+    /// 可选作跳板机的服务器（已排除自身及会形成环的服务器）
+    pub jump_host_candidates: Vec<JumpHostCandidate>,
+    /// 旧版本以 "host:port" 文本保存、且匹配不到已保存服务器的跳板机设置
+    pub jump_host_unresolved: Option<String>,
     // 代理数据
     pub enable_proxy: bool,
     pub proxy_type: ProxyType,
@@ -97,7 +112,9 @@ impl Default for ServerDialogState {
             private_key_input: None,
             passphrase_input: None,
             enable_jump_host: false,
-            jump_host_input: None,
+            jump_host_id: None,
+            jump_host_candidates: Vec::new(),
+            jump_host_unresolved: None,
             enable_proxy: false,
             proxy_type: ProxyType::Http,
             proxy_host_input: None,
@@ -186,13 +203,6 @@ impl ServerDialogState {
                     .placeholder(placeholder)
                     .masked(true)
             }));
-        }
-
-        // 跳板机输入
-        if self.jump_host_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.jump_host_placeholder");
-            self.jump_host_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
 
         // 代理输入
@@ -288,12 +298,24 @@ impl ServerDialogState {
                                 input.update(cx, |s, cx| s.set_value(desc.clone(), window, cx));
                             }
                         }
-                        // 加载跳板机设置
-                        if let Some(jump_host) = &server_data.jump_host_id {
+                        // 加载跳板机设置（兼容旧版本保存的 "host:port" 文本）
+                        if let Some(reference) = server_data
+                            .jump_host_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|reference| !reference.is_empty())
+                        {
                             self.enable_jump_host = true;
-                            if let Some(input) = &self.jump_host_input {
-                                input
-                                    .update(cx, |s, cx| s.set_value(jump_host.clone(), window, cx));
+                            let resolved = resolve_jump_server(reference, &config.servers)
+                                .map(|server| server.id.clone())
+                                .filter(|id| {
+                                    self.jump_host_candidates
+                                        .iter()
+                                        .any(|candidate| &candidate.id == id)
+                                });
+                            match resolved {
+                                Some(id) => self.jump_host_id = Some(id),
+                                None => self.jump_host_unresolved = Some(reference.to_string()),
                             }
                         }
                         // 加载代理设置
@@ -338,6 +360,7 @@ impl ServerDialogState {
         self.is_edit = false;
         self.edit_server_id = None;
         self.current_section = DialogSection::BasicInfo;
+        self.load_jump_host_candidates();
     }
 
     /// 打开编辑服务器弹窗
@@ -349,6 +372,32 @@ impl ServerDialogState {
         self.edit_server_id = Some(server_id);
         self.pending_load_edit_data = true;
         self.current_section = DialogSection::BasicInfo;
+        self.load_jump_host_candidates();
+    }
+
+    /// 载入可选作跳板机的服务器：排除正在编辑的服务器本身，
+    /// 以及跳板机链会绕回它的服务器（避免成环）
+    fn load_jump_host_candidates(&mut self) {
+        let servers = storage::load_servers()
+            .map(|config| config.servers)
+            .unwrap_or_default();
+        let editing_id = self.edit_server_id.clone();
+        self.jump_host_candidates = servers
+            .iter()
+            .filter(|server| match &editing_id {
+                Some(id) => &server.id != id && !jump_chain_reaches(server, id, &servers),
+                None => true,
+            })
+            .map(|server| JumpHostCandidate {
+                id: server.id.clone(),
+                label: if server.label.trim().is_empty() {
+                    server.host.clone()
+                } else {
+                    server.label.clone()
+                },
+                address: format!("{}@{}:{}", server.username, server.host, server.port),
+            })
+            .collect();
     }
 
     /// 重置所有输入框状态
@@ -361,7 +410,6 @@ impl ServerDialogState {
         self.password_input = None;
         self.private_key_input = None;
         self.passphrase_input = None;
-        self.jump_host_input = None;
         self.proxy_host_input = None;
         self.proxy_port_input = None;
         self.proxy_username_input = None;
@@ -369,6 +417,9 @@ impl ServerDialogState {
         // 重置表单状态
         self.auth_type = AuthType::Password;
         self.enable_jump_host = false;
+        self.jump_host_id = None;
+        self.jump_host_candidates.clear();
+        self.jump_host_unresolved = None;
         self.enable_proxy = false;
         self.proxy_type = ProxyType::Http;
         self.show_group_dropdown = false;
@@ -400,7 +451,6 @@ impl ServerDialogState {
         let description = get_text(&self.description_input);
         let private_key = get_text(&self.private_key_input);
         let passphrase = get_text(&self.passphrase_input);
-        let jump_host = get_text(&self.jump_host_input);
         let proxy_host = get_text(&self.proxy_host_input);
         let proxy_port_str = get_text(&self.proxy_port_input);
         let proxy_port = proxy_port_str.parse::<u16>().unwrap_or(0);
@@ -474,8 +524,11 @@ impl ServerDialogState {
             } else {
                 None
             },
-            jump_host_id: if self.enable_jump_host && !jump_host.is_empty() {
-                Some(jump_host)
+            jump_host_id: if self.enable_jump_host {
+                // 没有重新选择时保留无法识别的旧设置：连接时会明确报错，而不是悄悄直连
+                self.jump_host_id
+                    .clone()
+                    .or_else(|| self.jump_host_unresolved.clone())
             } else {
                 None
             },
@@ -512,6 +565,25 @@ impl ServerDialogState {
                 .and_then(|server| server.last_connected_at.clone()),
         }
     }
+}
+
+/// `server` 的跳板机链（沿 jump_host_id 逐级向外）是否会经过 `target_id`
+fn jump_chain_reaches(server: &ServerData, target_id: &str, servers: &[ServerData]) -> bool {
+    let mut current = server;
+    // 步数有上限：即使已保存的配置里存在环也不会死循环
+    for _ in 0..servers.len().min(16) {
+        let Some(reference) = current.jump_host_id.as_deref() else {
+            return false;
+        };
+        let Some(next) = resolve_jump_server(reference, servers) else {
+            return false;
+        };
+        if next.id == target_id {
+            return true;
+        }
+        current = next;
+    }
+    false
 }
 
 /// 渲染服务器弹窗覆盖层
@@ -745,6 +817,8 @@ fn render_right_content(
 
     div()
         .flex_1()
+        // 允许收缩到可用宽度：否则较长的说明文字会按单行宽度撑开内容区，挤压左侧菜单并被裁切
+        .min_w_0()
         .h_full()
         .flex()
         .flex_col()

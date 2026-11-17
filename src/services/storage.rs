@@ -2,9 +2,18 @@
 
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::models::{ServerConfig, ServerData, ServerGroupData};
+
+/// 配置目录中保存的配置文件（含服务器密码、代理密码等敏感信息）
+#[cfg_attr(not(unix), allow(dead_code))]
+const CONFIG_FILES: &[&str] = &[
+    "servers.json",
+    "settings.json",
+    "known_hosts.json",
+    "snippets.json",
+];
 
 /// 获取配置目录路径
 /// macOS: ~/Library/Application Support/shellmaster
@@ -16,8 +25,89 @@ pub fn get_config_dir() -> Result<PathBuf> {
         .join("shellmaster");
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir).context("无法创建配置目录")?;
+        set_private_dir_permissions(&config_dir);
     }
     Ok(config_dir)
+}
+
+/// 目录权限设为仅当前用户可访问 (Unix: 0700)
+fn set_private_dir_permissions(_dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(_dir, fs::Permissions::from_mode(0o700));
+    }
+}
+
+/// 写入只允许当前用户读写的文件 (Unix: 0600)
+///
+/// 先写入同目录下的临时文件（创建时即为 0600），再原子替换目标文件：
+/// 文件不会出现短暂可被他人读取的窗口，写到一半崩溃也不会损坏原文件。
+pub fn write_private_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        // 多个线程可能同时保存同一个文件（如多个标签同时连接时写 known hosts），临时文件名需各不相同
+        static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        // 配置文件可能是指向同步目录的符号链接：写入它指向的真实文件，保留链接本身
+        let resolved = fs::canonicalize(path).ok();
+        let path = resolved.as_deref().unwrap_or(path);
+
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("config");
+        let tmp_path = path.with_file_name(format!(
+            ".{}.{}.{}.tmp",
+            file_name,
+            std::process::id(),
+            TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let result = (|| {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)?;
+            file.write_all(contents)?;
+            file.sync_all()?;
+            fs::rename(&tmp_path, path)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp_path);
+        }
+        result
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents)
+    }
+}
+
+/// 收紧配置目录和已有配置文件的权限（应用启动时调用）
+///
+/// 旧版本用默认权限写入，配置文件对同一台机器上的其他用户可读；这里统一改为仅本人可访问。
+pub fn secure_config_permissions() -> Result<()> {
+    let config_dir = get_config_dir()?;
+    set_private_dir_permissions(&config_dir);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for name in CONFIG_FILES {
+            let path = config_dir.join(name);
+            if path.exists() {
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+                    .with_context(|| format!("无法设置文件权限: {:?}", path))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 获取密钥存储目录路径
@@ -68,20 +158,9 @@ pub fn store_private_key(source_path: &std::path::Path) -> Result<String> {
     let stored_filename = format!("{}_{}", timestamp, original_name);
     let stored_path = keys_dir.join(&stored_filename);
 
-    // 写入密钥文件
-    fs::write(&stored_path, key_content)
+    // 写入密钥文件（仅用户可读写）
+    write_private_file(&stored_path, &key_content)
         .with_context(|| format!("无法写入密钥文件: {:?}", stored_path))?;
-
-    // 设置文件权限为仅用户可读写 (Unix)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(metadata) = fs::metadata(&stored_path) {
-            let mut perms = metadata.permissions();
-            perms.set_mode(0o600); // rw-------
-            let _ = fs::set_permissions(&stored_path, perms);
-        }
-    }
 
     Ok(stored_filename)
 }
@@ -156,7 +235,7 @@ pub fn load_servers() -> Result<ServerConfig> {
 pub fn save_servers(config: &ServerConfig) -> Result<()> {
     let path = get_servers_file()?;
     let content = serde_json::to_string_pretty(config).context("无法序列化服务器配置")?;
-    fs::write(&path, content).context("无法写入服务器配置文件")?;
+    write_private_file(&path, content.as_bytes()).context("无法写入服务器配置文件")?;
     Ok(())
 }
 
@@ -259,11 +338,24 @@ pub fn load_settings() -> Result<AppSettings> {
     Ok(settings)
 }
 
+/// 把旧版本的设置文件升级到当前格式（应用启动时调用）
+pub fn migrate_settings() -> Result<()> {
+    if !get_settings_file()?.exists() {
+        return Ok(());
+    }
+    let mut settings = load_settings()?;
+    if settings.migrate() {
+        save_settings(&settings)?;
+        tracing::info!("设置已升级到版本 {}", settings.settings_version);
+    }
+    Ok(())
+}
+
 /// 保存应用设置
 pub fn save_settings(settings: &AppSettings) -> Result<()> {
     let path = get_settings_file()?;
     let content = serde_json::to_string_pretty(settings).context("无法序列化设置配置")?;
-    fs::write(&path, content).context("无法写入设置配置文件")?;
+    write_private_file(&path, content.as_bytes()).context("无法写入设置配置文件")?;
     Ok(())
 }
 
@@ -292,7 +384,7 @@ pub fn load_snippets() -> Result<SnippetsConfig> {
 pub fn save_snippets(config: &SnippetsConfig) -> Result<()> {
     let path = get_snippets_file()?;
     let content = serde_json::to_string_pretty(config).context("无法序列化 Snippets 配置")?;
-    fs::write(&path, content).context("无法写入 Snippets 配置文件")?;
+    write_private_file(&path, content.as_bytes()).context("无法写入 Snippets 配置文件")?;
     Ok(())
 }
 
@@ -396,7 +488,7 @@ pub fn load_known_hosts() -> Result<KnownHostsConfig> {
 pub fn save_known_hosts(config: &KnownHostsConfig) -> Result<()> {
     let path = get_known_hosts_file()?;
     let content = serde_json::to_string_pretty(config).context("无法序列化 Known Hosts 配置")?;
-    fs::write(&path, content).context("无法写入 Known Hosts 配置文件")?;
+    write_private_file(&path, content.as_bytes()).context("无法写入 Known Hosts 配置文件")?;
     Ok(())
 }
 
@@ -451,4 +543,56 @@ pub fn update_known_host_last_used(host: &str, port: u16) -> Result<()> {
         save_known_hosts(&config)?;
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shellmaster-storage-test-{}-{}",
+            name,
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn mode(path: &Path) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn private_file_is_owner_only_and_replaces_content() {
+        let dir = temp_dir("private");
+        let path = dir.join("servers.json");
+        fs::write(&path, "old content that is longer").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_private_file(&path, b"new").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(mode(&path), 0o600);
+        // 不残留临时文件
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn private_file_keeps_symlink_and_writes_its_target() {
+        let dir = temp_dir("symlink");
+        let synced = dir.join("synced");
+        fs::create_dir_all(&synced).unwrap();
+        let target = synced.join("servers.json");
+        fs::write(&target, "old").unwrap();
+        let link = dir.join("servers.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        write_private_file(&link, b"new").unwrap();
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        assert_eq!(mode(&target), 0o600);
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

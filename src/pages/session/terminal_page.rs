@@ -184,7 +184,6 @@ pub fn render_terminal_panel(
     // 获取会话状态用于显示重连/断开状态
     let session_status = tab.status.clone();
     let tab_id_for_reconnect = tab.id.clone();
-    let terminal_id_for_reconnect = active_terminal_id.clone().unwrap_or_default();
 
     // 创建终端显示区域的基础 div
     // 使用 key_context("Terminal") 建立终端专用键盘上下文，用于支持自定义快捷键
@@ -934,7 +933,6 @@ pub fn render_terminal_panel(
                     &terminal_settings,
                     render_disconnected_overlay(
                         tab_id_for_reconnect.clone(),
-                        terminal_id_for_reconnect.clone(),
                         session_state.clone(),
                         cx,
                     ),
@@ -1411,7 +1409,6 @@ fn render_reconnecting_overlay(attempt: u32, max_attempts: u32, _cx: &App) -> Di
 /// 渲染断开连接覆盖层（带重连按钮）
 fn render_disconnected_overlay(
     tab_id: String,
-    terminal_id: String,
     session_state: Entity<SessionState>,
     cx: &App,
 ) -> Div {
@@ -1472,7 +1469,6 @@ fn render_disconnected_overlay(
                 .on_click(move |_, _, cx| {
                     crate::ssh::start_manual_reconnection(
                         tab_id.clone(),
-                        terminal_id.clone(),
                         session_state.clone(),
                         cx,
                     );

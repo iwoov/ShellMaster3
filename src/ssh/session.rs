@@ -1,9 +1,12 @@
 // SSH 会话管理
 // 连接成功后的会话对象，提供多通道支持
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
+use futures::FutureExt;
 use russh::client::Handle;
 use russh::client::Msg;
 use russh::{ChannelMsg, ChannelReadHalf};
@@ -11,6 +14,9 @@ use tokio::sync::{oneshot, Mutex};
 
 use super::error::SshError;
 use super::handler::SshClientHandler;
+
+/// 终端读取时单批合并的最大字节数
+const TERMINAL_READ_BATCH_BYTES: usize = 256 * 1024;
 
 /// PTY 请求参数
 #[derive(Clone, Debug)]
@@ -52,6 +58,10 @@ pub struct SshSession {
     id: String,
     /// 共享的 russh Handle（Arc 包装）
     handle: Arc<Handle<SshClientHandler>>,
+    /// 跳板机连接（由外到内）。目标连接经它们转发，必须与会话同生命周期
+    jump_handles: Vec<Arc<Handle<SshClientHandler>>>,
+    /// 本次连接各跳已确认的主机密钥（"host:port" -> 指纹），自动重连时据此免确认
+    verified_host_keys: HashMap<String, String>,
     /// 服务器主机名
     host: String,
     /// 用户名
@@ -65,12 +75,16 @@ impl SshSession {
     pub fn new(
         id: String,
         handle: Arc<Handle<SshClientHandler>>,
+        jump_handles: Vec<Arc<Handle<SshClientHandler>>>,
+        verified_host_keys: HashMap<String, String>,
         host: String,
         username: String,
     ) -> Self {
         Self {
             id,
             handle,
+            jump_handles,
+            verified_host_keys,
             host,
             username,
             is_connected: AtomicBool::new(true),
@@ -92,9 +106,16 @@ impl SshSession {
         &self.username
     }
 
-    /// 检查会话是否活跃
+    /// 本次连接各跳已确认的主机密钥
+    pub fn verified_host_keys(&self) -> &HashMap<String, String> {
+        &self.verified_host_keys
+    }
+
+    /// 检查会话是否活跃（任何一跳断开都视为断开）
     pub fn is_alive(&self) -> bool {
-        self.is_connected.load(Ordering::Relaxed) && !self.handle.is_closed()
+        self.is_connected.load(Ordering::Relaxed)
+            && !self.handle.is_closed()
+            && self.jump_handles.iter().all(|jump| !jump.is_closed())
     }
 
     /// 标记会话断开
@@ -197,40 +218,33 @@ impl SshSession {
         Ok(ExecStreamChannel::new(channel))
     }
 
-    /// 打开 SFTP 通道
-    pub async fn open_sftp(&self) -> Result<SftpChannel, SshError> {
-        if !self.is_alive() {
-            return Err(SshError::Disconnected(
-                "Session is disconnected".to_string(),
-            ));
-        }
-
-        let channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(SshError::from)?;
-
-        // 请求 SFTP 子系统
-        channel
-            .request_subsystem(false, "sftp")
-            .await
-            .map_err(SshError::from)?;
-
-        Ok(SftpChannel::new(channel))
-    }
-
-    /// 关闭会话
+    /// 关闭会话：先断开目标连接，再由内向外断开跳板机连接（已断开的跳过）
     pub async fn close(&self) -> Result<(), SshError> {
         self.mark_disconnected();
-        self.handle
-            .disconnect(
-                russh::Disconnect::ByApplication,
-                "ShellMaster session closed",
-                "en",
-            )
-            .await
-            .map_err(SshError::from)
+        let result = if self.handle.is_closed() {
+            Ok(())
+        } else {
+            self.handle
+                .disconnect(
+                    russh::Disconnect::ByApplication,
+                    "ShellMaster session closed",
+                    "en",
+                )
+                .await
+                .map_err(SshError::from)
+        };
+        for jump in self.jump_handles.iter().rev() {
+            if !jump.is_closed() {
+                let _ = jump
+                    .disconnect(
+                        russh::Disconnect::ByApplication,
+                        "ShellMaster session closed",
+                        "en",
+                    )
+                    .await;
+            }
+        }
+        result
     }
 }
 
@@ -243,8 +257,14 @@ type RusshChannel = russh::Channel<Msg>;
 /// - 写：使用 handle.data()，直接通过 handle 发送数据
 /// - 控制：使用 write_half.window_change()/eof()，独立于读取循环
 pub struct TerminalChannel {
-    read_half: Mutex<ChannelReadHalf>,
+    reader: Mutex<TerminalReader>,
     command_tx: tokio::sync::mpsc::UnboundedSender<TerminalCommand>,
+}
+
+struct TerminalReader {
+    read_half: ChannelReadHalf,
+    /// 已读到通道结束（合并数据时遇到 EOF/Close，需在下一次读取时报告）
+    closed: bool,
 }
 
 enum TerminalCommand {
@@ -302,7 +322,10 @@ impl TerminalChannel {
                 }
             });
         Self {
-            read_half: Mutex::new(read_half),
+            reader: Mutex::new(TerminalReader {
+                read_half,
+                closed: false,
+            }),
             command_tx,
         }
     }
@@ -315,20 +338,49 @@ impl TerminalChannel {
     }
 
     /// 读取终端输出
+    ///
+    /// 等到第一块数据后，把已经到达的后续数据一并取出合并返回（最多约 256KB），
+    /// 大量输出时显著减少切回 UI 线程的次数，也让 russh 的通道队列尽快腾空，
+    /// 避免整条连接（含同连接上的 SFTP、监控）被一个处理不过来的终端拖住。
+    ///
     /// 返回 None 表示通道已关闭
     pub async fn read(&self) -> Result<Option<Vec<u8>>, SshError> {
-        let mut channel = self.read_half.lock().await;
-
-        // wait() on Channel<Msg> returns Option<ChannelMsg> directly
-        match channel.wait().await {
-            Some(channel_msg) => match channel_msg {
-                ChannelMsg::Data { data } => Ok(Some(data.to_vec())),
-                ChannelMsg::ExtendedData { data, .. } => Ok(Some(data.to_vec())),
-                ChannelMsg::Eof | ChannelMsg::Close => Ok(None),
-                _ => Ok(Some(vec![])),
-            },
-            None => Ok(None),
+        let mut reader = self.reader.lock().await;
+        if reader.closed {
+            return Ok(None);
         }
+
+        let mut output = loop {
+            match reader.read_half.wait().await {
+                Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+                    break data.to_vec();
+                }
+                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                    reader.closed = true;
+                    return Ok(None);
+                }
+                // 窗口调整、退出码等非数据消息直接跳过
+                Some(_) => {}
+            }
+        };
+
+        while output.len() < TERMINAL_READ_BATCH_BYTES {
+            // now_or_never 只轮询一次：没有已到达的消息就立即返回（tokio mpsc 的 recv 可安全取消）
+            match reader.read_half.wait().now_or_never() {
+                Some(Some(ChannelMsg::Data { data }))
+                | Some(Some(ChannelMsg::ExtendedData { data, .. })) => {
+                    output.extend_from_slice(&data);
+                }
+                Some(Some(ChannelMsg::Eof)) | Some(Some(ChannelMsg::Close)) | Some(None) => {
+                    reader.closed = true;
+                    break;
+                }
+                Some(Some(_)) => {}
+                None => break,
+            }
+        }
+
+        Ok(Some(output))
     }
 
     /// 调整终端大小
@@ -375,7 +427,7 @@ impl ExecChannel {
         }
     }
 
-    /// 执行命令并获取输出
+    /// 执行命令并获取输出（需在 SSH 运行时中调用）
     pub async fn exec(&self, command: &str) -> Result<CommandOutput, SshError> {
         let mut channel = self.channel.lock().await;
 
@@ -387,35 +439,37 @@ impl ExecChannel {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let mut exit_code = None;
+        let mut eof_received = false;
 
+        // OpenSSH 通常在 EOF 之后才发送 exit-status，所以要一直读到通道关闭；
+        // 收到 EOF 后最多再等 5 秒，防止个别服务器迟迟不关闭通道。
         loop {
-            match channel.wait().await {
-                Some(channel_msg) => match channel_msg {
-                    ChannelMsg::Data { data } => {
-                        stdout.extend_from_slice(&data);
-                    }
-                    ChannelMsg::ExtendedData { data, ext } => {
-                        if ext == 1 {
-                            // stderr
-                            stderr.extend_from_slice(&data);
-                        }
-                    }
-                    ChannelMsg::ExitStatus { exit_status } => {
-                        exit_code = Some(exit_status);
-                    }
-                    ChannelMsg::Eof | ChannelMsg::Close => {
-                        break;
-                    }
-                    _ => {}
-                },
-                None => break,
+            let message = if eof_received {
+                match tokio::time::timeout(Duration::from_secs(5), channel.wait()).await {
+                    Ok(message) => message,
+                    Err(_) => break,
+                }
+            } else {
+                channel.wait().await
+            };
+
+            match message {
+                Some(ChannelMsg::Data { data }) => stdout.extend_from_slice(&data),
+                // ext == 1 为 stderr
+                Some(ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                    stderr.extend_from_slice(&data)
+                }
+                Some(ChannelMsg::ExitStatus { exit_status }) => exit_code = Some(exit_status),
+                Some(ChannelMsg::Eof) => eof_received = true,
+                Some(ChannelMsg::Close) | None => break,
+                Some(_) => {}
             }
         }
 
         Ok(CommandOutput {
             stdout,
             stderr,
-            exit_code: exit_code.unwrap_or(0),
+            exit_code,
         })
     }
 }
@@ -466,8 +520,8 @@ pub struct CommandOutput {
     pub stdout: Vec<u8>,
     /// 标准错误
     pub stderr: Vec<u8>,
-    /// 退出码
-    pub exit_code: u32,
+    /// 退出码；被信号终止或服务器未返回退出码时为 None
+    pub exit_code: Option<u32>,
 }
 
 impl CommandOutput {
@@ -481,59 +535,8 @@ impl CommandOutput {
         String::from_utf8_lossy(&self.stderr).to_string()
     }
 
-    /// 检查命令是否成功
+    /// 检查命令是否成功（只有明确收到退出码 0 才算成功）
     pub fn is_success(&self) -> bool {
-        self.exit_code == 0
-    }
-}
-
-/// SFTP 通道
-pub struct SftpChannel {
-    channel: Mutex<RusshChannel>,
-}
-
-impl SftpChannel {
-    fn new(channel: RusshChannel) -> Self {
-        Self {
-            channel: Mutex::new(channel),
-        }
-    }
-
-    /// 获取底层通道用于 SFTP 操作
-    /// 后续可以集成 russh-sftp 或自行实现 SFTP 协议
-    pub async fn inner(&self) -> tokio::sync::MutexGuard<'_, RusshChannel> {
-        self.channel.lock().await
-    }
-
-    /// 写入数据
-    pub async fn write(&self, data: &[u8]) -> Result<(), SshError> {
-        let channel = self.channel.lock().await;
-        channel
-            .data(data)
-            .await
-            .map_err(|e| SshError::Channel(e.to_string()))
-    }
-
-    /// 读取数据
-    pub async fn read(&self) -> Result<Option<Vec<u8>>, SshError> {
-        let mut channel = self.channel.lock().await;
-
-        match channel.wait().await {
-            Some(channel_msg) => match channel_msg {
-                ChannelMsg::Data { data } => Ok(Some(data.to_vec())),
-                ChannelMsg::Eof | ChannelMsg::Close => Ok(None),
-                _ => Ok(Some(vec![])),
-            },
-            None => Ok(None),
-        }
-    }
-
-    /// 关闭通道
-    pub async fn close(&self) -> Result<(), SshError> {
-        let channel = self.channel.lock().await;
-        channel
-            .eof()
-            .await
-            .map_err(|e| SshError::Channel(e.to_string()))
+        self.exit_code == Some(0)
     }
 }

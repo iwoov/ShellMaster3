@@ -311,6 +311,83 @@ pub fn render_theme_select_row(
         )
 }
 
+/// 渲染下拉选择行：点击按钮弹出选项菜单，选中后通过 `update_fn` 写回设置
+pub fn render_select_row<T: Clone + PartialEq + 'static>(
+    id: impl Into<ElementId>,
+    label: &'static str,
+    current: &T,
+    options: Vec<(T, &'static str)>,
+    state: Entity<SettingsDialogState>,
+    update_fn: fn(&mut SettingsDialogState, T),
+    cx: &App,
+) -> impl IntoElement {
+    use gpui::Corner;
+
+    let current_label = options
+        .iter()
+        .find(|(value, _)| value == current)
+        .map(|(_, label)| *label)
+        .unwrap_or_default();
+
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_3()
+        .px_4()
+        .bg(cx.theme().muted)
+        .rounded_lg()
+        .mb_2()
+        .child(
+            div()
+                .w(px(120.))
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child(label),
+        )
+        .child(
+            Button::new(id)
+                .w(px(200.))
+                .h(px(32.))
+                .outline()
+                .justify_start()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .w(px(180.))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().foreground)
+                                .child(current_label),
+                        )
+                        .child(render_icon(
+                            icons::CHEVRON_DOWN,
+                            cx.theme().muted_foreground.into(),
+                        )),
+                )
+                .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
+                    let mut menu = menu.min_w(px(200.));
+                    for (value, option_label) in options.iter().cloned() {
+                        let state = state.clone();
+                        menu = menu.item(PopupMenuItem::new(option_label).on_click(
+                            move |_, _, cx| {
+                                let value = value.clone();
+                                state.update(cx, |s, cx| {
+                                    update_fn(s, value);
+                                    s.mark_changed();
+                                    cx.notify();
+                                });
+                            },
+                        ));
+                    }
+                    menu
+                }),
+        )
+}
+
 /// 渲染带数字输入框的设置行（带 +/- 按钮）
 pub fn render_number_row(
     label: &'static str,
@@ -393,6 +470,23 @@ pub fn render_about_row(label: &'static str, value: &'static str, cx: &App) -> i
                 .text_color(cx.theme().foreground)
                 .child(value),
         )
+}
+
+/// 创建带初始值和占位符的文本输入框（`masked` 为 true 时按密码显示）
+pub fn create_text_input(
+    initial_value: String,
+    placeholder: &'static str,
+    masked: bool,
+    window: &mut Window,
+    cx: &mut Context<SettingsDialogState>,
+) -> Entity<InputState> {
+    cx.new(|cx| {
+        let mut state = InputState::new(window, cx)
+            .placeholder(placeholder)
+            .masked(masked);
+        state.set_value(initial_value, window, cx);
+        state
+    })
 }
 
 /// 创建带有 +/- 按钮事件处理的整数输入框

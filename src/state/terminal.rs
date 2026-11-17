@@ -2,7 +2,33 @@
 
 use super::{SessionState, SessionStatus, TerminalInstance, TerminalPtyState};
 use gpui::prelude::*;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+use crate::ssh::error::SshError;
+
+/// 打开终端时发现连接已断开：终端回到“未启动”（保留历史，重连成功后自动重新打开），
+/// 并进入断线处理。断线处理会把标签页切换到“重连中”或“已断开”，不会反复尝试打开。
+fn defer_until_reconnected(
+    session_state: &gpui::Entity<SessionState>,
+    tab_id: &str,
+    terminal_id: &str,
+    reason: Option<String>,
+    cx: &mut gpui::App,
+) {
+    session_state.update(cx, |state, cx| {
+        if let Some(instance) = state
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| tab.terminals.iter_mut().find(|t| t.id == terminal_id))
+        {
+            instance.pty_channel = None;
+            instance.pty_state = TerminalPtyState::NotStarted;
+        }
+        cx.notify();
+    });
+    crate::ssh::handle_connection_lost(tab_id.to_string(), session_state.clone(), reason, cx);
+}
 
 impl SessionState {
     /// 初始化终端（在 UI 挂载并获取尺寸后调用）
@@ -186,27 +212,15 @@ impl SessionState {
                     match crate::ssh::manager::SshManager::global().get_session(&session_id) {
                         Some(s) => s,
                         None => {
-                            error!("[Terminal] No SSH session found for {}", session_id);
-                            let session_id_for_err = session_id.clone();
-                            let terminal_id_for_err = terminal_id_for_task.clone();
+                            warn!("[Terminal] No SSH session found for {}", session_id);
                             let _ = async_cx.update(|cx| {
-                                session_state_for_task.update(cx, |state, cx| {
-                                    if let Some(tab) =
-                                        state.tabs.iter_mut().find(|t| t.id == session_id_for_err)
-                                    {
-                                        if let Some(instance) = tab
-                                            .terminals
-                                            .iter_mut()
-                                            .find(|t| t.id == terminal_id_for_err)
-                                        {
-                                            instance.pty_state = TerminalPtyState::Failed(
-                                                "No SSH session found".to_string(),
-                                            );
-                                            instance.pty_channel = None;
-                                        }
-                                    }
-                                    cx.notify();
-                                });
+                                defer_until_reconnected(
+                                    &session_state_for_task,
+                                    &session_id,
+                                    &terminal_id_for_task,
+                                    None,
+                                    cx,
+                                );
                             });
                             return;
                         }
@@ -310,12 +324,27 @@ impl SessionState {
                             session_id, terminal_id_for_task
                         );
                     }
+                    Err(e) if matches!(e, SshError::Disconnected(_)) || !session.is_alive() => {
+                        // 连接已断开：不是终端本身的错误，交给断线处理（自动重连或提示已断开），
+                        // 重连成功后终端会自动重新打开
+                        warn!("[Terminal] Connection lost while opening PTY: {}", e);
+                        let reason = session.close_reason();
+                        let _ = async_cx.update(|cx| {
+                            defer_until_reconnected(
+                                &session_state_for_task,
+                                &session_id,
+                                &terminal_id_for_task,
+                                reason,
+                                cx,
+                            );
+                        });
+                    }
                     Err(e) => {
                         error!("[Terminal] Failed to open PTY: {:?}", e);
-                        // 记录错误到终端实例
+                        // 记录给用户看的原因（不用 Debug 格式）
                         let session_id_for_err = session_id.clone();
                         let terminal_id_for_err = terminal_id_for_task.clone();
-                        let error_msg = format!("{:?}", e);
+                        let error_msg = e.to_string();
                         let _ = async_cx.update(|cx| {
                             session_state_for_task.update(cx, |state, cx| {
                                 if let Some(tab) =
@@ -443,7 +472,7 @@ impl SessionState {
         // 等待重连流程显式重置为 NotStarted。
         if matches!(
             instance.pty_state,
-            TerminalPtyState::NotStarted | TerminalPtyState::Failed(_)
+            TerminalPtyState::NotStarted | TerminalPtyState::Exited | TerminalPtyState::Failed(_)
         ) {
             return;
         }
@@ -619,7 +648,7 @@ impl SessionState {
             return;
         };
 
-        if matches!(instance.pty_state, TerminalPtyState::Failed(_)) {
+        if instance.pty_state.is_ended() {
             instance.pty_channel = None;
             instance.last_sent_pty_size = None;
             instance.pty_state = TerminalPtyState::NotStarted;

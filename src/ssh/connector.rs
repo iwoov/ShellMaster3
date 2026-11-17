@@ -216,6 +216,7 @@ pub fn start_ssh_connection(
                             // 存储 server_data 用于重连
                             if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
                                 tab.server_data = Some(server);
+                                tab.disconnect_reason = None;
                             }
 
                             // Monitor 和 SFTP 服务将在终端 PTY 创建成功后启动
@@ -223,6 +224,9 @@ pub fn start_ssh_connection(
 
                             cx.notify();
                         });
+
+                        // 监视连接：断开后自动重连或提示，不依赖终端是否打开
+                        super::reconnect::watch_connection(tab_id.clone(), session_state.clone(), cx);
                     });
                     break;
                 }

@@ -1,17 +1,163 @@
-// SSH 自动重连模块
+// SSH 断线处理与自动重连模块
 //
-// 当 SSH 连接断开时，自动尝试重新连接
+// - watch_connection：监视会话本身，连接一断开（无论是否有终端打开）就进入断线处理
+// - handle_connection_lost：断线处理的唯一入口，开启自动重连则重连，否则标记为已断开
+// - start_reconnection：自动/手动重连
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::{App, Entity, SharedString};
 use gpui_component::notification::NotificationType;
 use tracing::{debug, error, info, warn};
 
 use crate::models::server::ServerData;
+use crate::models::settings::Language;
 use crate::services::storage;
 use crate::state::{SessionState, SessionStatus, TerminalPtyState};
 
 use super::config::{HostKeyPolicy, SshConfig};
 use super::event::{ConnectionEvent, HostKeyAction};
+
+/// 重连成功后至少保持这么久，再次断开时才继续自动重连；更快断开（如服务器一登录就踢掉）
+/// 时改为提示用户手动重连，避免陷入“连上 → 断开 → 重连”的死循环。
+/// 首次连接后的第一次断开总会自动重连。
+const MIN_STABLE_CONNECTION: Duration = Duration::from_secs(10);
+
+/// 监视标签页当前的 SSH 会话：连接一旦断开，就交给 [`handle_connection_lost`] 处理。
+///
+/// 在会话注册后调用（首次连接成功、每次重连成功后）。
+pub fn watch_connection(tab_id: String, session_state: Entity<SessionState>, cx: &mut App) {
+    let Some(session) = crate::ssh::SshManager::global().get_session(&tab_id) else {
+        return;
+    };
+    cx.spawn(async move |async_cx| {
+        session.closed().await;
+
+        // 标签页已关闭，或会话已被新连接替换（重连成功）：这条连接的关闭无需处理
+        let still_current = crate::ssh::SshManager::global()
+            .get_session(&tab_id)
+            .is_some_and(|current| Arc::ptr_eq(&current, &session));
+        if !still_current {
+            return;
+        }
+
+        let reason = session.close_reason();
+        let _ = async_cx.update(|cx| handle_connection_lost(tab_id, session_state, reason, cx));
+    })
+    .detach();
+}
+
+/// 连接已断开（会话监视、终端读取结束或打开终端时发现）。
+///
+/// 开启了自动重连就开始重连；否则标记为“已断开”并提示，用户可以点“重新连接”。
+/// 只处理“已连接”状态的标签页，重复调用是安全的。
+pub fn handle_connection_lost(
+    tab_id: String,
+    session_state: Entity<SessionState>,
+    reason: Option<String>,
+    cx: &mut App,
+) {
+    let Some(tab) = session_state.read(cx).tabs.iter().find(|t| t.id == tab_id) else {
+        return;
+    };
+    // 重连中或已标记断开：说明已经在处理
+    if tab.status != SessionStatus::Connected {
+        return;
+    }
+    let server = tab.server_data.clone();
+    let dropped_quickly = tab
+        .reconnected_at
+        .is_some_and(|reconnected_at| reconnected_at.elapsed() < MIN_STABLE_CONNECTION);
+
+    warn!(
+        "[Reconnect] Connection of tab {} lost: {}",
+        tab_id,
+        reason.as_deref().unwrap_or("unknown reason")
+    );
+
+    let settings = storage::load_settings().unwrap_or_default();
+    let lang = settings.theme.language.clone();
+    let reason = reason.map(|reason| describe_reason(&reason, &lang));
+    match server {
+        Some(server) if settings.connection.auto_reconnect && !dropped_quickly => {
+            session_state.update(cx, |state, _| {
+                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    tab.disconnect_reason = reason;
+                }
+            });
+            start_reconnection(server, tab_id, session_state, cx);
+        }
+        _ => {
+            let detail = if dropped_quickly && settings.connection.auto_reconnect {
+                Some(
+                    crate::i18n::t(&lang, "terminal.dropped_after_connect")
+                        .replace("{}", reason.as_deref().unwrap_or("-")),
+                )
+            } else {
+                reason
+            };
+            session_state.update(cx, |state, cx| {
+                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    tab.status = SessionStatus::Disconnected;
+                    tab.disconnect_reason = detail;
+                }
+                cx.notify();
+            });
+            push_notification(
+                cx,
+                crate::i18n::t(&lang, "terminal.disconnected"),
+                NotificationType::Warning,
+            );
+        }
+    }
+}
+
+/// 把断开/重连失败的原因（russh 或系统错误信息）转成用户看得懂的说明；
+/// 认不出的原样保留，不丢信息
+fn describe_reason(reason: &str, lang: &Language) -> String {
+    let t = |key| crate::i18n::t(lang, key);
+    let lower = reason.trim().to_lowercase();
+
+    if let Some(rest) = reason.trim().strip_prefix("the server closed the connection") {
+        let message = rest.trim_start_matches(':').trim();
+        return if message.is_empty() {
+            t("terminal.reason.server_closed").to_string()
+        } else {
+            t("terminal.reason.server_closed_with").replace("{}", message)
+        };
+    }
+
+    let key = if lower.starts_with("authentication failed") {
+        "terminal.reason.auth"
+    } else if lower.starts_with("host key verification failed") {
+        "terminal.reason.host_key"
+    } else if lower.contains("keepalive") {
+        "terminal.reason.no_response"
+    } else if lower.contains("connection refused") {
+        "terminal.reason.refused"
+    } else if lower.starts_with("connection timeout") || lower.contains("timed out") {
+        "terminal.reason.timeout"
+    } else if lower.contains("failed to resolve") || lower.contains("nodename nor servname") {
+        "terminal.reason.resolve"
+    } else if lower.contains("network is unreachable")
+        || lower.contains("no route to host")
+        || lower.contains("host is down")
+    {
+        "terminal.reason.unreachable"
+    } else if lower.contains("early eof")
+        || lower.contains("connection reset")
+        || lower.contains("broken pipe")
+        || lower.contains("connection aborted")
+        || lower.contains("session disconnected")
+        || lower == "disconnected"
+    {
+        "terminal.reason.interrupted"
+    } else {
+        return reason.trim().to_string();
+    };
+    t(key).to_string()
+}
 
 /// 单次重连尝试的结果
 enum AttemptOutcome {
@@ -73,6 +219,7 @@ pub fn start_reconnection(
     cx.spawn(async move |async_cx| {
         let mut attempt = 1u32;
         let mut stop_reason: Option<String> = None;
+        let mut last_error: Option<String> = None;
 
         while attempt <= max_attempts {
             let tab_exists = async_cx
@@ -115,6 +262,8 @@ pub fn start_reconnection(
                             if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
                                 tab.status = SessionStatus::Connected;
                                 tab.server_data = Some(current);
+                                tab.reconnected_at = Some(Instant::now());
+                                tab.disconnect_reason = None;
 
                                 // 重置服务启动标志，让 PTY 创建时重新启动 Monitor/SFTP
                                 tab.services_started = false;
@@ -129,6 +278,37 @@ pub fn start_reconnection(
                             }
                             cx.notify();
                         });
+
+                        // 在每个终端的历史里画一条分隔线，标出旧会话结束、新会话开始的位置
+                        // （只写入本地终端显示，不发送到服务器）
+                        let lang = storage::load_settings()
+                            .map(|s| s.theme.language)
+                            .unwrap_or_default();
+                        let marker = format!(
+                            "\r\n\x1b[90m── {} ──\x1b[0m\r\n",
+                            crate::i18n::t(&lang, "terminal.reconnected")
+                        );
+                        let terminals: Vec<_> = session_state
+                            .read(cx)
+                            .tabs
+                            .iter()
+                            .find(|t| t.id == tab_id)
+                            .map(|tab| {
+                                tab.terminals
+                                    .iter()
+                                    .filter_map(|terminal| terminal.terminal.clone())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        for terminal in terminals {
+                            terminal.update(cx, |terminal, cx| {
+                                let _ = terminal.input_str(&marker);
+                                cx.notify();
+                            });
+                        }
+
+                        // 继续监视新连接
+                        watch_connection(tab_id.clone(), session_state.clone(), cx);
 
                         let lang = storage::load_settings()
                             .map(|s| s.theme.language)
@@ -150,6 +330,7 @@ pub fn start_reconnection(
                         stop_reason = Some(error);
                         break;
                     }
+                    last_error = Some(error);
                 }
             }
 
@@ -181,9 +362,18 @@ pub fn start_reconnection(
 
         let _ = async_cx.update(|cx| {
             let mut tab_exists = false;
+            // 断开提示里显示最后的失败原因
+            let lang = storage::load_settings()
+                .map(|s| s.theme.language)
+                .unwrap_or_default();
+            let stop_reason = stop_reason.map(|reason| describe_reason(&reason, &lang));
+            let reason = stop_reason
+                .clone()
+                .or_else(|| last_error.map(|reason| describe_reason(&reason, &lang)));
             session_state.update(cx, |state, cx| {
                 if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
                     tab.status = SessionStatus::Disconnected;
+                    tab.disconnect_reason = reason;
                     tab_exists = true;
                 }
                 cx.notify();
@@ -192,9 +382,6 @@ pub fn start_reconnection(
                 return;
             }
 
-            let lang = storage::load_settings()
-                .map(|s| s.theme.language)
-                .unwrap_or_default();
             let message: SharedString = match stop_reason {
                 Some(reason) => crate::i18n::t(&lang, "terminal.reconnect_stopped")
                     .replace("{}", &reason)
@@ -313,5 +500,37 @@ pub fn start_manual_reconnection(
         start_reconnection(server, tab_id, session_state, cx);
     } else {
         error!("[Reconnect] No server_data found for tab {}", tab_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn common_disconnect_reasons_are_readable() {
+        let zh = Language::Chinese;
+        assert_eq!(
+            describe_reason("early eof", &zh),
+            crate::i18n::t(&zh, "terminal.reason.interrupted")
+        );
+        assert_eq!(
+            describe_reason("IO error: Connection refused (os error 61)", &zh),
+            crate::i18n::t(&zh, "terminal.reason.refused")
+        );
+        assert_eq!(
+            describe_reason("Connection timeout after 30s", &zh),
+            crate::i18n::t(&zh, "terminal.reason.timeout")
+        );
+        assert_eq!(
+            describe_reason("the server closed the connection: server maintenance", &zh),
+            "服务器关闭了连接：server maintenance"
+        );
+        assert_eq!(
+            describe_reason("the server closed the connection", &zh),
+            crate::i18n::t(&zh, "terminal.reason.server_closed")
+        );
+        // 认不出的原样保留
+        assert_eq!(describe_reason("  something odd  ", &zh), "something odd");
     }
 }

@@ -21,7 +21,7 @@ use super::event::{ConnectionEvent, ConnectionStage, LogEntry};
 use super::handler::SshClientHandler;
 use super::net::connect_tcp;
 use super::proxy::connect_via_proxy;
-use super::session::SshSession;
+use super::session::{ConnectionClosed, SshSession};
 
 /// keyboard-interactive 最多交互轮数（防止异常服务器无限要求输入）
 const MAX_KEYBOARD_INTERACTIVE_ROUNDS: usize = 8;
@@ -44,6 +44,8 @@ pub struct SshClient {
     cancel: CancellationToken,
     /// 本次连接中各跳已通过校验的主机密钥
     verified_host_keys: Arc<Mutex<HashMap<String, String>>>,
+    /// 目标连接的关闭信号，交给会话用于断线检测
+    closed: ConnectionClosed,
 }
 
 impl SshClient {
@@ -54,6 +56,7 @@ impl SshClient {
             event_sender,
             cancel: CancellationToken::new(),
             verified_host_keys: Arc::new(Mutex::new(HashMap::new())),
+            closed: ConnectionClosed::new(),
         }
     }
 
@@ -116,6 +119,7 @@ impl SshClient {
             verified_host_keys,
             config.host.clone(),
             config.username.clone(),
+            self.closed.clone(),
         ))
     }
 
@@ -222,7 +226,7 @@ impl SshClient {
                 self.emit_stage(ConnectionStage::ConnectingJumpHost);
             }
             self.log_hop(hop, is_target, "Starting SSH handshake...");
-            let mut handle = self.handshake(hop, transport).await?;
+            let mut handle = self.handshake(hop, is_target, transport).await?;
             self.log_hop(hop, is_target, "SSH handshake completed");
 
             // 认证
@@ -247,6 +251,7 @@ impl SshClient {
     async fn handshake(
         &self,
         hop: &SshConfig,
+        is_target: bool,
         transport: Box<dyn Transport>,
     ) -> Result<ClientHandle, SshError> {
         let (awaiting_user_tx, awaiting_user_rx) = watch::channel(false);
@@ -260,6 +265,7 @@ impl SshClient {
             rejection: rejection.clone(),
             awaiting_user: awaiting_user_tx,
             cancel: self.cancel.clone(),
+            closed: is_target.then(|| self.closed.clone()),
         };
 
         let connect = russh::client::connect_stream(Arc::new(hop.to_russh_config()), transport, handler);

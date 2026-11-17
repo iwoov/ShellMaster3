@@ -147,9 +147,9 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
                             SessionStatus::Connecting => Some((icons::LOADER, primary)),
                             SessionStatus::Connected => Some((icons::CHECK, primary)),
                             SessionStatus::Error(_) => Some((icons::X, Hsla::from(rgb(0xef4444)))),
+                            // 已断开：拔出的插头（与“重连中”的加载图标区分开）
                             SessionStatus::Disconnected => {
-                                Some((icons::LOADER, Hsla::from(rgb(0xf59e0b))))
-                                // 橙色加载图标
+                                Some((icons::UNPLUG, Hsla::from(rgb(0xf59e0b))))
                             }
                             SessionStatus::Reconnecting { .. } => {
                                 Some((icons::LOADER, Hsla::from(rgb(0xf59e0b))))

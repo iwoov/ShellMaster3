@@ -47,6 +47,8 @@ enum PasswordMode {
 #[derive(Clone)]
 struct TestHandler {
     mode: PasswordMode,
+    /// 终端类型为 "hold" 时，shell 只输出提示符并保持打开（模拟正常的交互式会话）
+    hold_shell: bool,
 }
 
 impl server::Handler for TestHandler {
@@ -104,6 +106,11 @@ impl server::Handler for TestHandler {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if data == b"disconnect" {
+            // 模拟服务器维护：主动断开整个连接
+            session.disconnect(russh::Disconnect::ByApplication, "server maintenance", "en")?;
+            return Ok(());
+        }
         let exit_status = if data == b"fail" { 3 } else { 0 };
         session.channel_success(channel)?;
         session.data(channel, CryptoVec::from_slice(b"hello\n"))?;
@@ -116,7 +123,7 @@ impl server::Handler for TestHandler {
     async fn pty_request(
         &mut self,
         channel: ChannelId,
-        _term: &str,
+        term: &str,
         _col_width: u32,
         _row_height: u32,
         _pix_width: u32,
@@ -124,6 +131,7 @@ impl server::Handler for TestHandler {
         _modes: &[(russh::Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        self.hold_shell = term == "hold";
         session.channel_success(channel)?;
         Ok(())
     }
@@ -135,6 +143,10 @@ impl server::Handler for TestHandler {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         session.channel_success(channel)?;
+        if self.hold_shell {
+            session.data(channel, CryptoVec::from_slice(b"$ "))?;
+            return Ok(());
+        }
         for chunk in vec![b'x'; SHELL_OUTPUT_BYTES].chunks(8 * 1024) {
             session.data(channel, CryptoVec::from_slice(chunk))?;
         }
@@ -201,7 +213,10 @@ async fn start_server(mode: PasswordMode) -> TestServer {
         while let Ok((socket, _)) = listener.accept().await {
             let config = config.clone();
             tokio::spawn(async move {
-                if let Ok(session) = server::run_stream(config, socket, TestHandler { mode }).await
+                if let Ok(session) = server::run_stream(config, socket, TestHandler {
+                    mode,
+                    hold_shell: false,
+                }).await
                 {
                     let _ = session.await;
                 }
@@ -520,4 +535,70 @@ async fn accepted_host_key_registers_session_before_connected_event() {
         Some(&server.fingerprint)
     );
     manager.close_session(&id);
+}
+
+#[tokio::test]
+async fn server_disconnect_fires_the_closed_signal_with_reason() {
+    let limit = Duration::from_secs(5);
+    let server = start_server(PasswordMode::Password).await;
+    let session = connect(client_config(&server, PASSWORD, trusting(&[&server])))
+        .await
+        .unwrap();
+    let terminal = tokio::time::timeout(
+        limit,
+        session.open_terminal(PtyRequest {
+            term: "hold".to_string(),
+            ..PtyRequest::default()
+        }),
+    )
+    .await
+    .expect("terminal opens")
+    .unwrap();
+    let prompt = tokio::time::timeout(limit, terminal.read())
+        .await
+        .expect("prompt arrives")
+        .unwrap();
+    assert_eq!(prompt.as_deref(), Some(&b"$ "[..]));
+    assert!(session.is_alive());
+
+    // 服务器主动断开整个连接
+    let exec = tokio::time::timeout(limit, session.open_exec())
+        .await
+        .expect("exec channel opens")
+        .unwrap();
+    let _ = tokio::time::timeout(limit, exec.exec("disconnect")).await;
+    tokio::time::timeout(limit, session.closed())
+        .await
+        .expect("closed signal fires after the server disconnects");
+
+    assert!(!session.is_alive());
+    let reason = session.close_reason().unwrap_or_default();
+    assert!(reason.contains("server maintenance"), "{reason}");
+
+    // 已打开的终端读到通道结束，而不是一直挂起
+    let after = tokio::time::timeout(limit, terminal.read())
+        .await
+        .expect("terminal read does not hang");
+    assert!(matches!(after, Ok(None)), "{after:?}");
+
+    // 在已断开的会话上打开终端：明确返回 Disconnected
+    let error = tokio::time::timeout(limit, session.open_terminal(PtyRequest::default()))
+        .await
+        .expect("does not hang")
+        .err()
+        .expect("cannot open a terminal on a dead session");
+    assert!(matches!(error, SshError::Disconnected(_)), "{error}");
+}
+
+#[tokio::test]
+async fn closing_the_session_fires_the_closed_signal() {
+    let server = start_server(PasswordMode::Password).await;
+    let session = connect(client_config(&server, PASSWORD, trusting(&[&server])))
+        .await
+        .unwrap();
+    session.close().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), session.closed())
+        .await
+        .expect("closed signal fires after closing");
+    assert!(!session.is_alive());
 }

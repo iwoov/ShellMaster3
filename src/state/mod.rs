@@ -45,6 +45,9 @@ pub enum TerminalPtyState {
     NotStarted,
     Opening,
     Ready,
+    /// 远端 shell 已退出（连接仍在），可重新启动
+    Exited,
+    /// 打开终端失败（不含连接断开：断开交给会话状态处理），内容为给用户看的原因
     Failed(String),
 }
 
@@ -57,11 +60,9 @@ impl TerminalPtyState {
         matches!(self, Self::NotStarted)
     }
 
-    pub fn error_message(&self) -> Option<String> {
-        match self {
-            Self::Failed(message) => Some(message.clone()),
-            _ => None,
-        }
+    /// 已结束（退出或失败），等待用户重新启动
+    pub fn is_ended(&self) -> bool {
+        matches!(self, Self::Exited | Self::Failed(_))
     }
 }
 
@@ -92,6 +93,10 @@ pub struct SessionTab {
     pub status: SessionStatus,
     /// 服务器连接数据（用于重连）
     pub server_data: Option<ServerData>,
+    /// 最近一次断开/重连失败的原因（显示在“连接已断开”提示里），重新连上后清空
+    pub disconnect_reason: Option<String>,
+    /// 最近一次重连成功的时间：重连后很快又断开时不再自动重连，避免“连上 → 断开 → 重连”死循环
+    pub reconnected_at: Option<std::time::Instant>,
     /// 多终端实例列表
     pub terminals: Vec<TerminalInstance>,
     /// 当前激活的终端 ID

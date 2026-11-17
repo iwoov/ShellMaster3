@@ -11,6 +11,7 @@ use russh::client::Handle;
 use russh::client::Msg;
 use russh::{ChannelMsg, ChannelReadHalf};
 use tokio::sync::{oneshot, Mutex};
+use tokio_util::sync::CancellationToken;
 
 use super::error::SshError;
 use super::handler::SshClientHandler;
@@ -51,6 +52,45 @@ impl Default for PtyRequest {
     }
 }
 
+/// 连接关闭信号
+///
+/// 目标连接的 russh 会话结束时（服务器断开、网络中断、心跳超时或主动关闭）触发，
+/// 让上层不依赖终端是否打开就能感知断线。
+#[derive(Clone, Default)]
+pub struct ConnectionClosed {
+    token: CancellationToken,
+    reason: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl ConnectionClosed {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 标记连接已关闭；只记录第一次的原因
+    pub fn close(&self, reason: impl Into<String>) {
+        if let Ok(mut slot) = self.reason.lock() {
+            if slot.is_none() {
+                *slot = Some(reason.into());
+            }
+        }
+        self.token.cancel();
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.token.is_cancelled()
+    }
+
+    /// 等待连接关闭（已关闭时立即返回；不依赖 tokio 运行时，可在 UI 任务中等待）
+    pub async fn wait(&self) {
+        self.token.cancelled().await
+    }
+
+    pub fn reason(&self) -> Option<String> {
+        self.reason.lock().ok().and_then(|reason| reason.clone())
+    }
+}
+
 /// SSH 会话（连接成功后）
 /// 内部持有 Handle，支持并发打开多个通道
 pub struct SshSession {
@@ -68,6 +108,8 @@ pub struct SshSession {
     username: String,
     /// 连接状态
     is_connected: AtomicBool,
+    /// 连接关闭信号（由目标连接的 Handler 在会话结束时触发）
+    closed: ConnectionClosed,
 }
 
 impl SshSession {
@@ -79,6 +121,7 @@ impl SshSession {
         verified_host_keys: HashMap<String, String>,
         host: String,
         username: String,
+        closed: ConnectionClosed,
     ) -> Self {
         Self {
             id,
@@ -88,6 +131,7 @@ impl SshSession {
             host,
             username,
             is_connected: AtomicBool::new(true),
+            closed,
         }
     }
 
@@ -114,13 +158,25 @@ impl SshSession {
     /// 检查会话是否活跃（任何一跳断开都视为断开）
     pub fn is_alive(&self) -> bool {
         self.is_connected.load(Ordering::Relaxed)
+            && !self.closed.is_closed()
             && !self.handle.is_closed()
             && self.jump_handles.iter().all(|jump| !jump.is_closed())
+    }
+
+    /// 等待连接关闭（已关闭时立即返回）
+    pub async fn closed(&self) {
+        self.closed.wait().await
+    }
+
+    /// 连接关闭的原因（服务器的断开说明或错误信息）
+    pub fn close_reason(&self) -> Option<String> {
+        self.closed.reason()
     }
 
     /// 标记会话断开
     pub fn mark_disconnected(&self) {
         self.is_connected.store(false, Ordering::Relaxed);
+        self.closed.close("session closed");
     }
 
     /// 获取 Handle 引用（供高级用途）

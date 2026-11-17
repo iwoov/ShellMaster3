@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    px, App, AsyncApp, ClipboardItem, Entity, Font, FontFeatures, FontStyle,
+    px, App, ClipboardItem, Entity, Font, FontFeatures, FontStyle,
     FontWeight as GpuiFontWeight, Pixels, Window,
 };
 use tracing::{debug, error, info, trace, warn};
@@ -13,7 +13,7 @@ use crate::models::settings::{
     BellStyle, FontWeight as TerminalFontWeight, Osc52Policy, TerminalSettings,
 };
 use crate::ssh::session::{PtyRequest, TerminalChannel};
-use crate::state::{SessionState, SessionStatus};
+use crate::state::{SessionState, TerminalPtyState};
 use crate::terminal::TerminalState;
 
 /// 返回真正可用于终端网格的像素宽度，统一扣除左右内容起点的 padding。
@@ -138,7 +138,7 @@ pub fn start_pty_reader(
     cx.spawn(async move |async_cx| {
         debug!("[PTY Reader] Started");
 
-        let channel_closed_cleanly = loop {
+        loop {
             // 读取 PTY 输出
             let result = channel.read().await;
             match result {
@@ -238,117 +238,76 @@ pub fn start_pty_reader(
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     debug!("[PTY Reader] Channel closed");
-                    break true;
+                    break;
                 }
                 Err(e) => {
                     error!("[PTY Reader] Error: {:?}", e);
-                    break false;
+                    break;
                 }
-            }
-        };
-
-        // 断开连接后处理
-        {
-            let tab_id_for_check = tab_id.clone();
-            let terminal_id_for_check = terminal_id.clone();
-            // 终端仍在使用这条通道才需要处理：终端被关闭，或重连后已被重置/换上新通道时，
-            // 这个读取循环属于旧连接，直接退出，避免把新连接上的终端误判为断开。
-            let terminal_owns_channel = async_cx
-                .update(|cx| {
-                    session_state
-                        .read(cx)
-                        .tabs
-                        .iter()
-                        .find(|t| t.id == tab_id_for_check)
-                        .and_then(|tab| {
-                            tab.terminals
-                                .iter()
-                                .find(|t| t.id == terminal_id_for_check)
-                        })
-                        .and_then(|instance| instance.pty_channel.as_ref())
-                        .is_some_and(|current| Arc::ptr_eq(current, &channel))
-                })
-                .unwrap_or(false);
-
-            if !terminal_owns_channel {
-                debug!(
-                    "[PTY Reader] Terminal {} in tab {} was closed or already reset; skip reconnect",
-                    terminal_id, tab_id
-                );
-                return;
-            }
-
-            // 单个远端 shell 正常退出不等同于 SSH 传输断线。
-            let transport_alive = crate::ssh::manager::SshManager::global()
-                .get_session(&tab_id)
-                .map(|session| session.is_alive())
-                .unwrap_or(false);
-            if channel_closed_cleanly && transport_alive {
-                let tab_id_for_exit = tab_id.clone();
-                let terminal_id_for_exit = terminal_id.clone();
-                let _ = async_cx.update(|cx| {
-                    session_state.update(cx, |state, cx| {
-                        if let Some(instance) = state
-                            .tabs
-                            .iter_mut()
-                            .find(|tab| tab.id == tab_id_for_exit)
-                            .and_then(|tab| {
-                                tab.terminals
-                                    .iter_mut()
-                                    .find(|terminal| terminal.id == terminal_id_for_exit)
-                            })
-                        {
-                            instance.pty_channel = None;
-                            instance.pty_state = crate::state::TerminalPtyState::Failed(
-                                "terminal.shell_exited".to_string(),
-                            );
-                        }
-                        cx.notify();
-                    });
-                });
-                return;
-            }
-
-            // 读取设置和 server_data
-            let (auto_reconnect, server_data) = async_cx
-                .update(|cx| {
-                    let settings = crate::services::storage::load_settings().unwrap_or_default();
-                    let server_data = session_state
-                        .read(cx)
-                        .tabs
-                        .iter()
-                        .find(|t| t.id == tab_id)
-                        .and_then(|t| t.server_data.clone());
-                    (settings.connection.auto_reconnect, server_data)
-                })
-                .unwrap_or((false, None));
-
-            if auto_reconnect {
-                if let Some(server) = server_data {
-                    info!(
-                        "[PTY Reader] Connection lost, starting auto-reconnect for {}",
-                        server.label
-                    );
-
-                    // 启动自动重连
-                    let tab_id_clone = tab_id.clone();
-                    let _ = async_cx.update(|cx| {
-                        crate::ssh::start_reconnection(
-                            server,
-                            tab_id_clone,
-                            session_state.clone(),
-                            cx,
-                        );
-                    });
-                } else {
-                    warn!("[PTY Reader] No server_data available for reconnection");
-                    set_disconnected_status(&async_cx, &session_state, &tab_id);
-                }
-            } else {
-                info!("[PTY Reader] Auto-reconnect disabled, setting status to Disconnected");
-                set_disconnected_status(&async_cx, &session_state, &tab_id);
             }
         }
+
+        // 通道结束后的处理
+        //
+        // 服务器关机或重启 sshd 时，往往先关闭 shell 通道、紧接着才断开连接，
+        // 所以稍等片刻再判断：连接仍在才算 shell 正常退出，否则按连接断开处理。
+        async_cx
+            .background_executor()
+            .timer(std::time::Duration::from_millis(500))
+            .await;
+
+        let session = crate::ssh::manager::SshManager::global().get_session(&tab_id);
+        let session_alive = session.as_ref().is_some_and(|session| session.is_alive());
+        let reason = session.as_ref().and_then(|session| session.close_reason());
+        let _ = async_cx.update(|cx| {
+            let mut connection_lost = false;
+            session_state.update(cx, |state, cx| {
+                // 终端已关闭，或已被重连重置/换上新通道：这个读取循环属于旧连接，不再处理
+                let Some(instance) = state
+                    .tabs
+                    .iter_mut()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(|tab| {
+                        tab.terminals
+                            .iter_mut()
+                            .find(|terminal| terminal.id == terminal_id)
+                    })
+                    .filter(|instance| {
+                        instance
+                            .pty_channel
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &channel))
+                    })
+                else {
+                    debug!(
+                        "[PTY Reader] Terminal {} in tab {} was closed or already reset",
+                        terminal_id, tab_id
+                    );
+                    return;
+                };
+
+                instance.pty_channel = None;
+                if session_alive {
+                    // 只有这个 shell 退出了，连接仍在：保留终端历史，提示可重新启动
+                    instance.pty_state = TerminalPtyState::Exited;
+                } else {
+                    // 连接已断开：终端保留历史，重连成功后自动重新打开
+                    instance.pty_state = TerminalPtyState::NotStarted;
+                    connection_lost = true;
+                }
+                cx.notify();
+            });
+
+            if connection_lost {
+                info!("[PTY Reader] Connection lost for tab {}", tab_id);
+                crate::ssh::handle_connection_lost(
+                    tab_id.clone(),
+                    session_state.clone(),
+                    reason,
+                    cx,
+                );
+            }
+        });
 
         debug!("[PTY Reader] Stopped");
     })
@@ -421,43 +380,4 @@ mod tests {
         settings.default_shell = "/bin/zsh".to_string();
         assert!(ls_color_injection(&settings).is_none());
     }
-}
-
-/// 设置会话状态为断开并发送通知
-fn set_disconnected_status(
-    async_cx: &AsyncApp,
-    session_state: &Entity<SessionState>,
-    tab_id: &str,
-) {
-    let tab_id_clone = tab_id.to_string();
-    let session_state_clone = session_state.clone();
-    let _ = async_cx.update(|cx| {
-        session_state_clone.update(cx, |state, cx| {
-            if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone) {
-                tab.status = SessionStatus::Disconnected;
-            }
-            cx.notify();
-        });
-
-        // 推送断开通知
-        if let Some(window) = cx.active_window() {
-            use gpui::AppContext as _;
-            let _ = cx.update_window(window, |_, window, cx| {
-                use gpui::Styled;
-                use gpui_component::notification::{Notification, NotificationType};
-                use gpui_component::WindowExt;
-
-                let lang = crate::services::storage::load_settings()
-                    .map(|s| s.theme.language)
-                    .unwrap_or_default();
-
-                let notification = Notification::new()
-                    .message(crate::i18n::t(&lang, "terminal.disconnected"))
-                    .with_type(NotificationType::Warning)
-                    .w_48()
-                    .py_2();
-                window.push_notification(notification, cx);
-            });
-        }
-    });
 }

@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use russh::client::DisconnectReason;
 use russh::keys::ssh_key::HashAlg;
 use russh::keys::PublicKey;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -14,6 +15,7 @@ use crate::services::storage;
 
 use super::config::{host_key_id, HostKeyPolicy};
 use super::event::{ConnectionEvent, HostKeyAction, HostKeyResponder, LogEntry};
+use super::session::ConnectionClosed;
 
 /// SSH 客户端 Handler（每一跳一个）
 pub struct SshClientHandler {
@@ -33,6 +35,8 @@ pub struct SshClientHandler {
     pub(super) awaiting_user: watch::Sender<bool>,
     /// 连接任务被取消时结束等待
     pub(super) cancel: CancellationToken,
+    /// 目标连接的关闭信号（跳板机连接为 None）：会话结束时触发，用于断线检测
+    pub(super) closed: Option<ConnectionClosed>,
 }
 
 impl SshClientHandler {
@@ -225,6 +229,33 @@ impl russh::client::Handler for SshClientHandler {
             }
         }
         Ok(accepted)
+    }
+
+    /// 已建立的连接结束（服务器主动断开、网络中断、心跳超时等）
+    async fn disconnected(
+        &mut self,
+        reason: DisconnectReason<Self::Error>,
+    ) -> Result<(), Self::Error> {
+        let (description, result) = match reason {
+            DisconnectReason::ReceivedDisconnect(info) => {
+                let message = info.message.trim();
+                let description = if message.is_empty() {
+                    "the server closed the connection".to_string()
+                } else {
+                    format!("the server closed the connection: {}", message)
+                };
+                (description, Ok(()))
+            }
+            DisconnectReason::Error(e) => (e.to_string(), Err(e)),
+        };
+        info!(
+            "[SSH] Connection to {}:{} closed: {}",
+            self.host, self.port, description
+        );
+        if let Some(closed) = &self.closed {
+            closed.close(description);
+        }
+        result
     }
 }
 

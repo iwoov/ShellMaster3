@@ -14,7 +14,7 @@ use alacritty_terminal::term::TermMode;
 
 use crate::constants::icons;
 use crate::ssh::session::TerminalChannel;
-use crate::state::{SessionState, SessionStatus, SessionTab};
+use crate::state::{SessionState, SessionStatus, SessionTab, TerminalPtyState};
 use crate::terminal::{
     hex_to_hsla, keystroke_to_escape, mouse_mode_enabled, mouse_report_bytes, named_key_to_escape,
     paste_to_bytes, render_terminal_view, should_report_motion, should_use_platform_text_input,
@@ -179,7 +179,9 @@ pub fn render_terminal_panel(
     // 获取终端状态和错误信息（从当前激活的终端实例）
     let terminal_entity = active_instance.and_then(|inst| inst.terminal.clone());
     let pty_channel = active_instance.and_then(|inst| inst.pty_channel.clone());
-    let pty_error = active_instance.and_then(|inst| inst.pty_state.error_message());
+    let pty_state = active_instance
+        .map(|inst| inst.pty_state.clone())
+        .unwrap_or(TerminalPtyState::NotStarted);
 
     // 获取会话状态用于显示重连/断开状态
     let session_status = tab.status.clone();
@@ -885,66 +887,70 @@ pub fn render_terminal_panel(
         });
     }
 
-    // 右侧滚动条：仅在终端正常可用时显示（需要作为最后的 child，确保绘制在最上层）
-    let scroll_handle = if pty_error.is_none() {
-        terminal_entity
-            .as_ref()
-            .map(|terminal| terminal.read(cx).scroll_handle())
-    } else {
-        None
+    // 右侧滚动条：有终端内容就显示，断开或 shell 退出后也能滚动查看历史
+    // （需要作为最后的 child，确保绘制在最上层）
+    let scroll_handle = terminal_entity
+        .as_ref()
+        .map(|terminal| terminal.read(cx).scroll_handle());
+
+    // 状态提示：连接状态优先（重连中 / 已断开），其次是当前终端自身的状态（shell 已退出 / 打开失败）。
+    // 有终端内容时一律叠加在历史之上，不再用错误页替换整个终端。
+    let terminal_id_for_overlay = active_terminal_id.clone().unwrap_or_default();
+    let overlay: Option<AnyElement> = match &session_status {
+        SessionStatus::Reconnecting {
+            attempt,
+            max_attempts,
+        } => Some(render_reconnecting_overlay(*attempt, *max_attempts, cx).into_any_element()),
+        SessionStatus::Disconnected => Some(
+            render_disconnected_overlay(
+                tab_id_for_reconnect.clone(),
+                tab.disconnect_reason.clone(),
+                session_state.clone(),
+                cx,
+            )
+            .into_any_element(),
+        ),
+        _ => match &pty_state {
+            TerminalPtyState::Exited => Some(
+                render_shell_exited_overlay(
+                    tab.id.clone(),
+                    terminal_id_for_overlay.clone(),
+                    session_state.clone(),
+                    cx,
+                )
+                .into_any_element(),
+            ),
+            TerminalPtyState::Failed(message) => Some(
+                render_open_failed_overlay(
+                    message.clone(),
+                    tab.id.clone(),
+                    terminal_id_for_overlay.clone(),
+                    session_state.clone(),
+                    cx,
+                )
+                .into_any_element(),
+            ),
+            _ => None,
+        },
     };
 
-    // 添加终端内容
-    terminal_display = terminal_display.child(if let Some(error) = pty_error {
-        // PTY 失败 - 显示错误信息
-        render_error_terminal(
-            &terminal_settings,
-            &error,
-            tab.id.clone(),
-            active_terminal_id.clone().unwrap_or_default(),
-            session_state.clone(),
-            cx,
-        )
-        .into_any_element()
-    } else if let Some(ref terminal) = terminal_entity {
-        // 有终端实例 - 渲染真实终端内容
-        // 如果处于重连或断开状态，在终端内容上叠加状态覆盖层
-        let terminal_content =
-            render_terminal_content(terminal.clone(), &terminal_settings, cx).into_any_element();
-
-        match &session_status {
-            SessionStatus::Reconnecting {
-                attempt,
-                max_attempts,
-            } => {
-                // 重连中 - 显示终端历史 + 重连覆盖层
-                render_terminal_with_overlay(
-                    terminal_content,
-                    &terminal_settings,
-                    render_reconnecting_overlay(*attempt, *max_attempts, cx),
-                    cx,
-                )
-                .into_any_element()
-            }
-            SessionStatus::Disconnected => {
-                // 断开连接 - 显示终端历史 + 断开覆盖层 + 重连按钮
-                render_terminal_with_overlay(
-                    terminal_content,
-                    &terminal_settings,
-                    render_disconnected_overlay(
-                        tab_id_for_reconnect.clone(),
-                        session_state.clone(),
-                        cx,
-                    ),
-                    cx,
-                )
-                .into_any_element()
-            }
-            _ => terminal_content,
+    let content = match &terminal_entity {
+        Some(terminal) => {
+            render_terminal_content(terminal.clone(), &terminal_settings, cx).into_any_element()
         }
-    } else {
-        // 等待初始化 - 显示加载提示
-        render_loading_terminal(&terminal_settings, cx).into_any_element()
+        // 还没有终端内容（如刚新建的终端）但需要显示状态：用终端背景占位
+        None if overlay.is_some() => div()
+            .size_full()
+            .bg(hex_to_hsla(&terminal_settings.background_color))
+            .into_any_element(),
+        None => render_loading_terminal(&terminal_settings, cx).into_any_element(),
+    };
+
+    terminal_display = terminal_display.child(match overlay {
+        Some(overlay) => {
+            render_terminal_with_overlay(content, &terminal_settings, overlay, cx).into_any_element()
+        }
+        None => content,
     });
 
     if let Some(scroll_handle) = scroll_handle {
@@ -1234,85 +1240,6 @@ fn render_terminal_content(
     )
 }
 
-/// 渲染错误状态的终端
-fn render_error_terminal(
-    settings: &crate::models::settings::TerminalSettings,
-    error: &str,
-    tab_id: String,
-    terminal_id: String,
-    session_state: Entity<SessionState>,
-    cx: &App,
-) -> Div {
-    let bg_color = hex_to_hsla(&settings.background_color);
-
-    // 获取语言设置
-    let lang = crate::services::storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or_default();
-
-    // 判断是否是断开连接
-    let is_disconnected = error == "terminal.disconnected";
-    let is_shell_exited = error == "terminal.shell_exited";
-
-    // 根据类型选择颜色和图标
-    let (color, icon, message) = if is_disconnected {
-        (
-            Hsla::from(rgb(0xf59e0b)), // 橙色 (amber-500)
-            icons::CIRCLE,
-            crate::i18n::t(&lang, "terminal.disconnected").to_string(),
-        )
-    } else if is_shell_exited {
-        (
-            Hsla::from(rgb(0xf59e0b)),
-            icons::TERMINAL,
-            crate::i18n::t(&lang, "terminal.shell_exited").to_string(),
-        )
-    } else {
-        (
-            Hsla::from(rgb(0xef4444)), // 红色 (red-500)
-            icons::X,
-            format!("{}: {}", crate::i18n::t(&lang, "terminal.error"), error),
-        )
-    };
-
-    let primary = cx.theme().primary;
-    div()
-        .size_full()
-        .bg(bg_color)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap_2()
-                .child(svg().path(icon).size(px(32.)).text_color(color))
-                .child(div().text_color(color).text_sm().child(message))
-                .children(is_shell_exited.then(|| {
-                    div()
-                        .id("restart-shell-btn")
-                        .mt_2()
-                        .px_4()
-                        .py_2()
-                        .rounded_md()
-                        .bg(primary)
-                        .text_color(Hsla::from(rgb(0xffffff)))
-                        .text_sm()
-                        .cursor_pointer()
-                        .hover(|style| style.opacity(0.9))
-                        .child(crate::i18n::t(&lang, "terminal.restart_shell"))
-                        .on_click(move |_, _, cx| {
-                            session_state.update(cx, |state, cx| {
-                                state.restart_terminal_instance(&tab_id, &terminal_id);
-                                cx.notify();
-                            });
-                        })
-                })),
-        )
-}
-
 /// 渲染加载中的终端
 fn render_loading_terminal(settings: &crate::models::settings::TerminalSettings, _cx: &App) -> Div {
     let bg_color = hex_to_hsla(&settings.background_color);
@@ -1364,116 +1291,175 @@ fn render_terminal_with_overlay(
         )
 }
 
-/// 渲染重连中覆盖层
-fn render_reconnecting_overlay(attempt: u32, max_attempts: u32, _cx: &App) -> Div {
-    let lang = crate::services::storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or_default();
-
-    let amber_color = Hsla::from(rgb(0xf59e0b));
-
-    div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap_3()
-        .p_6()
-        .rounded_lg()
-        .bg(Hsla::from(rgb(0x000000)).opacity(0.7))
-        .child(
-            svg()
-                .path(icons::LOADER)
-                .size(px(32.))
-                .text_color(amber_color),
-        )
-        .child(
-            div()
-                .text_color(amber_color)
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(crate::i18n::t(&lang, "terminal.reconnecting")),
-        )
-        .child(
-            div()
-                .text_color(Hsla::from(rgb(0xffffff)).opacity(0.6))
-                .text_xs()
-                .child(format!(
-                    "{} {}/{}",
-                    crate::i18n::t(&lang, "terminal.reconnect_attempt"),
-                    attempt,
-                    max_attempts
-                )),
-        )
+/// 状态卡片上的操作按钮
+struct StatusAction {
+    id: &'static str,
+    label: &'static str,
+    icon: &'static str,
+    on_click: Box<dyn Fn(&mut App) + 'static>,
 }
 
-/// 渲染断开连接覆盖层（带重连按钮）
-fn render_disconnected_overlay(
-    tab_id: String,
-    session_state: Entity<SessionState>,
+/// 叠加在终端历史之上的状态卡片
+fn render_status_card(
+    icon: &'static str,
+    color: Hsla,
+    title: &'static str,
+    detail: Option<String>,
+    action: Option<StatusAction>,
     cx: &App,
 ) -> Div {
-    let lang = crate::services::storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or_default();
-
-    let amber_color = Hsla::from(rgb(0xf59e0b));
+    let white = Hsla::from(rgb(0xffffff));
     let primary = cx.theme().primary;
 
     div()
         .flex()
         .flex_col()
         .items_center()
-        .gap_3()
-        .p_6()
+        .gap_2()
+        .max_w(px(440.))
+        .px_6()
+        .py_5()
         .rounded_lg()
-        .bg(Hsla::from(rgb(0x000000)).opacity(0.7))
-        .child(
-            svg()
-                .path(icons::LOADER)
-                .size(px(32.))
-                .text_color(amber_color),
-        )
+        .bg(Hsla::from(rgb(0x000000)).opacity(0.75))
+        .child(svg().path(icon).size(px(28.)).text_color(color))
         .child(
             div()
-                .text_color(amber_color)
+                .text_color(color)
                 .text_sm()
                 .font_weight(FontWeight::MEDIUM)
-                .child(crate::i18n::t(&lang, "terminal.disconnected")),
+                .child(title),
         )
-        // 重连按钮
-        .child(
+        .children(detail.filter(|detail| !detail.trim().is_empty()).map(|detail| {
             div()
-                .id("reconnect-btn")
+                .text_color(white.opacity(0.6))
+                .text_xs()
+                .text_center()
+                .child(detail)
+        }))
+        .children(action.map(|action| {
+            let on_click = action.on_click;
+            div()
+                .id(action.id)
                 .mt_2()
                 .px_4()
                 .py_2()
                 .rounded_md()
                 .bg(primary)
                 .cursor_pointer()
-                .hover(|s| s.opacity(0.9))
+                .hover(|style| style.opacity(0.9))
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(
-                    svg()
-                        .path(icons::REFRESH)
-                        .size(px(14.))
-                        .text_color(Hsla::from(rgb(0xffffff))),
-                )
-                .child(
-                    div()
-                        .text_color(Hsla::from(rgb(0xffffff)))
-                        .text_sm()
-                        .child(crate::i18n::t(&lang, "terminal.reconnect")),
-                )
-                .on_click(move |_, _, cx| {
-                    crate::ssh::start_manual_reconnection(
-                        tab_id.clone(),
-                        session_state.clone(),
-                        cx,
-                    );
-                }),
-        )
+                .child(svg().path(action.icon).size(px(14.)).text_color(white))
+                .child(div().text_color(white).text_sm().child(action.label))
+                .on_click(move |_, _, cx| on_click(cx))
+        }))
+}
+
+fn current_language() -> crate::models::settings::Language {
+    crate::services::storage::load_settings()
+        .map(|s| s.theme.language)
+        .unwrap_or_default()
+}
+
+/// 自动重连中
+fn render_reconnecting_overlay(attempt: u32, max_attempts: u32, cx: &App) -> Div {
+    let lang = current_language();
+    render_status_card(
+        icons::LOADER,
+        Hsla::from(rgb(0xf59e0b)),
+        crate::i18n::t(&lang, "terminal.reconnecting"),
+        Some(format!(
+            "{} {}/{}",
+            crate::i18n::t(&lang, "terminal.reconnect_attempt"),
+            attempt,
+            max_attempts
+        )),
+        None,
+        cx,
+    )
+}
+
+/// 连接已断开（自动重连失败或未开启自动重连），提供手动重连
+fn render_disconnected_overlay(
+    tab_id: String,
+    reason: Option<String>,
+    session_state: Entity<SessionState>,
+    cx: &App,
+) -> Div {
+    let lang = current_language();
+    render_status_card(
+        icons::UNPLUG,
+        Hsla::from(rgb(0xf59e0b)),
+        crate::i18n::t(&lang, "terminal.disconnected"),
+        reason,
+        Some(StatusAction {
+            id: "reconnect-btn",
+            label: crate::i18n::t(&lang, "terminal.reconnect"),
+            icon: icons::REFRESH,
+            on_click: Box::new(move |cx| {
+                crate::ssh::start_manual_reconnection(tab_id.clone(), session_state.clone(), cx);
+            }),
+        }),
+        cx,
+    )
+}
+
+/// 远端 shell 已退出（连接仍在），可重新启动
+fn render_shell_exited_overlay(
+    tab_id: String,
+    terminal_id: String,
+    session_state: Entity<SessionState>,
+    cx: &App,
+) -> Div {
+    let lang = current_language();
+    render_status_card(
+        icons::TERMINAL,
+        Hsla::from(rgb(0xf59e0b)),
+        crate::i18n::t(&lang, "terminal.shell_exited"),
+        None,
+        Some(StatusAction {
+            id: "restart-shell-btn",
+            label: crate::i18n::t(&lang, "terminal.restart_shell"),
+            icon: icons::REFRESH,
+            on_click: Box::new(move |cx| {
+                session_state.update(cx, |state, cx| {
+                    state.restart_terminal_instance(&tab_id, &terminal_id);
+                    cx.notify();
+                });
+            }),
+        }),
+        cx,
+    )
+}
+
+/// 打开终端失败（连接正常，如服务器拒绝分配 PTY）
+fn render_open_failed_overlay(
+    message: String,
+    tab_id: String,
+    terminal_id: String,
+    session_state: Entity<SessionState>,
+    cx: &App,
+) -> Div {
+    let lang = current_language();
+    render_status_card(
+        icons::X,
+        Hsla::from(rgb(0xef4444)),
+        crate::i18n::t(&lang, "terminal.open_failed"),
+        Some(message),
+        Some(StatusAction {
+            id: "retry-terminal-btn",
+            label: crate::i18n::t(&lang, "terminal.retry"),
+            icon: icons::REFRESH,
+            on_click: Box::new(move |cx| {
+                session_state.update(cx, |state, cx| {
+                    state.restart_terminal_instance(&tab_id, &terminal_id);
+                    cx.notify();
+                });
+            }),
+        }),
+        cx,
+    )
 }
 
 /// 渲染命令输入区域

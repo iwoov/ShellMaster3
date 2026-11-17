@@ -32,4 +32,4 @@ mod tests;
 pub use connector::start_ssh_connection;
 pub use event::{ConnectionEvent, ConnectionStage, LogEntry, LogLevel};
 pub use manager::SshManager;
-pub use reconnect::{start_manual_reconnection, start_reconnection};
+pub use reconnect::{handle_connection_lost, start_manual_reconnection};

@@ -61,6 +61,9 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.terminal.background_color" => "背景色",
         "settings.terminal.cursor_color" => "光标颜色",
         "settings.terminal.selection_color" => "选区颜色",
+        "settings.terminal.keyword_highlight" => "关键字高亮",
+        "settings.terminal.preview" => "预览",
+        "settings.terminal.auto_color_ls" => "自动启用 ls 颜色",
         "settings.terminal.background_opacity" => "背景透明度(%)",
         "settings.terminal.cursor_blink_interval" => "闪烁间隔(ms)",
         "settings.terminal.padding" => "左侧内边距(px)",
@@ -179,17 +182,19 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.about.platform" => "平台",
         "settings.about.arch" => "架构",
         "settings.about.whats_new" => "本次更新",
-        "settings.about.release_0_1_3.ime" => "新增终端中文输入法（IME）支持，候选框跟随光标。",
-        "settings.about.release_0_1_3.backtab" => {
-            "修复 Codex、Claude Code 等 TUI 中 Shift+Tab 无法切换模式的问题。"
+        "settings.about.release_0_1_4.preview" => "终端设置新增配色预览卡片，并用颜色选择器调整前景、背景、光标和选区颜色。",
+        "settings.about.release_0_1_4.highlight" => {
+            "新增终端关键字高亮（错误、警告、IP、URL、路径、提示符），颜色随主题变化，可在设置中关闭。"
         }
-        "settings.about.release_0_1_3.input_routing" => {
-            "优化文本、控制键与终端快捷键的输入处理，避免字符重复或被提前发送。"
+        "settings.about.release_0_1_4.ls_color" => {
+            "新增可选的「自动启用 ls 颜色」，连接后自动为 ls 开启目录/文件着色。"
         }
         "settings.about.copyright" => "© 2024 ShellMaster. All rights reserved.",
 
         // 侧边栏
         "sidebar.hosts" => "服务器",
+        "sidebar.workspace" => "工作区",
+        "sidebar.no_history" => "连接过服务器后会显示在这里",
         "sidebar.monitor" => "主机监控",
         "sidebar.snippets" => "快捷命令",
 
@@ -240,6 +245,10 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // 服务器列表
         "server_list.add_server" => "添加服务器",
+        "server_list.search_placeholder" => "搜索名称、地址、账号或端口",
+        "server_list.no_results_title" => "没有匹配的服务器",
+        "server_list.no_results_description" => "尝试搜索其他名称、地址、账号或端口",
+        "server_list.group_servers" => "台",
         "server_list.empty_title" => "暂无服务器",
         "server_list.empty_description" => "点击下方按钮添加您的第一台服务器",
         "server_list.header.server" => "服务器",
@@ -436,6 +445,11 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // Snippets 快捷命令
         "snippets.add_group" => "新建组",
+        "snippets.page_title" => "快捷命令",
+        "snippets.page_description" => "整理常用命令，在终端工作流中快速复用",
+        "snippets.groups_count" => "个分组",
+        "snippets.commands_count" => "条命令",
+        "snippets.items" => "项",
         "snippets.add_command" => "新建命令",
         "snippets.breadcrumb.all" => "全部",
         "snippets.empty.title" => "暂无快捷命令",
@@ -493,11 +507,14 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // AI 对话
         "ai_chat.empty" => "开始一段新对话吧",
-        "ai_chat.placeholder" => "向 AI 提问…",
+        "ai_chat.placeholder" => "询问当前终端…",
         "ai_chat.send" => "发送",
         "ai_chat.thinking" => "思考中…",
         "ai_chat.reasoning" => "思考过程",
         "ai_chat.clear" => "清空",
+        "ai_chat.new_thread" => "新建对话",
+        "ai_chat.terminal_context" => "终端上下文",
+        "ai_chat.context_off" => "上下文关闭",
         "ai_chat.no_provider" => {
             "尚未配置任何已通过测试的 AI 供应商，请先在「设置 → AI 配置」中添加并测试。"
         }
@@ -505,6 +522,8 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // 已知主机
         "known_hosts.empty.title" => "暂无已知主机",
+        "known_hosts.page_title" => "已知主机",
+        "known_hosts.page_description" => "检查和管理已信任服务器的主机密钥指纹",
         "known_hosts.empty.description" => "连接服务器并信任主机密钥后，会在这里显示",
         "known_hosts.items" => "项",
 
@@ -566,6 +585,9 @@ fn en_us(key: &'static str) -> &'static str {
         "settings.terminal.background_color" => "Background",
         "settings.terminal.cursor_color" => "Cursor Color",
         "settings.terminal.selection_color" => "Selection Color",
+        "settings.terminal.keyword_highlight" => "Keyword Highlight",
+        "settings.terminal.preview" => "Preview",
+        "settings.terminal.auto_color_ls" => "Auto-enable ls Colors",
         "settings.terminal.background_opacity" => "Background Opacity (%)",
         "settings.terminal.cursor_blink_interval" => "Blink Interval (ms)",
         "settings.terminal.padding" => "Left Padding (px)",
@@ -688,16 +710,18 @@ fn en_us(key: &'static str) -> &'static str {
         "settings.about.platform" => "Platform",
         "settings.about.arch" => "Architecture",
         "settings.about.whats_new" => "What's New",
-        "settings.about.release_0_1_3.ime" =>
-            "Added terminal IME support for Chinese input, with the candidate window following the cursor.",
-        "settings.about.release_0_1_3.backtab" =>
-            "Fixed Shift+Tab mode switching in TUI apps such as Codex and Claude Code.",
-        "settings.about.release_0_1_3.input_routing" =>
-            "Improved routing for text, control keys, and terminal shortcuts to prevent premature or duplicate input.",
+        "settings.about.release_0_1_4.preview" =>
+            "Added a color preview card and color pickers for foreground, background, cursor and selection in terminal settings.",
+        "settings.about.release_0_1_4.highlight" =>
+            "Added client-side keyword highlighting (errors, warnings, IPs, URLs, paths, prompts) that follows the theme; can be turned off in settings.",
+        "settings.about.release_0_1_4.ls_color" =>
+            "Added an optional \"Auto-enable ls Colors\" setting that colorizes ls output after connecting.",
         "settings.about.copyright" => "© 2024 ShellMaster. All rights reserved.",
 
         // Sidebar
         "sidebar.hosts" => "Hosts",
+        "sidebar.workspace" => "WORKSPACE",
+        "sidebar.no_history" => "Recent connections will appear here",
         "sidebar.monitor" => "Monitor",
         "sidebar.snippets" => "Snippets",
 
@@ -748,6 +772,10 @@ fn en_us(key: &'static str) -> &'static str {
 
         // Server List
         "server_list.add_server" => "Add Server",
+        "server_list.search_placeholder" => "Search name, address, account, or port",
+        "server_list.no_results_title" => "No matching servers",
+        "server_list.no_results_description" => "Try another name, address, account, or port",
+        "server_list.group_servers" => "servers",
         "server_list.empty_title" => "No Servers",
         "server_list.empty_description" => "Click the button below to add your first server",
         "server_list.header.server" => "Server",
@@ -944,6 +972,11 @@ fn en_us(key: &'static str) -> &'static str {
 
         // Snippets
         "snippets.add_group" => "New Group",
+        "snippets.page_title" => "Snippets",
+        "snippets.page_description" => "Organize reusable commands for your terminal workflow",
+        "snippets.groups_count" => "groups",
+        "snippets.commands_count" => "commands",
+        "snippets.items" => "items",
         "snippets.add_command" => "New Command",
         "snippets.breadcrumb.all" => "All",
         "snippets.empty.title" => "No Snippets",
@@ -999,16 +1032,21 @@ fn en_us(key: &'static str) -> &'static str {
 
         // AI Chat
         "ai_chat.empty" => "Start a new conversation",
-        "ai_chat.placeholder" => "Ask the AI…",
+        "ai_chat.placeholder" => "Ask about this terminal…",
         "ai_chat.send" => "Send",
         "ai_chat.thinking" => "Thinking…",
         "ai_chat.reasoning" => "Reasoning",
         "ai_chat.clear" => "Clear",
+        "ai_chat.new_thread" => "New conversation",
+        "ai_chat.terminal_context" => "Terminal context",
+        "ai_chat.context_off" => "Context off",
         "ai_chat.no_provider" => "No verified AI provider configured. Add one under Settings → AI and run the connectivity test.",
         "ai_chat.no_provider_short" => "Unconfigured",
 
         // Known Hosts
         "known_hosts.empty.title" => "No Known Hosts",
+        "known_hosts.page_title" => "Known Hosts",
+        "known_hosts.page_description" => "Review trusted host key fingerprints for your servers",
         "known_hosts.empty.description" => "Connect to a server and trust its key to see it here",
         "known_hosts.items" => "hosts",
 

@@ -14,6 +14,16 @@ pub mod icons {
     pub const TRASH: &str = "icons/trash.svg";
     pub const COPY: &str = "icons/copy.svg";
     pub const TERMINAL: &str = "icons/terminal.svg";
+    // Linux 发行版品牌图标（保留 SVG 原始颜色）
+    pub const DISTRO_UBUNTU: &str = "icons/distro-ubuntu.svg";
+    pub const DISTRO_DEBIAN: &str = "icons/distro-debian.svg";
+    pub const DISTRO_CENTOS: &str = "icons/distro-centos.svg";
+    pub const DISTRO_FEDORA: &str = "icons/distro-fedora.svg";
+    pub const DISTRO_ALPINE: &str = "icons/distro-alpine.svg";
+    pub const DISTRO_ARCH: &str = "icons/distro-arch.svg";
+    pub const DISTRO_REDHAT: &str = "icons/distro-redhat.svg";
+    pub const DISTRO_ROCKY: &str = "icons/distro-rocky.svg";
+    pub const DISTRO_OPENSUSE: &str = "icons/distro-opensuse.svg";
     pub const LINK: &str = "icons/link.svg";
     pub const GLOBE: &str = "icons/globe.svg";
     pub const LOCK: &str = "icons/lock.svg";

@@ -432,6 +432,15 @@ impl ServerDialogState {
             uuid::Uuid::new_v4().to_string()
         };
 
+        // 编辑连接配置时保留运行时采集的数据和原始时间信息。
+        let existing_server = if self.is_edit {
+            storage::load_servers()
+                .ok()
+                .and_then(|config| config.servers.into_iter().find(|server| server.id == id))
+        } else {
+            None
+        };
+
         ServerData {
             id,
             group_id,
@@ -491,8 +500,16 @@ impl ServerDialogState {
                 None
             },
             enable_monitor: true,
-            created_at: chrono::Utc::now().to_rfc3339(),
-            last_connected_at: None,
+            os_name: existing_server
+                .as_ref()
+                .and_then(|server| server.os_name.clone()),
+            created_at: existing_server
+                .as_ref()
+                .map(|server| server.created_at.clone())
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+            last_connected_at: existing_server
+                .as_ref()
+                .and_then(|server| server.last_connected_at.clone()),
         }
     }
 }

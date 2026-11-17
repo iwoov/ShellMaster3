@@ -2,13 +2,14 @@
 
 use gpui::*;
 use std::collections::HashMap;
-use tracing::{debug, info};
+use tracing::info;
 
 use super::known_hosts_list::{render_known_hosts_content, KnownHostsPageState};
-use super::server_list::{render_hosts_content, render_placeholder, ViewMode, ViewModeState};
+use super::server_list::{render_hosts_content, render_placeholder, ViewModeState};
 use super::sidebar::{render_sidebar, MenuType, SidebarState};
 use super::snippets_list::{render_snippets_content, SnippetsPageState};
 use super::titlebar::{render_home_button, render_session_titlebar, render_titlebar};
+use crate::components::common::icon::distribution_icon;
 use crate::components::common::server_dialog::{render_server_dialog_overlay, ServerDialogState};
 use crate::components::common::settings_dialog::{
     render_settings_dialog_overlay, SettingsDialogState,
@@ -46,9 +47,7 @@ impl HomePage {
             selected_menu: MenuType::Hosts,
         });
 
-        let view_mode_state = cx.new(|_| ViewModeState {
-            mode: ViewMode::List,
-        });
+        let view_mode_state = cx.new(|_| ViewModeState::default());
 
         let dialog_state = cx.new(|_| ServerDialogState::default());
         let settings_dialog_state = cx.new(|_| SettingsDialogState::default());
@@ -97,8 +96,9 @@ impl HomePage {
                         name: s.label.clone(),
                         host: s.host.clone(),
                         port: s.port,
-                        description: s.description.clone().unwrap_or_else(|| "-".into()),
+                        description: s.description.clone().unwrap_or_default(),
                         account: s.username.clone(),
+                        os_name: s.os_name.clone(),
                         last_connected: s.last_connected_at.clone().unwrap_or_else(|| {
                             i18n::t(&lang, "server_list.never_connected").to_string()
                         }),
@@ -123,8 +123,9 @@ impl HomePage {
                 name: s.label.clone(),
                 host: s.host.clone(),
                 port: s.port,
-                description: s.description.clone().unwrap_or_else(|| "-".into()),
+                description: s.description.clone().unwrap_or_default(),
                 account: s.username.clone(),
+                os_name: s.os_name.clone(),
                 last_connected: s
                     .last_connected_at
                     .clone()
@@ -156,13 +157,27 @@ impl HomePage {
             .unwrap_or(Language::Chinese);
 
         let config = storage::load_servers().unwrap_or_default();
-        let mut servers_with_time: Vec<(String, chrono::NaiveDateTime)> = config
+        let mut servers_with_time: Vec<(
+            String,
+            String,
+            Option<&'static str>,
+            chrono::NaiveDateTime,
+        )> = config
             .servers
             .iter()
             .filter_map(|s| {
                 s.last_connected_at.as_ref().and_then(|time_str| {
                     match chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M") {
-                        Ok(dt) => Some((s.label.clone(), dt)),
+                        Ok(dt) => Some((
+                            s.id.clone(),
+                            s.label.clone(),
+                            distribution_icon(
+                                s.os_name.as_deref(),
+                                &s.label,
+                                s.description.as_deref().unwrap_or_default(),
+                            ),
+                            dt,
+                        )),
                         Err(_) => None,
                     }
                 })
@@ -170,13 +185,13 @@ impl HomePage {
             .collect();
 
         // 按时间倒序排序
-        servers_with_time.sort_by(|a, b| b.1.cmp(&a.1));
+        servers_with_time.sort_by(|a, b| b.3.cmp(&a.3));
 
         // 取前 10 条
         servers_with_time
             .into_iter()
             .take(10)
-            .map(|(name, time)| {
+            .map(|(server_id, name, distro_icon, time)| {
                 let now = chrono::Local::now().naive_local();
                 let duration = now.signed_duration_since(time);
                 let time_str = if duration.num_seconds() < 60 {
@@ -202,7 +217,9 @@ impl HomePage {
                 };
 
                 HistoryItem {
+                    server_id,
                     name,
+                    distro_icon,
                     time: time_str,
                 }
             })
@@ -253,6 +270,10 @@ impl HomePage {
         let dialog_state = self.dialog_state.clone();
         let settings_dialog_state = self.settings_dialog_state.clone();
 
+        self.view_mode_state.update(cx, |state, cx| {
+            state.ensure_search_input_created(window, cx);
+        });
+
         // 检查是否有会话，决定使用哪个标题栏
         let has_sessions = self.session_state.read(cx).has_sessions();
         let session_state = self.session_state.clone();
@@ -290,6 +311,7 @@ impl HomePage {
                         selected_menu,
                         &history,
                         self.settings_dialog_state.clone(),
+                        self.session_state.clone(),
                         cx,
                     ))
                     // Content
@@ -539,7 +561,6 @@ impl HomePage {
 
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        use gpui_component::notification::NotificationList;
         use gpui_component::WindowExt;
 
         // 统一的服务器列表刷新逻辑

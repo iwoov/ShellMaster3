@@ -473,7 +473,21 @@ impl SessionState {
                                     {
                                         match event {
                                             MonitorEvent::SystemInfo(info) => {
+                                                let server_id = tab.server_id.clone();
+                                                let os_name = info.host.os.trim().to_string();
                                                 tab.monitor_state.update_system_info(info);
+                                                if !os_name.is_empty() && os_name != "unknown" {
+                                                    if let Err(error) = crate::services::storage::update_server_os(
+                                                        &server_id,
+                                                        &os_name,
+                                                    ) {
+                                                        tracing::warn!(
+                                                            "[Monitor] Failed to persist OS for server {}: {}",
+                                                            server_id,
+                                                            error
+                                                        );
+                                                    }
+                                                }
                                             }
                                             MonitorEvent::LoadInfo(info) => {
                                                 tab.monitor_state.update_load_info(info);

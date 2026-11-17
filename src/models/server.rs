@@ -13,6 +13,7 @@ pub struct Server {
     pub port: u16,
     pub description: String,
     pub account: String,
+    pub os_name: Option<String>,
     pub last_connected: String,
 }
 
@@ -27,7 +28,9 @@ pub struct ServerGroup {
 /// 侧边栏历史记录项
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
+    pub server_id: String,
     pub name: String,
+    pub distro_icon: Option<&'static str>,
     pub time: String,
 }
 
@@ -85,6 +88,9 @@ pub struct ServerData {
     pub jump_host_id: Option<String>,
     pub proxy: Option<ProxyConfig>,
     pub enable_monitor: bool,
+    /// 首次连接后由监控服务采集的操作系统发行版名称。
+    #[serde(default)]
+    pub os_name: Option<String>,
     pub created_at: String,
     pub last_connected_at: Option<String>,
 }
@@ -107,6 +113,7 @@ impl Default for ServerData {
             jump_host_id: None,
             proxy: None,
             enable_monitor: true,
+            os_name: None,
             created_at: String::new(),
             last_connected_at: None,
         }

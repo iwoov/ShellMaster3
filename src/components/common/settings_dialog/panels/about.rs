@@ -140,15 +140,15 @@ pub fn render_about_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl 
                         .flex_col()
                         .gap_2()
                         .child(render_release_item(
-                            i18n::t(lang, "settings.about.release_0_1_3.ime"),
+                            i18n::t(lang, "settings.about.release_0_1_4.preview"),
                             cx,
                         ))
                         .child(render_release_item(
-                            i18n::t(lang, "settings.about.release_0_1_3.backtab"),
+                            i18n::t(lang, "settings.about.release_0_1_4.highlight"),
                             cx,
                         ))
                         .child(render_release_item(
-                            i18n::t(lang, "settings.about.release_0_1_3.input_routing"),
+                            i18n::t(lang, "settings.about.release_0_1_4.ls_color"),
                             cx,
                         )),
                 ),

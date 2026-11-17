@@ -185,6 +185,7 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
                                 div()
                                     .w_4()
                                     .h_4()
+                                    .flex_shrink_0()
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -199,8 +200,11 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
                                     } else {
                                         muted_foreground
                                     })
+                                    .min_w_0()
                                     .max_w(px(150.))
                                     .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
                                     .child(tab.server_label.clone()),
                             )
                             // 关闭按钮
@@ -212,6 +216,7 @@ pub fn render_session_titlebar(session_state: Entity<SessionState>, cx: &App) ->
                                     )))
                                     .w_4()
                                     .h_4()
+                                    .flex_shrink_0()
                                     .rounded_sm()
                                     .cursor_pointer()
                                     .hover(move |s| s.bg(secondary_hover))

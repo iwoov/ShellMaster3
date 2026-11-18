@@ -7,6 +7,30 @@ pub fn t(lang: &Language, key: &'static str) -> &'static str {
     }
 }
 
+/// 把过去的某个时刻格式化成「3小时前」/「3h ago」这样的相对时间。
+/// `time` 晚于 `now`（例如系统时钟被调过）时按「刚刚」处理。
+pub fn relative_time(
+    lang: &Language,
+    time: chrono::NaiveDateTime,
+    now: chrono::NaiveDateTime,
+) -> String {
+    let elapsed = now.signed_duration_since(time);
+
+    if elapsed.num_seconds() < 60 {
+        t(lang, "history.just_now").to_string()
+    } else if elapsed.num_minutes() < 60 {
+        format!(
+            "{}{}",
+            elapsed.num_minutes(),
+            t(lang, "history.minutes_ago")
+        )
+    } else if elapsed.num_hours() < 24 {
+        format!("{}{}", elapsed.num_hours(), t(lang, "history.hours_ago"))
+    } else {
+        format!("{}{}", elapsed.num_days(), t(lang, "history.days_ago"))
+    }
+}
+
 fn zh_cn(key: &'static str) -> &'static str {
     match key {
         // 通用
@@ -203,13 +227,13 @@ fn zh_cn(key: &'static str) -> &'static str {
 
         // 侧边栏
         "sidebar.hosts" => "服务器",
-        "sidebar.workspace" => "工作区",
         "sidebar.no_history" => "连接过服务器后会显示在这里",
         "sidebar.monitor" => "主机监控",
         "sidebar.snippets" => "快捷命令",
 
         "sidebar.known_hosts" => "已知主机",
-        "sidebar.history" => "历史记录",
+        "sidebar.recent" => "最近连接",
+        "sidebar.groups" => "分组",
         "sidebar.settings" => "设置",
 
         // 历史记录时间
@@ -260,18 +284,18 @@ fn zh_cn(key: &'static str) -> &'static str {
         "server_list.search_placeholder" => "搜索名称、地址、账号或端口",
         "server_list.no_results_title" => "没有匹配的服务器",
         "server_list.no_results_description" => "尝试搜索其他名称、地址、账号或端口",
-        "server_list.group_servers" => "台",
         "server_list.empty_title" => "暂无服务器",
         "server_list.empty_description" => "点击下方按钮添加您的第一台服务器",
-        "server_list.header.server" => "服务器",
-        "server_list.header.host" => "主机",
-        "server_list.header.port" => "端口",
-        "server_list.header.description" => "描述",
-        "server_list.header.account" => "账号",
-        "server_list.header.last_connected" => "最近连接",
-        "server_list.header.actions" => "操作",
         "server_list.ungrouped" => "未分组",
         "server_list.never_connected" => "从未",
+        "server_list.last_connected_at" => "最近连接：{}",
+        "server_list.view.list" => "列表视图",
+        "server_list.view.card" => "卡片视图",
+        "server_list.action.connect" => "连接",
+        "server_list.action.copy_address" => "复制地址",
+        "server_list.action.more" => "更多操作",
+        "server_list.delete_title" => "删除服务器",
+        "server_list.delete_message" => "确定删除「{}」吗？此操作无法撤销。",
         "server_list.placeholder.snippets" => "代码片段功能",
         "server_list.placeholder.known_hosts" => "已知主机管理",
         "server_list.placeholder.history" => "连接历史记录",
@@ -472,9 +496,6 @@ fn zh_cn(key: &'static str) -> &'static str {
         // Snippets 快捷命令
         "snippets.add_group" => "新建组",
         "snippets.page_title" => "快捷命令",
-        "snippets.page_description" => "整理常用命令，在终端工作流中快速复用",
-        "snippets.groups_count" => "个分组",
-        "snippets.commands_count" => "条命令",
         "snippets.items" => "项",
         "snippets.add_command" => "新建命令",
         "snippets.breadcrumb.all" => "全部",
@@ -549,9 +570,7 @@ fn zh_cn(key: &'static str) -> &'static str {
         // 已知主机
         "known_hosts.empty.title" => "暂无已知主机",
         "known_hosts.page_title" => "已知主机",
-        "known_hosts.page_description" => "检查和管理已信任服务器的主机密钥指纹",
         "known_hosts.empty.description" => "连接服务器并信任主机密钥后，会在这里显示",
-        "known_hosts.items" => "项",
 
         _ => key,
     }
@@ -756,13 +775,13 @@ fn en_us(key: &'static str) -> &'static str {
 
         // Sidebar
         "sidebar.hosts" => "Hosts",
-        "sidebar.workspace" => "WORKSPACE",
         "sidebar.no_history" => "Recent connections will appear here",
         "sidebar.monitor" => "Monitor",
         "sidebar.snippets" => "Snippets",
 
         "sidebar.known_hosts" => "Known Hosts",
-        "sidebar.history" => "History",
+        "sidebar.recent" => "Recent",
+        "sidebar.groups" => "Groups",
         "sidebar.settings" => "Settings",
 
         // History Time
@@ -813,18 +832,18 @@ fn en_us(key: &'static str) -> &'static str {
         "server_list.search_placeholder" => "Search name, address, account, or port",
         "server_list.no_results_title" => "No matching servers",
         "server_list.no_results_description" => "Try another name, address, account, or port",
-        "server_list.group_servers" => "servers",
         "server_list.empty_title" => "No Servers",
         "server_list.empty_description" => "Click the button below to add your first server",
-        "server_list.header.server" => "Server",
-        "server_list.header.host" => "Host",
-        "server_list.header.port" => "Port",
-        "server_list.header.description" => "Description",
-        "server_list.header.account" => "Account",
-        "server_list.header.last_connected" => "Last Connected",
-        "server_list.header.actions" => "Actions",
         "server_list.ungrouped" => "Ungrouped",
         "server_list.never_connected" => "Never",
+        "server_list.last_connected_at" => "Last connected: {}",
+        "server_list.view.list" => "List view",
+        "server_list.view.card" => "Card view",
+        "server_list.action.connect" => "Connect",
+        "server_list.action.copy_address" => "Copy address",
+        "server_list.action.more" => "More actions",
+        "server_list.delete_title" => "Delete Server",
+        "server_list.delete_message" => "Delete \"{}\"? This cannot be undone.",
         "server_list.placeholder.snippets" => "Snippets Feature",
         "server_list.placeholder.known_hosts" => "Known Hosts Management",
         "server_list.placeholder.history" => "Connection History",
@@ -1025,9 +1044,6 @@ fn en_us(key: &'static str) -> &'static str {
         // Snippets
         "snippets.add_group" => "New Group",
         "snippets.page_title" => "Snippets",
-        "snippets.page_description" => "Organize reusable commands for your terminal workflow",
-        "snippets.groups_count" => "groups",
-        "snippets.commands_count" => "commands",
         "snippets.items" => "items",
         "snippets.add_command" => "New Command",
         "snippets.breadcrumb.all" => "All",
@@ -1098,10 +1114,74 @@ fn en_us(key: &'static str) -> &'static str {
         // Known Hosts
         "known_hosts.empty.title" => "No Known Hosts",
         "known_hosts.page_title" => "Known Hosts",
-        "known_hosts.page_description" => "Review trusted host key fingerprints for your servers",
         "known_hosts.empty.description" => "Connect to a server and trust its key to see it here",
-        "known_hosts.items" => "hosts",
 
         _ => key,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relative_time;
+    use crate::models::settings::Language;
+    use chrono::{Duration, NaiveDate, NaiveDateTime};
+
+    fn now() -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(2026, 11, 17)
+            .unwrap()
+            .and_hms_opt(18, 0, 0)
+            .unwrap()
+    }
+
+    #[test]
+    fn relative_time_picks_the_largest_fitting_unit() {
+        let zh = Language::Chinese;
+        assert_eq!(
+            relative_time(&zh, now() - Duration::seconds(59), now()),
+            "刚刚"
+        );
+        assert_eq!(
+            relative_time(&zh, now() - Duration::seconds(60), now()),
+            "1分钟前"
+        );
+        assert_eq!(
+            relative_time(&zh, now() - Duration::minutes(59), now()),
+            "59分钟前"
+        );
+        assert_eq!(
+            relative_time(&zh, now() - Duration::minutes(60), now()),
+            "1小时前"
+        );
+        assert_eq!(
+            relative_time(&zh, now() - Duration::hours(23), now()),
+            "23小时前"
+        );
+        assert_eq!(
+            relative_time(&zh, now() - Duration::hours(24), now()),
+            "1天前"
+        );
+        assert_eq!(
+            relative_time(&zh, now() - Duration::days(14), now()),
+            "14天前"
+        );
+    }
+
+    #[test]
+    fn relative_time_follows_the_language() {
+        let en = Language::English;
+        assert_eq!(relative_time(&en, now(), now()), "Just now");
+        assert_eq!(
+            relative_time(&en, now() - Duration::hours(3), now()),
+            "3h ago"
+        );
+    }
+
+    #[test]
+    fn relative_time_treats_future_times_as_just_now() {
+        let zh = Language::Chinese;
+        assert_eq!(
+            relative_time(&zh, now() + Duration::hours(2), now()),
+            "刚刚"
+        );
     }
 }

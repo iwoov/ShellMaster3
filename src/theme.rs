@@ -113,3 +113,82 @@ pub fn sidebar_color(cx: &App) -> Hsla {
 pub fn titlebar_color(cx: &App) -> Hsla {
     cx.theme().title_bar
 }
+
+/// 主页使用的界面色板。
+///
+/// gpui-component 的主题只有一档 hover / muted，主页的列表、卡片需要更细的层次
+/// （行悬停、选中、内嵌底色、三档文字），这里按深浅模式补齐，其余直接取主题色。
+#[derive(Clone, Copy)]
+pub struct Palette {
+    pub background: Hsla,
+    pub sidebar: Hsla,
+    /// 卡片、输入框的底色
+    pub surface: Hsla,
+    /// 卡片内的内嵌区域（地址条）
+    pub inset: Hsla,
+    /// 次级按钮底色
+    pub muted: Hsla,
+    /// 行、导航项、标签的悬停底色
+    pub hover: Hsla,
+    /// 悬停行内按钮的悬停底色、选中的切换项
+    pub hover_strong: Hsla,
+    /// 选中的导航项
+    pub selected: Hsla,
+    pub border: Hsla,
+    /// 分组标题后的细线
+    pub line: Hsla,
+    pub text: Hsla,
+    /// 地址中的主机部分
+    pub text_soft: Hsla,
+    /// 描述、未选中的导航项
+    pub text_muted: Hsla,
+    /// 计数、时间、占位文字
+    pub text_faint: Hsla,
+    pub primary: Hsla,
+    pub primary_hover: Hsla,
+    pub primary_foreground: Hsla,
+    pub success: Hsla,
+    pub is_dark: bool,
+}
+
+/// 取当前模式下的主页色板
+pub fn palette(cx: &App) -> Palette {
+    let theme = cx.theme();
+    let is_dark = theme.mode.is_dark();
+    let pick = |dark: u32, light: u32| -> Hsla { rgb(if is_dark { dark } else { light }).into() };
+
+    Palette {
+        background: theme.background,
+        sidebar: theme.sidebar,
+        surface: theme.popover,
+        inset: pick(0x0C1219, 0xF4F7FA),
+        muted: theme.secondary,
+        hover: pick(0x131C28, 0xE9EFF6),
+        hover_strong: theme.secondary_hover,
+        selected: pick(0x172230, 0xE8EEF6),
+        border: theme.border,
+        line: theme.border.opacity(if is_dark { 0.7 } else { 0.9 }),
+        text: theme.foreground,
+        text_soft: pick(0xB6C2D1, 0x3B485D),
+        text_muted: theme.muted_foreground,
+        text_faint: pick(0x71829A, 0x627085),
+        primary: theme.primary,
+        primary_hover: theme.primary_hover,
+        primary_foreground: theme.primary_foreground,
+        success: pick(0x22C55E, 0x16A34A),
+        is_dark,
+    }
+}
+
+/// 在 RGB 空间按比例混合两种颜色：`t = 0` 得到 `from`，`t = 1` 得到 `to`
+pub fn mix(from: Hsla, to: Hsla, t: f32) -> Hsla {
+    let (a, b) = (Rgba::from(from), Rgba::from(to));
+    let lerp = |x: f32, y: f32| x + (y - x) * t;
+    Rgba {
+        r: lerp(a.r, b.r),
+        g: lerp(a.g, b.g),
+        b: lerp(a.b, b.b),
+        a: lerp(a.a, b.a),
+    }
+    .into()
+}

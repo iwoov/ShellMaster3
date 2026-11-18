@@ -98,6 +98,8 @@ fn main() {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    // 比最大的弹窗（设置，800×560）略大，弹窗不会被窗口裁掉
+                    window_min_size: Some(size(px(860.), px(600.))),
                     titlebar: Some(TitlebarOptions {
                         appears_transparent: true,
                         traffic_light_position: Some(point(px(16.), px(16.))),

@@ -4,6 +4,7 @@ use gpui::*;
 use gpui_component::ActiveTheme;
 use tracing::error;
 
+use super::widgets::{page_header, TextFitter};
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
 use crate::i18n;
@@ -70,9 +71,16 @@ struct CardColors {
     destructive: Hsla,
 }
 
+/// 卡片宽度
+const CARD_WIDTH: Pixels = px(320.);
+/// 卡片里主机地址可用的宽度：卡片宽度减去边框（2）、内边距（16×2）、图标块（40）及其后的
+/// 间距（12）、删除按钮（28）和它前面留出的间距（8）
+const HOST_LABEL_WIDTH: Pixels = px(320. - 2. - 32. - 40. - 12. - 28. - 8.);
+
 /// 渲染 Known Hosts 内容区域
 pub fn render_known_hosts_content(
     state: Entity<KnownHostsPageState>,
+    fit: &TextFitter,
     cx: &App,
 ) -> impl IntoElement {
     let lang = storage::load_settings()
@@ -102,7 +110,7 @@ pub fn render_known_hosts_content(
         .flex_col()
         .relative()
         // 标题区域
-        .child(render_header(&lang, colors, hosts.len()))
+        .child(render_header(&lang, hosts.len(), cx))
         // 卡片内容区域
         .child(if has_items {
             div()
@@ -111,69 +119,20 @@ pub fn render_known_hosts_content(
                 .overflow_y_scroll()
                 .px_6()
                 .pb_6()
-                .child(render_card_grid(state, hosts, colors))
+                .child(render_card_grid(state, hosts, colors, fit))
                 .into_any_element()
         } else {
             render_empty_state(&lang, colors).into_any_element()
         })
 }
 
-/// 渲染头部区域
-fn render_header(lang: &Language, colors: CardColors, count: usize) -> impl IntoElement {
-    div()
-        .flex_shrink_0()
-        .px_6()
-        .pt_6()
-        .pb_4()
-        .flex()
-        .flex_wrap()
-        .items_end()
-        .justify_between()
-        .gap_3()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_2xl()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(colors.foreground)
-                        .child(i18n::t(lang, "known_hosts.page_title")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(colors.muted_foreground)
-                        .child(i18n::t(lang, "known_hosts.page_description")),
-                ),
-        )
-        .child(
-            div()
-                .h_8()
-                .px_3()
-                .rounded_full()
-                .bg(colors.bg)
-                .border_1()
-                .border_color(colors.border)
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(colors.foreground)
-                        .child(count.to_string()),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(colors.muted_foreground)
-                        .child(i18n::t(lang, "known_hosts.items")),
-                ),
-        )
+/// 渲染标题行：标题和已知主机数量
+fn render_header(lang: &Language, count: usize, cx: &App) -> impl IntoElement {
+    page_header(
+        i18n::t(lang, "known_hosts.page_title"),
+        Some(count.to_string().into()),
+        &crate::theme::palette(cx),
+    )
 }
 
 /// 渲染卡片网格
@@ -181,6 +140,7 @@ fn render_card_grid(
     state: Entity<KnownHostsPageState>,
     hosts: Vec<KnownHost>,
     colors: CardColors,
+    fit: &TextFitter,
 ) -> impl IntoElement {
     div()
         .flex()
@@ -188,7 +148,7 @@ fn render_card_grid(
         .gap_4()
         .children(hosts.into_iter().map(|host| {
             let state_clone = state.clone();
-            render_host_card(state_clone, host, colors)
+            render_host_card(state_clone, host, colors, fit)
         }))
 }
 
@@ -197,13 +157,14 @@ fn render_host_card(
     state: Entity<KnownHostsPageState>,
     host: KnownHost,
     colors: CardColors,
+    fit: &TextFitter,
 ) -> impl IntoElement {
     let host_key = host.host.clone();
     let host_key_for_delete = host_key.clone();
 
     div()
         .id(SharedString::from(format!("known-host-{}", host_key)))
-        .w(px(320.))
+        .w(CARD_WIDTH)
         .bg(colors.bg)
         .rounded_xl()
         .border_1()
@@ -242,12 +203,16 @@ fn render_host_card(
                                 .flex()
                                 .flex_col()
                                 .gap(px(2.0))
+                                // 地址过长时截断，避免撑出卡片
                                 .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(colors.foreground)
-                                        .child(host.host.clone()),
+                                    fit.label_with_tooltip(
+                                        SharedString::from(format!("known-host-name-{}", host_key)),
+                                        &host.host,
+                                        HOST_LABEL_WIDTH,
+                                        14.,
+                                        FontWeight::MEDIUM,
+                                    )
+                                    .text_color(colors.foreground),
                                 )
                                 .child(
                                     div()

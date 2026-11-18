@@ -14,24 +14,40 @@ pub struct Server {
     pub description: String,
     pub account: String,
     pub os_name: Option<String>,
-    pub last_connected: String,
+    /// 最近一次连接的时间；从未连接过时为 `None`
+    pub last_connected_at: Option<chrono::NaiveDateTime>,
+}
+
+impl Server {
+    /// `user@host:port` 形式的连接地址
+    pub fn endpoint(&self) -> String {
+        format!("{}@{}:{}", self.account, self.host, self.port)
+    }
 }
 
 /// 服务器组（用于视图展示）
 #[derive(Clone)]
 pub struct ServerGroup {
+    /// 分组 id；未分组的服务器归在 [`ServerGroup::UNGROUPED_ID`] 下
+    pub id: String,
     pub name: String,
-    pub icon_path: &'static str,
     pub servers: Vec<Server>,
 }
 
-/// 侧边栏历史记录项
+impl ServerGroup {
+    /// 「未分组」这一组的 id。保存服务器时分组名为空就不会建分组，所以它不会和真实分组的 id 重复
+    pub const UNGROUPED_ID: &'static str = "";
+}
+
+/// 最近连接的记录项
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
     pub server_id: String,
     pub name: String,
     pub distro_icon: Option<&'static str>,
-    pub time: String,
+    /// `user@host` 形式的地址（不含端口）
+    pub address: String,
+    pub connected_at: chrono::NaiveDateTime,
 }
 
 // ============== 持久化存储用的完整结构 ==============

@@ -4,6 +4,7 @@ use gpui::*;
 use gpui_component::ActiveTheme;
 use tracing::error;
 
+use super::widgets::{page_header, primary_button, secondary_button};
 use crate::components::common::icon::render_icon;
 use crate::components::common::snippets_dialog::SnippetsDialogState;
 use crate::constants::icons;
@@ -146,9 +147,9 @@ pub fn render_snippets_content(state: Entity<SnippetsPageState>, cx: &App) -> im
         .iter()
         .map(|c| (*c).clone())
         .collect();
-    let group_count = groups.len();
-    let command_count = commands.len();
     let config = state_read.config.clone();
+    // 与侧边栏显示的数量一致：所有分组下的命令总数
+    let command_total = config.commands.len();
     let has_items = !groups.is_empty() || !commands.is_empty();
 
     let bg_color = crate::theme::background_color(cx);
@@ -161,14 +162,7 @@ pub fn render_snippets_content(state: Entity<SnippetsPageState>, cx: &App) -> im
         .flex()
         .flex_col()
         .relative()
-        .child(render_toolbar(
-            state.clone(),
-            &lang,
-            colors,
-            group_count,
-            command_count,
-            cx,
-        ))
+        .child(render_toolbar(state.clone(), &lang, command_total, cx))
         // 面包屑导航
         .child(render_breadcrumb(
             state.clone(),
@@ -201,139 +195,44 @@ pub fn render_snippets_content(state: Entity<SnippetsPageState>, cx: &App) -> im
     // 弹窗在 page.rs 的 render_home_view 中统一渲染
 }
 
-/// 渲染工具栏
+/// 渲染标题行：标题、命令总数、新建组和新建命令按钮
 fn render_toolbar(
     state: Entity<SnippetsPageState>,
     lang: &Language,
-    colors: CardColors,
-    group_count: usize,
-    command_count: usize,
+    command_total: usize,
     cx: &App,
 ) -> impl IntoElement {
+    let p = crate::theme::palette(cx);
     let state_for_group = state.clone();
     let state_for_command = state;
 
-    div()
-        .flex_shrink_0()
-        .px_6()
-        .pt_6()
-        .pb_4()
-        .flex()
-        .flex_col()
-        .gap_5()
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_end()
-                .justify_between()
-                .gap_3()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .text_2xl()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(colors.foreground)
-                                .child(i18n::t(lang, "snippets.page_title")),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(colors.muted_foreground)
-                                .child(i18n::t(lang, "snippets.page_description")),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(render_count_chip(
-                            group_count,
-                            i18n::t(lang, "snippets.groups_count"),
-                            colors,
-                        ))
-                        .child(render_count_chip(
-                            command_count,
-                            i18n::t(lang, "snippets.commands_count"),
-                            colors,
-                        )),
-                ),
+    page_header(
+        i18n::t(lang, "snippets.page_title"),
+        Some(command_total.to_string().into()),
+        &p,
+    )
+    .child(
+        secondary_button(
+            "add-group-btn",
+            icons::FOLDER_PLUS,
+            i18n::t(lang, "snippets.add_group"),
+            &p,
         )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_3()
-                .child(
-                    div()
-                        .id("add-group-btn")
-                        .w_10()
-                        .h_10()
-                        .bg(cx.theme().secondary)
-                        .border_1()
-                        .border_color(colors.border)
-                        .rounded_lg()
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(cx.theme().secondary_hover))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .on_click(move |_, _, cx| {
-                            state_for_group.update(cx, |s, cx| s.open_add_group(cx));
-                        })
-                        .child(render_icon(
-                            icons::FOLDER_PLUS,
-                            colors.muted_foreground.into(),
-                        )),
-                )
-                .child(
-                    div()
-                        .id("add-command-btn")
-                        .w_10()
-                        .h_10()
-                        .bg(cx.theme().primary)
-                        .rounded_lg()
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(cx.theme().primary_hover))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .on_click(move |_, _, cx| {
-                            state_for_command.update(cx, |s, cx| s.open_add_command(cx));
-                        })
-                        .child(render_icon(icons::PLUS, rgb(0xffffff).into())),
-                ),
+        .on_click(move |_, _, cx| {
+            state_for_group.update(cx, |s, cx| s.open_add_group(cx));
+        }),
+    )
+    .child(
+        primary_button(
+            "add-command-btn",
+            icons::PLUS,
+            i18n::t(lang, "snippets.add_command"),
+            &p,
         )
-}
-
-fn render_count_chip(value: usize, label: &str, colors: CardColors) -> impl IntoElement {
-    div()
-        .h_8()
-        .px_3()
-        .rounded_full()
-        .bg(colors.bg)
-        .border_1()
-        .border_color(colors.border)
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(colors.foreground)
-                .child(value.to_string()),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(colors.muted_foreground)
-                .child(label.to_string()),
-        )
+        .on_click(move |_, _, cx| {
+            state_for_command.update(cx, |s, cx| s.open_add_command(cx));
+        }),
+    )
 }
 
 /// 渲染面包屑导航

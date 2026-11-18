@@ -5,24 +5,56 @@ use std::collections::HashMap;
 use tracing::info;
 
 use super::known_hosts_list::{render_known_hosts_content, KnownHostsPageState};
-use super::server_list::{render_hosts_content, render_placeholder, ViewModeState};
-use super::sidebar::{render_sidebar, MenuType, SidebarState};
+use super::server_list::{
+    render_delete_confirm, render_hosts_content, render_placeholder, HostsContent, ViewMode,
+    ViewModeState,
+};
+use super::sidebar::{
+    render_sidebar, GroupEntry, MenuType, NavCounts, SidebarProps, SidebarSection, SidebarState,
+};
 use super::snippets_list::{render_snippets_content, SnippetsPageState};
-use super::titlebar::{render_home_button, render_session_titlebar, render_titlebar};
+use super::titlebar::{render_home_button, render_home_topbar, render_session_titlebar};
+use super::widgets::TextFitter;
 use crate::components::common::icon::distribution_icon;
 use crate::components::common::server_dialog::{render_server_dialog_overlay, ServerDialogState};
 use crate::components::common::settings_dialog::{
     render_settings_dialog_overlay, SettingsDialogState,
 };
-use crate::constants::icons;
 use crate::i18n;
 use crate::models::settings::Language;
-use crate::models::{HistoryItem, Server, ServerGroup};
+use crate::models::{HistoryItem, Server, ServerData, ServerGroup};
 use crate::pages::connecting::{render_connecting_page, ConnectingProgress};
 use crate::pages::session::render_session_layout;
 use crate::services::storage;
 use crate::ssh::start_ssh_connection;
 use crate::state::{SessionState, SessionStatus};
+
+/// 服务器连接时间在配置文件中的存储格式
+const CONNECTED_AT_FORMAT: &str = "%Y-%m-%d %H:%M";
+/// 「最近连接」保留的条数
+const HISTORY_LIMIT: usize = 10;
+
+/// 解析配置文件中保存的连接时间；格式不对时返回 `None`
+fn parse_connected_at(value: &str) -> Option<chrono::NaiveDateTime> {
+    chrono::NaiveDateTime::parse_from_str(value, CONNECTED_AT_FORMAT).ok()
+}
+
+/// 把持久化的服务器数据转换为视图用的结构
+fn server_view(data: &ServerData) -> Server {
+    Server {
+        id: data.id.clone(),
+        name: data.label.clone(),
+        host: data.host.clone(),
+        port: data.port,
+        description: data.description.clone().unwrap_or_default(),
+        account: data.username.clone(),
+        os_name: data.os_name.clone(),
+        last_connected_at: data
+            .last_connected_at
+            .as_deref()
+            .and_then(parse_connected_at),
+    }
+}
 
 /// 主页状态
 pub struct HomePage {
@@ -86,30 +118,15 @@ impl HomePage {
         let mut server_groups: Vec<ServerGroup> = config
             .groups
             .iter()
-            .map(|group| {
-                let group_servers: Vec<Server> = config
+            .map(|group| ServerGroup {
+                id: group.id.clone(),
+                name: group.name.clone(),
+                servers: config
                     .servers
                     .iter()
                     .filter(|s| s.group_id.as_deref() == Some(&group.id))
-                    .map(|s| Server {
-                        id: s.id.clone(),
-                        name: s.label.clone(),
-                        host: s.host.clone(),
-                        port: s.port,
-                        description: s.description.clone().unwrap_or_default(),
-                        account: s.username.clone(),
-                        os_name: s.os_name.clone(),
-                        last_connected: s.last_connected_at.clone().unwrap_or_else(|| {
-                            i18n::t(&lang, "server_list.never_connected").to_string()
-                        }),
-                    })
-                    .collect();
-
-                ServerGroup {
-                    name: group.name.clone(),
-                    icon_path: icons::SERVER,
-                    servers: group_servers,
-                }
+                    .map(server_view)
+                    .collect(),
             })
             .collect();
 
@@ -118,25 +135,13 @@ impl HomePage {
             .servers
             .iter()
             .filter(|s| s.group_id.is_none())
-            .map(|s| Server {
-                id: s.id.clone(),
-                name: s.label.clone(),
-                host: s.host.clone(),
-                port: s.port,
-                description: s.description.clone().unwrap_or_default(),
-                account: s.username.clone(),
-                os_name: s.os_name.clone(),
-                last_connected: s
-                    .last_connected_at
-                    .clone()
-                    .unwrap_or_else(|| i18n::t(&lang, "server_list.never_connected").to_string()),
-            })
+            .map(server_view)
             .collect();
 
         if !ungrouped_servers.is_empty() {
             server_groups.push(ServerGroup {
+                id: ServerGroup::UNGROUPED_ID.to_string(),
                 name: i18n::t(&lang, "server_list.ungrouped").to_string(),
-                icon_path: icons::SERVER,
                 servers: ungrouped_servers,
             });
         }
@@ -150,96 +155,61 @@ impl HomePage {
         self.history = Self::load_history();
     }
 
-    /// 从存储加载历史记录
+    /// 从存储加载最近连接过的服务器，按连接时间倒序
     fn load_history() -> Vec<HistoryItem> {
-        let lang = storage::load_settings()
-            .map(|s| s.theme.language)
-            .unwrap_or(Language::Chinese);
-
         let config = storage::load_servers().unwrap_or_default();
-        let mut servers_with_time: Vec<(
-            String,
-            String,
-            Option<&'static str>,
-            chrono::NaiveDateTime,
-        )> = config
+        let mut history: Vec<HistoryItem> = config
             .servers
             .iter()
-            .filter_map(|s| {
-                s.last_connected_at.as_ref().and_then(|time_str| {
-                    match chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M") {
-                        Ok(dt) => Some((
-                            s.id.clone(),
-                            s.label.clone(),
-                            distribution_icon(
-                                s.os_name.as_deref(),
-                                &s.label,
-                                s.description.as_deref().unwrap_or_default(),
-                            ),
-                            dt,
-                        )),
-                        Err(_) => None,
-                    }
+            .filter_map(|server| {
+                let connected_at = parse_connected_at(server.last_connected_at.as_deref()?)?;
+                Some(HistoryItem {
+                    server_id: server.id.clone(),
+                    name: server.label.clone(),
+                    distro_icon: distribution_icon(
+                        server.os_name.as_deref(),
+                        &server.label,
+                        server.description.as_deref().unwrap_or_default(),
+                    ),
+                    address: format!("{}@{}", server.username, server.host),
+                    connected_at,
                 })
             })
             .collect();
 
         // 按时间倒序排序
-        servers_with_time.sort_by(|a, b| b.3.cmp(&a.3));
-
-        // 取前 10 条
-        servers_with_time
-            .into_iter()
-            .take(10)
-            .map(|(server_id, name, distro_icon, time)| {
-                let now = chrono::Local::now().naive_local();
-                let duration = now.signed_duration_since(time);
-                let time_str = if duration.num_seconds() < 60 {
-                    i18n::t(&lang, "history.just_now").to_string()
-                } else if duration.num_minutes() < 60 {
-                    format!(
-                        "{}{}",
-                        duration.num_minutes(),
-                        i18n::t(&lang, "history.minutes_ago")
-                    )
-                } else if duration.num_hours() < 24 {
-                    format!(
-                        "{}{}",
-                        duration.num_hours(),
-                        i18n::t(&lang, "history.hours_ago")
-                    )
-                } else {
-                    format!(
-                        "{}{}",
-                        duration.num_days(),
-                        i18n::t(&lang, "history.days_ago")
-                    )
-                };
-
-                HistoryItem {
-                    server_id,
-                    name,
-                    distro_icon,
-                    time: time_str,
-                }
-            })
-            .collect()
+        history.sort_by(|a, b| b.connected_at.cmp(&a.connected_at));
+        history.truncate(HISTORY_LIMIT);
+        history
     }
 
-    fn render_content(&self, selected_menu: MenuType, cx: &Context<Self>) -> AnyElement {
-        // 加载当前语言
-        let lang = storage::load_settings()
-            .map(|s| s.theme.language)
-            .unwrap_or(Language::Chinese);
+    fn render_content(
+        &self,
+        selected_menu: MenuType,
+        viewport: Size<Pixels>,
+        fit: &TextFitter,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let lang = self
+            .settings_dialog_state
+            .read(cx)
+            .settings
+            .theme
+            .language
+            .clone();
 
-        let view_mode = self.view_mode_state.read(cx).mode;
         match selected_menu {
             MenuType::Hosts => render_hosts_content(
-                &self.server_groups,
-                view_mode,
-                self.view_mode_state.clone(),
-                self.dialog_state.clone(),
-                self.session_state.clone(),
+                HostsContent {
+                    groups: &self.server_groups,
+                    history: &self.history,
+                    fit: fit.clone(),
+                    viewport,
+                    lang,
+                    view_state: self.view_mode_state.clone(),
+                    dialog_state: self.dialog_state.clone(),
+                    session_state: self.session_state.clone(),
+                },
                 cx,
             )
             .into_any_element(),
@@ -251,76 +221,102 @@ impl HomePage {
                 render_snippets_content(self.snippets_state.clone(), cx).into_any_element()
             }
             MenuType::KnownHosts => {
-                render_known_hosts_content(self.known_hosts_state.clone(), cx).into_any_element()
+                render_known_hosts_content(self.known_hosts_state.clone(), fit, cx)
+                    .into_any_element()
             }
         }
     }
 
-    /// 渲染主页视图（Sidebar + 服务器列表）
+    /// 侧边栏导航下方显示的内容：服务器页的卡片视图显示分组（「最近连接」在内容区顶部），
+    /// 其余情况显示「最近连接」
+    fn sidebar_section(&self, selected_menu: MenuType, cx: &Context<Self>) -> SidebarSection<'_> {
+        let view_state = self.view_mode_state.read(cx);
+        let show_groups = selected_menu == MenuType::Hosts
+            && view_state.mode == ViewMode::Card
+            && !self.server_groups.is_empty();
+        if show_groups {
+            SidebarSection::Groups {
+                groups: self
+                    .server_groups
+                    .iter()
+                    .map(|group| GroupEntry {
+                        id: group.id.clone(),
+                        name: group.name.clone(),
+                        server_count: group.servers.len(),
+                    })
+                    .collect(),
+                selected: view_state.group_filter.clone(),
+            }
+        } else {
+            SidebarSection::Recent(&self.history)
+        }
+    }
+
+    /// 渲染主页视图（Sidebar + 顶部条 + 当前页面）
     fn render_home_view(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let history = self.history.clone();
-        let sidebar_state = self.sidebar_state.clone();
         let selected_menu = self.sidebar_state.read(cx).selected_menu;
         let dialog_visible = self.dialog_state.read(cx).visible;
         let settings_dialog_visible = self.settings_dialog_state.read(cx).visible;
         let dialog_state = self.dialog_state.clone();
         let settings_dialog_state = self.settings_dialog_state.clone();
+        let lang = self
+            .settings_dialog_state
+            .read(cx)
+            .settings
+            .theme
+            .language
+            .clone();
 
         self.view_mode_state.update(cx, |state, cx| {
             state.ensure_search_input_created(window, cx);
         });
 
-        // 检查是否有会话，决定使用哪个标题栏
-        let has_sessions = self.session_state.read(cx).has_sessions();
-        let session_state = self.session_state.clone();
+        let counts = NavCounts {
+            servers: self.server_groups.iter().map(|g| g.servers.len()).sum(),
+            snippets: self.snippets_state.read(cx).config.commands.len(),
+            known_hosts: self.known_hosts_state.read(cx).hosts.len(),
+        };
+        let viewport = window.viewport_size();
+        let fit = TextFitter::new(window, cx);
 
         div()
             .size_full()
             .bg(crate::theme::background_color(cx))
             .flex()
-            .flex_col()
             .relative()
-            // 第一行：Home 按钮区域 + Titlebar
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    // Home 按钮区域（独立，宽度与 sidebar 相同）
-                    .child(render_home_button(session_state.clone(), cx))
-                    // Titlebar（有会话时显示标签页）
-                    .child(if has_sessions {
-                        render_session_titlebar(session_state, cx).into_any_element()
-                    } else {
-                        render_titlebar(cx).into_any_element()
-                    }),
-            )
-            // 第二行：Sidebar + Content
+            // 左侧：Sidebar（从窗口顶部到底部）
+            .child(render_sidebar(
+                SidebarProps {
+                    fit: fit.clone(),
+                    state: self.sidebar_state.clone(),
+                    selected_menu,
+                    counts,
+                    section: self.sidebar_section(selected_menu, cx),
+                    view_state: self.view_mode_state.clone(),
+                    settings_dialog_state: self.settings_dialog_state.clone(),
+                    session_state: self.session_state.clone(),
+                },
+                cx,
+            ))
+            // 右侧：顶部条（有会话时显示标签页）+ 当前页面
             .child(
                 div()
                     .flex_1()
-                    .w_full()
-                    .overflow_hidden() // 防止内容溢出，确保设置按钮可见
+                    .min_w_0()
+                    .h_full()
                     .flex()
-                    // Sidebar
-                    .child(render_sidebar(
-                        sidebar_state,
-                        selected_menu,
-                        &history,
-                        self.settings_dialog_state.clone(),
-                        self.session_state.clone(),
-                        cx,
-                    ))
-                    // Content
+                    .flex_col()
+                    .child(render_home_topbar(self.session_state.clone(), &fit, cx))
                     .child(
                         div()
                             .flex_1()
-                            .h_full()
-                            .overflow_hidden()
-                            .child(self.render_content(selected_menu, cx)),
+                            .min_h_0()
+                            .overflow_hidden() // 防止内容溢出
+                            .child(self.render_content(selected_menu, viewport, &fit, cx)),
                     ),
             )
             // 服务器弹窗
@@ -332,6 +328,13 @@ impl HomePage {
             } else {
                 None
             })
+            // 删除服务器的确认弹窗
+            .children(render_delete_confirm(
+                &self.view_mode_state,
+                &self.dialog_state,
+                &lang,
+                cx,
+            ))
             // 设置弹窗
             .children(if settings_dialog_visible {
                 self.settings_dialog_state.update(cx, |state, cx| {
@@ -552,7 +555,11 @@ impl HomePage {
                     // Home 按钮区域
                     .child(render_home_button(session_state.clone(), cx))
                     // 会话标题栏（带标签页）
-                    .child(render_session_titlebar(session_state, cx)),
+                    .child(render_session_titlebar(
+                        session_state,
+                        &TextFitter::new(window, cx),
+                        cx,
+                    )),
             )
             // 第二行：会话内容区域
             .child(div().flex_1().w_full().min_h(px(0.)).child(content))
@@ -570,6 +577,13 @@ impl Render for HomePage {
         // 刷新条件：1) 从会话视图切换到主页视图  2) 对话框保存后需要刷新
         if (show_home && !self.last_show_home) || needs_refresh_from_dialog {
             self.reload_servers();
+            // 分组可能随服务器的增删而消失，丢弃它们的折叠和筛选状态
+            self.view_mode_state.update(cx, |state, _| {
+                state.retain_groups(&self.server_groups);
+            });
+            // 连接新服务器时会记录主机密钥，侧边栏的数量和已知主机页要跟着更新
+            self.known_hosts_state
+                .update(cx, |state, _| state.refresh());
             if needs_refresh_from_dialog {
                 self.dialog_state.update(cx, |state, _| {
                     state.needs_refresh = false;

@@ -1,14 +1,18 @@
-// 子模块声明
+// 服务器弹窗：添加、编辑服务器（基本信息、跳板机、代理）
+
 pub mod helpers;
 pub mod panels;
 
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::input::InputState;
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::ActiveTheme;
 
-use crate::components::common::icon::render_icon;
+use crate::components::common::button::{text_button, ButtonKind};
+use crate::components::common::dialog::{
+    dialog_nav_item, dialog_nav_list, dialog_pane_footer, dialog_pane_header, dialog_panel,
+    dialog_scroll_area, dialog_sidebar, fit_to_viewport, keep_focus_in_dialog, DialogOverlay,
+};
+use crate::components::common::text::TextFitter;
 use crate::constants::icons;
 use crate::i18n;
 use crate::models::server::{AuthType, ProxyConfig, ProxyType, ServerData};
@@ -16,19 +20,133 @@ use crate::models::settings::Language;
 use crate::services::storage;
 use crate::ssh::config::resolve_jump_server;
 
-use panels::{
-    render_basic_info_form, render_jump_host_form, render_other_settings_form,
-    render_proxy_settings_form,
-};
+use panels::{render_basic_info_form, render_jump_host_form, render_proxy_settings_form};
 
-/// 左侧导航菜单类型
+/// 弹窗的期望尺寸，窗口较小时随之收缩
+const DIALOG_SIZE: Size<Pixels> = size(px(760.), px(560.));
+/// 左侧导航宽度
+const NAV_WIDTH: Pixels = px(180.);
+/// 内容区左右留白
+const CONTENT_PADDING_X: Pixels = px(28.);
+/// SSH 默认端口：端口留空时使用
+const DEFAULT_SSH_PORT: u16 = 22;
+
+/// 左侧导航的分区
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum DialogSection {
     #[default]
     BasicInfo,
     JumpHost,
     ProxySettings,
-    OtherSettings,
+}
+
+impl DialogSection {
+    const ALL: [DialogSection; 3] = [
+        DialogSection::BasicInfo,
+        DialogSection::JumpHost,
+        DialogSection::ProxySettings,
+    ];
+
+    fn label_key(self) -> &'static str {
+        match self {
+            DialogSection::BasicInfo => "server_dialog.nav.basic_info",
+            DialogSection::JumpHost => "server_dialog.nav.jump_host",
+            DialogSection::ProxySettings => "server_dialog.nav.proxy",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            DialogSection::BasicInfo => icons::SERVER,
+            DialogSection::JumpHost => icons::LINK,
+            DialogSection::ProxySettings => icons::GLOBE,
+        }
+    }
+}
+
+/// 需要校验的字段
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Field {
+    Host,
+    Port,
+    Username,
+    PrivateKey,
+    JumpHost,
+    ProxyHost,
+    ProxyPort,
+}
+
+impl Field {
+    /// 字段所在的分区
+    pub fn section(self) -> DialogSection {
+        match self {
+            Field::Host | Field::Port | Field::Username | Field::PrivateKey => {
+                DialogSection::BasicInfo
+            }
+            Field::JumpHost => DialogSection::JumpHost,
+            Field::ProxyHost | Field::ProxyPort => DialogSection::ProxySettings,
+        }
+    }
+}
+
+/// 校验出的问题：字段和提示文字的 i18n key，按字段在表单中的顺序排列
+pub type FormErrors = Vec<(Field, &'static str)>;
+
+/// 表单里参与校验的内容
+#[derive(Clone, Debug, Default)]
+pub struct FormValues {
+    pub host: String,
+    pub port: String,
+    pub username: String,
+    pub uses_private_key: bool,
+    pub private_key: String,
+    pub enable_jump_host: bool,
+    /// 已选中跳板机（或保留着无法识别的旧设置）
+    pub has_jump_host: bool,
+    pub enable_proxy: bool,
+    pub proxy_host: String,
+    pub proxy_port: String,
+}
+
+/// 解析端口：只接受 1–65535 的整数；留空时用 `default`，没有默认值则视为无效
+fn parse_port(text: &str, default: Option<u16>) -> Option<u16> {
+    let text = text.trim();
+    if text.is_empty() {
+        return default;
+    }
+    text.parse::<u16>().ok().filter(|port| *port != 0)
+}
+
+/// 校验表单
+pub fn validate(values: &FormValues) -> FormErrors {
+    let mut errors = FormErrors::new();
+    if values.host.trim().is_empty() {
+        errors.push((Field::Host, "server_dialog.error.host_required"));
+    }
+    if parse_port(&values.port, Some(DEFAULT_SSH_PORT)).is_none() {
+        errors.push((Field::Port, "server_dialog.error.port_invalid"));
+    }
+    if values.username.trim().is_empty() {
+        errors.push((Field::Username, "server_dialog.error.username_required"));
+    }
+    if values.uses_private_key && values.private_key.trim().is_empty() {
+        errors.push((
+            Field::PrivateKey,
+            "server_dialog.error.private_key_required",
+        ));
+    }
+    if values.enable_jump_host && !values.has_jump_host {
+        errors.push((Field::JumpHost, "server_dialog.error.jump_host_required"));
+    }
+    if values.enable_proxy {
+        if values.proxy_host.trim().is_empty() {
+            errors.push((Field::ProxyHost, "server_dialog.error.proxy_host_required"));
+        }
+        if parse_port(&values.proxy_port, None).is_none() {
+            errors.push((Field::ProxyPort, "server_dialog.error.port_invalid"));
+        }
+    }
+    errors
 }
 
 /// 可选作跳板机的服务器
@@ -51,21 +169,21 @@ pub struct ServerDialogState {
     pub current_section: DialogSection,
     /// 标记是否需要刷新服务器列表（保存成功后设置为 true）
     pub needs_refresh: bool,
-    // 分组选择
+    /// 界面语言，由调用方在每次渲染前传入
+    pub lang: Language,
+    // 分组：可直接输入，也可从已有分组中选择
     pub group_input: Option<Entity<InputState>>,
-    pub show_group_dropdown: bool,
     pub available_groups: Vec<String>,
-    /// 待应用到输入框的分组值（由下拉选中时设置）
-    pub pending_group_value: Option<String>,
-    /// 待应用到输入框的私钥路径（由文件选择器设置）
+    /// 待应用到输入框的私钥文件名（由文件选择器设置）
     pub pending_private_key_path: Option<String>,
+    /// 导入私钥文件失败时的提示
+    pub key_error: Option<String>,
     // 表单 InputState 实体（延迟创建）
     pub label_input: Option<Entity<InputState>>,
     pub host_input: Option<Entity<InputState>>,
     pub port_input: Option<Entity<InputState>>,
     pub username_input: Option<Entity<InputState>>,
     pub password_input: Option<Entity<InputState>>,
-    // 描述
     pub description_input: Option<Entity<InputState>>,
     // 认证数据
     pub auth_type: AuthType,
@@ -86,6 +204,14 @@ pub struct ServerDialogState {
     pub proxy_port_input: Option<Entity<InputState>>,
     pub proxy_username_input: Option<Entity<InputState>>,
     pub proxy_password_input: Option<Entity<InputState>>,
+    /// 点过保存且校验没通过之后为 true：此后实时显示校验结果，改对的字段立即去掉错误提示
+    show_errors: bool,
+    /// 写入配置文件失败时的提示
+    save_error: Option<String>,
+    focus_handle: Option<FocusHandle>,
+    /// 打开后第一次渲染时聚焦第一个输入框
+    focus_pending: bool,
+    scroll_handle: ScrollHandle,
 }
 
 impl Default for ServerDialogState {
@@ -97,11 +223,11 @@ impl Default for ServerDialogState {
             pending_load_edit_data: false,
             current_section: DialogSection::BasicInfo,
             needs_refresh: false,
+            lang: Language::default(),
             group_input: None,
-            show_group_dropdown: false,
             available_groups: Vec::new(),
-            pending_group_value: None,
             pending_private_key_path: None,
+            key_error: None,
             label_input: None,
             host_input: None,
             port_input: None,
@@ -121,257 +247,282 @@ impl Default for ServerDialogState {
             proxy_port_input: None,
             proxy_username_input: None,
             proxy_password_input: None,
+            show_errors: false,
+            save_error: None,
+            focus_handle: None,
+            focus_pending: false,
+            scroll_handle: ScrollHandle::new(),
         }
     }
 }
 
+/// 创建一个单行输入框
+fn new_input(
+    placeholder: &'static str,
+    masked: bool,
+    window: &mut Window,
+    cx: &mut Context<ServerDialogState>,
+) -> Entity<InputState> {
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .placeholder(placeholder)
+            .masked(masked)
+    })
+}
+
+/// 设置输入框内容
+fn set_input(
+    input: &Option<Entity<InputState>>,
+    value: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut Context<ServerDialogState>,
+) {
+    if let Some(input) = input {
+        let value = value.into();
+        input.update(cx, |state, cx| state.set_value(value, window, cx));
+    }
+}
+
+/// 读取输入框内容
+fn input_text(input: &Option<Entity<InputState>>, cx: &App) -> String {
+    input
+        .as_ref()
+        .map(|input| input.read(cx).text().to_string())
+        .unwrap_or_default()
+}
+
+/// 去掉首尾空白，结果为空时返回 None
+fn non_empty(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
 impl ServerDialogState {
-    /// 确保输入框已创建（在有 window 上下文时调用）
-    pub fn ensure_inputs_created(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // 加载当前语言用于占位符文本
-        let lang = storage::load_settings()
-            .map(|s| s.theme.language)
-            .unwrap_or(Language::Chinese);
+    /// 确保输入框已创建（在有 window 上下文时调用），并处理打开时的焦点
+    pub fn ensure_inputs_created(
+        &mut self,
+        lang: &Language,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.lang = lang.clone();
+        let t = |key| i18n::t(lang, key);
 
-        // 分组输入
         if self.group_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.group_placeholder");
-            self.group_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
-            // 加载可用分组
-            if let Ok(groups) = storage::get_groups() {
-                self.available_groups = groups.into_iter().map(|g| g.name).collect();
-            }
-        }
-
-        // 应用待设置的分组值
-        if let Some(value) = self.pending_group_value.take() {
-            if let Some(input) = &self.group_input {
-                input.update(cx, |input_state, cx| {
-                    input_state.set_value(value, window, cx);
-                });
-            }
+            self.group_input = Some(new_input(
+                t("server_dialog.group_placeholder"),
+                false,
+                window,
+                cx,
+            ));
+            self.available_groups = storage::get_groups()
+                .map(|groups| groups.into_iter().map(|group| group.name).collect())
+                .unwrap_or_default();
         }
         if self.label_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.label_placeholder");
-            self.label_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
+            self.label_input = Some(new_input(
+                t("server_dialog.label_placeholder"),
+                false,
+                window,
+                cx,
+            ));
         }
         if self.host_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.host_placeholder");
-            self.host_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
+            self.host_input = Some(new_input(
+                t("server_dialog.host_placeholder"),
+                false,
+                window,
+                cx,
+            ));
         }
         if self.port_input.is_none() {
-            self.port_input = Some(cx.new(|cx| InputState::new(window, cx).placeholder("22")));
+            self.port_input = Some(new_input("22", false, window, cx));
         }
         if self.username_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.username");
-            self.username_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
+            self.username_input = Some(new_input(
+                t("server_dialog.username_placeholder"),
+                false,
+                window,
+                cx,
+            ));
         }
         if self.password_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.password");
-            self.password_input = Some(cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder(placeholder)
-                    .masked(true)
-            }));
+            self.password_input = Some(new_input(
+                t("server_dialog.password_placeholder"),
+                true,
+                window,
+                cx,
+            ));
         }
         if self.description_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.description_placeholder");
-            self.description_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
+            self.description_input = Some(new_input(
+                t("server_dialog.description_placeholder"),
+                false,
+                window,
+                cx,
+            ));
         }
         if self.private_key_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.private_key_placeholder");
-            self.private_key_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
-        }
-        // 应用待设置的私钥路径
-        if let Some(path) = self.pending_private_key_path.take() {
-            if let Some(input) = &self.private_key_input {
-                input.update(cx, |input_state, cx| {
-                    input_state.set_value(path, window, cx);
-                });
-            }
+            self.private_key_input = Some(new_input(
+                t("server_dialog.private_key_placeholder"),
+                false,
+                window,
+                cx,
+            ));
         }
         if self.passphrase_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.passphrase");
-            self.passphrase_input = Some(cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder(placeholder)
-                    .masked(true)
-            }));
+            self.passphrase_input = Some(new_input(
+                t("server_dialog.passphrase_placeholder"),
+                true,
+                window,
+                cx,
+            ));
         }
-
-        // 代理输入
         if self.proxy_host_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.proxy_host");
-            self.proxy_host_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
+            self.proxy_host_input = Some(new_input(
+                t("server_dialog.proxy_host_placeholder"),
+                false,
+                window,
+                cx,
+            ));
         }
         if self.proxy_port_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.proxy_port");
-            self.proxy_port_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
+            // 代理端口没有默认值，不放示例数字，以免被当成默认端口
+            self.proxy_port_input = Some(new_input("", false, window, cx));
         }
         if self.proxy_username_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.proxy_username");
-            self.proxy_username_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
+            self.proxy_username_input = Some(new_input("", false, window, cx));
         }
         if self.proxy_password_input.is_none() {
-            let placeholder = i18n::t(&lang, "server_dialog.proxy_password");
-            self.proxy_password_input = Some(cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder(placeholder)
-                    .masked(true)
-            }));
+            self.proxy_password_input = Some(new_input("", true, window, cx));
         }
 
-        // 如果是编辑模式且有待加载标记，加载服务器数据
+        // 文件选择器导入私钥后，把文件名填进输入框
+        if let Some(path) = self.pending_private_key_path.take() {
+            set_input(&self.private_key_input, path, window, cx);
+            self.key_error = None;
+        }
+
         if self.pending_load_edit_data {
             self.pending_load_edit_data = false;
-            if let Some(server_id) = &self.edit_server_id {
-                if let Ok(config) = storage::load_servers() {
-                    if let Some(server_data) = config.servers.iter().find(|s| &s.id == server_id) {
-                        // 加载分组名称
-                        if let Some(group_id) = &server_data.group_id {
-                            if let Some(group) = config.groups.iter().find(|g| &g.id == group_id) {
-                                if let Some(input) = &self.group_input {
-                                    input.update(cx, |s, cx| {
-                                        s.set_value(group.name.clone(), window, cx)
-                                    });
-                                }
-                            }
-                        }
-                        // 加载基本信息
-                        if let Some(input) = &self.label_input {
-                            input.update(cx, |s, cx| {
-                                s.set_value(server_data.label.clone(), window, cx)
-                            });
-                        }
-                        if let Some(input) = &self.host_input {
-                            input.update(cx, |s, cx| {
-                                s.set_value(server_data.host.clone(), window, cx)
-                            });
-                        }
-                        if let Some(input) = &self.port_input {
-                            input.update(cx, |s, cx| {
-                                s.set_value(server_data.port.to_string(), window, cx)
-                            });
-                        }
-                        if let Some(input) = &self.username_input {
-                            input.update(cx, |s, cx| {
-                                s.set_value(server_data.username.clone(), window, cx)
-                            });
-                        }
-                        // 设置认证类型
-                        self.auth_type = server_data.auth_type.clone();
-                        // 加载密码或私钥
-                        if let Some(pwd) = &server_data.password_encrypted {
-                            if let Some(input) = &self.password_input {
-                                input.update(cx, |s, cx| s.set_value(pwd.clone(), window, cx));
-                            }
-                        }
-                        // 优先使用新字段 private_key_filename，如果不存在则回退到旧字段 private_key_path（向后兼容）
-                        let key_to_load = server_data
-                            .private_key_filename
-                            .as_ref()
-                            .or(server_data.private_key_path.as_ref());
-                        if let Some(key) = key_to_load {
-                            if let Some(input) = &self.private_key_input {
-                                input.update(cx, |s, cx| s.set_value(key.clone(), window, cx));
-                            }
-                        }
-                        if let Some(passphrase) = &server_data.key_passphrase_encrypted {
-                            if let Some(input) = &self.passphrase_input {
-                                input.update(cx, |s, cx| {
-                                    s.set_value(passphrase.clone(), window, cx)
-                                });
-                            }
-                        }
-                        // 加载描述
-                        if let Some(desc) = &server_data.description {
-                            if let Some(input) = &self.description_input {
-                                input.update(cx, |s, cx| s.set_value(desc.clone(), window, cx));
-                            }
-                        }
-                        // 加载跳板机设置（兼容旧版本保存的 "host:port" 文本）
-                        if let Some(reference) = server_data
-                            .jump_host_id
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|reference| !reference.is_empty())
-                        {
-                            self.enable_jump_host = true;
-                            let resolved = resolve_jump_server(reference, &config.servers)
-                                .map(|server| server.id.clone())
-                                .filter(|id| {
-                                    self.jump_host_candidates
-                                        .iter()
-                                        .any(|candidate| &candidate.id == id)
-                                });
-                            match resolved {
-                                Some(id) => self.jump_host_id = Some(id),
-                                None => self.jump_host_unresolved = Some(reference.to_string()),
-                            }
-                        }
-                        // 加载代理设置
-                        if let Some(proxy) = &server_data.proxy {
-                            self.enable_proxy = proxy.enabled;
-                            self.proxy_type = proxy.proxy_type.clone();
-                            if let Some(input) = &self.proxy_host_input {
-                                input.update(cx, |s, cx| {
-                                    s.set_value(proxy.host.clone(), window, cx)
-                                });
-                            }
-                            if let Some(input) = &self.proxy_port_input {
-                                input.update(cx, |s, cx| {
-                                    s.set_value(proxy.port.to_string(), window, cx)
-                                });
-                            }
-                            if let Some(username) = &proxy.username {
-                                if let Some(input) = &self.proxy_username_input {
-                                    input.update(cx, |s, cx| {
-                                        s.set_value(username.clone(), window, cx)
-                                    });
-                                }
-                            }
-                            if let Some(password) = &proxy.password_encrypted {
-                                if let Some(input) = &self.proxy_password_input {
-                                    input.update(cx, |s, cx| {
-                                        s.set_value(password.clone(), window, cx)
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
+            self.load_edit_data(window, cx);
+        }
+
+        // 打开时聚焦第一个输入框；之后保证焦点留在弹窗里，Esc 和回车始终有效
+        let focus_handle = self
+            .focus_handle
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        if self.focus_pending {
+            self.focus_pending = false;
+            match &self.label_input {
+                Some(input) => input.update(cx, |input, cx| input.focus(window, cx)),
+                None => focus_handle.focus(window),
+            }
+        }
+        keep_focus_in_dialog(
+            cx.weak_entity(),
+            |s: &Self| s.visible,
+            &focus_handle,
+            window,
+        );
+    }
+
+    /// 编辑模式：把已保存的服务器填进表单
+    fn load_edit_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(server_id) = self.edit_server_id.clone() else {
+            return;
+        };
+        let Ok(config) = storage::load_servers() else {
+            return;
+        };
+        let Some(server) = config.servers.iter().find(|s| s.id == server_id) else {
+            return;
+        };
+
+        if let Some(group) = server
+            .group_id
+            .as_ref()
+            .and_then(|group_id| config.groups.iter().find(|g| &g.id == group_id))
+        {
+            set_input(&self.group_input, group.name.clone(), window, cx);
+        }
+        set_input(&self.label_input, server.label.clone(), window, cx);
+        set_input(&self.host_input, server.host.clone(), window, cx);
+        set_input(&self.port_input, server.port.to_string(), window, cx);
+        set_input(&self.username_input, server.username.clone(), window, cx);
+
+        self.auth_type = server.auth_type.clone();
+        if let Some(password) = &server.password_encrypted {
+            set_input(&self.password_input, password.clone(), window, cx);
+        }
+        // 优先使用新字段 private_key_filename，不存在时回退到旧字段 private_key_path（向后兼容）
+        if let Some(key) = server
+            .private_key_filename
+            .as_ref()
+            .or(server.private_key_path.as_ref())
+        {
+            set_input(&self.private_key_input, key.clone(), window, cx);
+        }
+        if let Some(passphrase) = &server.key_passphrase_encrypted {
+            set_input(&self.passphrase_input, passphrase.clone(), window, cx);
+        }
+        if let Some(description) = &server.description {
+            set_input(&self.description_input, description.clone(), window, cx);
+        }
+
+        // 跳板机设置（兼容旧版本保存的 "host:port" 文本）
+        if let Some(reference) = server
+            .jump_host_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|reference| !reference.is_empty())
+        {
+            self.enable_jump_host = true;
+            let resolved = resolve_jump_server(reference, &config.servers)
+                .map(|server| server.id.clone())
+                .filter(|id| {
+                    self.jump_host_candidates
+                        .iter()
+                        .any(|candidate| &candidate.id == id)
+                });
+            match resolved {
+                Some(id) => self.jump_host_id = Some(id),
+                None => self.jump_host_unresolved = Some(reference.to_string()),
+            }
+        }
+
+        if let Some(proxy) = &server.proxy {
+            self.enable_proxy = proxy.enabled;
+            self.proxy_type = proxy.proxy_type.clone();
+            set_input(&self.proxy_host_input, proxy.host.clone(), window, cx);
+            if proxy.port != 0 {
+                set_input(&self.proxy_port_input, proxy.port.to_string(), window, cx);
+            }
+            if let Some(username) = &proxy.username {
+                set_input(&self.proxy_username_input, username.clone(), window, cx);
+            }
+            if let Some(password) = &proxy.password_encrypted {
+                set_input(&self.proxy_password_input, password.clone(), window, cx);
             }
         }
     }
 
     pub fn open_add(&mut self) {
-        // 重置所有输入框状态，让它们用当前语言重新创建
-        self.reset_inputs();
+        self.reset();
         self.visible = true;
         self.is_edit = false;
         self.edit_server_id = None;
-        self.current_section = DialogSection::BasicInfo;
         self.load_jump_host_candidates();
     }
 
     /// 打开编辑服务器弹窗
     pub fn open_edit(&mut self, server_id: String) {
-        // 重置所有输入框状态，让它们用当前语言重新创建
-        self.reset_inputs();
+        self.reset();
         self.visible = true;
         self.is_edit = true;
         self.edit_server_id = Some(server_id);
         self.pending_load_edit_data = true;
-        self.current_section = DialogSection::BasicInfo;
         self.load_jump_host_candidates();
     }
 
@@ -400,21 +551,22 @@ impl ServerDialogState {
             .collect();
     }
 
-    /// 重置所有输入框状态
-    fn reset_inputs(&mut self) {
+    /// 清空表单：输入框在下一次渲染时用当前语言重新创建
+    fn reset(&mut self) {
         self.group_input = None;
+        self.available_groups.clear();
         self.label_input = None;
         self.host_input = None;
         self.port_input = None;
         self.username_input = None;
         self.password_input = None;
+        self.description_input = None;
         self.private_key_input = None;
         self.passphrase_input = None;
         self.proxy_host_input = None;
         self.proxy_port_input = None;
         self.proxy_username_input = None;
         self.proxy_password_input = None;
-        // 重置表单状态
         self.auth_type = AuthType::Password;
         self.enable_jump_host = false;
         self.jump_host_id = None;
@@ -422,9 +574,13 @@ impl ServerDialogState {
         self.jump_host_unresolved = None;
         self.enable_proxy = false;
         self.proxy_type = ProxyType::Http;
-        self.show_group_dropdown = false;
-        self.pending_group_value = None;
         self.pending_private_key_path = None;
+        self.key_error = None;
+        self.show_errors = false;
+        self.save_error = None;
+        self.focus_pending = true;
+        self.current_section = DialogSection::BasicInfo;
+        self.scroll_handle.set_offset(Point::default());
     }
 
     pub fn close(&mut self) {
@@ -432,61 +588,130 @@ impl ServerDialogState {
         self.edit_server_id = None;
     }
 
-    /// 从表单状态提取 ServerData
-    pub fn to_server_data(&self, cx: &App) -> ServerData {
-        let get_text = |input: &Option<Entity<gpui_component::input::InputState>>| -> String {
-            input
-                .as_ref()
-                .map(|i| i.read(cx).text().to_string())
-                .unwrap_or_default()
-        };
+    pub fn select_section(&mut self, section: DialogSection) {
+        if self.current_section != section {
+            self.current_section = section;
+            self.scroll_handle.set_offset(Point::default());
+        }
+    }
 
-        let group_name = get_text(&self.group_input);
-        let label = get_text(&self.label_input);
-        let host = get_text(&self.host_input);
-        let port_str = get_text(&self.port_input);
-        let port = port_str.parse::<u16>().unwrap_or(22);
-        let username = get_text(&self.username_input);
-        let password = get_text(&self.password_input);
-        let description = get_text(&self.description_input);
-        let private_key = get_text(&self.private_key_input);
-        let passphrase = get_text(&self.passphrase_input);
-        let proxy_host = get_text(&self.proxy_host_input);
-        let proxy_port_str = get_text(&self.proxy_port_input);
-        let proxy_port = proxy_port_str.parse::<u16>().unwrap_or(0);
-        let proxy_username = get_text(&self.proxy_username_input);
-        let proxy_password = get_text(&self.proxy_password_input);
+    /// 表单里参与校验的内容
+    fn form_values(&self, cx: &App) -> FormValues {
+        FormValues {
+            host: input_text(&self.host_input, cx),
+            port: input_text(&self.port_input, cx),
+            username: input_text(&self.username_input, cx),
+            uses_private_key: self.auth_type == AuthType::PublicKey,
+            private_key: input_text(&self.private_key_input, cx),
+            enable_jump_host: self.enable_jump_host,
+            has_jump_host: self.jump_host_id.is_some() || self.jump_host_unresolved.is_some(),
+            enable_proxy: self.enable_proxy,
+            proxy_host: input_text(&self.proxy_host_input, cx),
+            proxy_port: input_text(&self.proxy_port_input, cx),
+        }
+    }
 
-        // 根据分组名称查找 group_id，如果不存在则使用分组名称作为新 ID
-        let group_id = if group_name.is_empty() {
-            None
+    /// 当前要显示的校验错误（还没点过保存时不显示）
+    pub fn visible_errors(&self, cx: &App) -> FormErrors {
+        if self.show_errors {
+            validate(&self.form_values(cx))
         } else {
-            // 尝试从已有分组中查找
-            if let Ok(groups) = storage::get_groups() {
-                groups
-                    .iter()
-                    .find(|g| g.name == group_name)
-                    .map(|g| g.id.clone())
-                    .or_else(|| Some(group_name.clone()))
+            FormErrors::new()
+        }
+    }
+
+    /// 字段对应的输入框（出错时把焦点移过去）
+    fn input_for(&self, field: Field) -> Option<&Entity<InputState>> {
+        match field {
+            Field::Host => self.host_input.as_ref(),
+            Field::Port => self.port_input.as_ref(),
+            Field::Username => self.username_input.as_ref(),
+            Field::PrivateKey => self.private_key_input.as_ref(),
+            Field::JumpHost => None,
+            Field::ProxyHost => self.proxy_host_input.as_ref(),
+            Field::ProxyPort => self.proxy_port_input.as_ref(),
+        }
+    }
+
+    /// 校验并保存。校验不通过时停留在出错的分区并聚焦出错的输入框；写入失败时显示错误，弹窗不关闭。
+    pub fn try_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let values = self.form_values(cx);
+        let errors = validate(&values);
+        if let Some(&(first, _)) = errors.first() {
+            self.show_errors = true;
+            self.save_error = None;
+            // 当前分区有错误就留在这里，否则切到第一个出错的分区
+            let section = if errors
+                .iter()
+                .any(|(field, _)| field.section() == self.current_section)
+            {
+                self.current_section
             } else {
-                Some(group_name.clone())
+                first.section()
+            };
+            self.select_section(section);
+            // 必填项都在分区开头，回到顶部就能看到错误
+            self.scroll_handle.set_offset(Point::default());
+            if let Some(input) = errors
+                .iter()
+                .find(|(field, _)| field.section() == section)
+                .and_then(|(field, _)| self.input_for(*field))
+            {
+                input.update(cx, |input, cx| input.focus(window, cx));
             }
-        };
+            cx.notify();
+            return;
+        }
 
-        // 如果是编辑模式，保留原始 ID，否则生成新 ID
-        let id = if self.is_edit {
-            self.edit_server_id
-                .clone()
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        let server = self.to_server_data(&values, cx);
+        let result = if self.is_edit {
+            storage::update_server(server)
         } else {
-            uuid::Uuid::new_v4().to_string()
+            storage::add_server(server)
         };
+        match result {
+            Ok(()) => {
+                self.needs_refresh = true;
+                self.close();
+            }
+            Err(err) => {
+                self.save_error = Some(format!(
+                    "{}{:#}",
+                    i18n::t(&self.lang, "server_dialog.save_failed"),
+                    err
+                ));
+            }
+        }
+        cx.notify();
+    }
 
-        // 编辑连接配置时保留运行时采集的数据和原始时间信息。
-        let existing_server = if self.is_edit {
+    /// 由校验通过的表单生成要保存的 ServerData
+    fn to_server_data(&self, values: &FormValues, cx: &App) -> ServerData {
+        let host = values.host.trim().to_string();
+        let label = non_empty(&input_text(&self.label_input, cx)).unwrap_or_else(|| host.clone());
+        let port = parse_port(&values.port, Some(DEFAULT_SSH_PORT)).unwrap_or(DEFAULT_SSH_PORT);
+        let uses_password = self.auth_type == AuthType::Password;
+        let password = input_text(&self.password_input, cx);
+        let passphrase = input_text(&self.passphrase_input, cx);
+
+        // 分组输入框里填的是名称：找到同名分组就用它的 id，否则用名称作为新分组的 id（保存时创建）
+        let group_id = non_empty(&input_text(&self.group_input, cx)).map(|name| {
+            storage::get_groups()
+                .ok()
+                .and_then(|groups| groups.into_iter().find(|g| g.name == name))
+                .map(|group| group.id)
+                .unwrap_or(name)
+        });
+
+        // 编辑时保留原 ID、运行时采集的数据和原始时间信息
+        let id = match (&self.edit_server_id, self.is_edit) {
+            (Some(id), true) => id.clone(),
+            _ => uuid::Uuid::new_v4().to_string(),
+        };
+        let existing = if self.is_edit {
             storage::load_servers()
                 .ok()
-                .and_then(|config| config.servers.into_iter().find(|server| server.id == id))
+                .and_then(|config| config.servers.into_iter().find(|s| s.id == id))
         } else {
             None
         };
@@ -497,33 +722,19 @@ impl ServerDialogState {
             label,
             host,
             port,
-            username,
+            username: values.username.trim().to_string(),
             auth_type: self.auth_type.clone(),
-            password_encrypted: if self.auth_type == AuthType::Password && !password.is_empty() {
-                Some(password) // TODO: 实际应加密
-            } else {
+            // TODO: 密码应加密保存
+            password_encrypted: (uses_password && !password.is_empty()).then_some(password),
+            private_key_filename: if uses_password {
                 None
-            },
-            private_key_filename: if self.auth_type == AuthType::PublicKey
-                && !private_key.is_empty()
-            {
-                Some(private_key)
             } else {
-                None
+                non_empty(&values.private_key)
             },
             private_key_path: None, // 不再使用完整路径
-            key_passphrase_encrypted: if self.auth_type == AuthType::PublicKey
-                && !passphrase.is_empty()
-            {
-                Some(passphrase) // TODO: 实际应加密
-            } else {
-                None
-            },
-            description: if !description.is_empty() {
-                Some(description)
-            } else {
-                None
-            },
+            key_passphrase_encrypted: (!uses_password && !passphrase.is_empty())
+                .then_some(passphrase),
+            description: non_empty(&input_text(&self.description_input, cx)),
             jump_host_id: if self.enable_jump_host {
                 // 没有重新选择时保留无法识别的旧设置：连接时会明确报错，而不是悄悄直连
                 self.jump_host_id
@@ -532,37 +743,27 @@ impl ServerDialogState {
             } else {
                 None
             },
-            proxy: if self.enable_proxy {
-                Some(ProxyConfig {
+            proxy: self.enable_proxy.then(|| {
+                let password = input_text(&self.proxy_password_input, cx);
+                ProxyConfig {
                     enabled: true,
                     proxy_type: self.proxy_type.clone(),
-                    host: proxy_host,
-                    port: proxy_port,
-                    username: if !proxy_username.is_empty() {
-                        Some(proxy_username)
-                    } else {
-                        None
-                    },
-                    password_encrypted: if !proxy_password.is_empty() {
-                        Some(proxy_password)
-                    } else {
-                        None
-                    },
-                })
-            } else {
-                None
-            },
-            enable_monitor: true,
-            os_name: existing_server
+                    host: values.proxy_host.trim().to_string(),
+                    port: parse_port(&values.proxy_port, None).unwrap_or_default(),
+                    username: non_empty(&input_text(&self.proxy_username_input, cx)),
+                    password_encrypted: (!password.is_empty()).then_some(password),
+                }
+            }),
+            enable_monitor: existing
                 .as_ref()
-                .and_then(|server| server.os_name.clone()),
-            created_at: existing_server
+                .map(|server| server.enable_monitor)
+                .unwrap_or(true),
+            os_name: existing.as_ref().and_then(|server| server.os_name.clone()),
+            created_at: existing
                 .as_ref()
                 .map(|server| server.created_at.clone())
                 .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
-            last_connected_at: existing_server
-                .as_ref()
-                .and_then(|server| server.last_connected_at.clone()),
+            last_connected_at: existing.and_then(|server| server.last_connected_at),
         }
     }
 }
@@ -589,365 +790,281 @@ fn jump_chain_reaches(server: &ServerData, target_id: &str, servers: &[ServerDat
 /// 渲染服务器弹窗覆盖层
 pub fn render_server_dialog_overlay(
     state: Entity<ServerDialogState>,
+    viewport: Size<Pixels>,
+    fit: &TextFitter,
     cx: &App,
 ) -> impl IntoElement {
-    let state_for_close = state.clone();
-    let state_for_content = state.clone();
+    let p = crate::theme::palette(cx);
+    let dialog_size = fit_to_viewport(DIALOG_SIZE, viewport);
+    // 右侧表单的可用宽度（去掉左栏、左栏边框和左右留白）
+    let form_width = (dialog_size.width - NAV_WIDTH - px(3.) - CONTENT_PADDING_X * 2.).max(px(0.));
+    let focus_handle = state.read(cx).focus_handle.clone();
 
-    // 使用容器包裹遮罩和弹窗，它们是兄弟元素而非父子
-    div()
-        .id("server-dialog-container")
-        .absolute()
-        .inset_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        // 背景遮罩层（点击关闭）
-        .child(
-            div()
-                .id("server-dialog-backdrop")
-                .absolute()
-                .inset_0()
-                .bg(rgba(0x00000080))
-                .on_click(move |_, _, cx| {
-                    state_for_close.update(cx, |s, _| s.close());
-                }),
+    let state_for_escape = state.clone();
+    let state_for_enter = state.clone();
+    DialogOverlay::new()
+        .focus(focus_handle.as_ref())
+        .on_escape(move |_, cx| {
+            state_for_escape.update(cx, |s, cx| {
+                s.close();
+                cx.notify();
+            });
+        })
+        .on_enter(move |window, cx| {
+            state_for_enter.update(cx, |s, cx| s.try_save(window, cx));
+        })
+        .render(
+            "server-dialog-overlay",
+            dialog_panel(&p)
+                .flex_row()
+                .w(dialog_size.width)
+                .h(dialog_size.height)
+                .bg(p.background)
+                .child(render_left_nav(state.clone(), &p, cx))
+                .child(render_right_content(state, form_width, fit, &p, cx)),
+            &p,
         )
-        // 弹窗内容层（独立元素，不受遮罩点击影响）
-        .child(render_dialog_content(state_for_content, cx))
 }
 
-/// 渲染分组下拉菜单覆盖层（在对话框最顶层）
-fn render_group_dropdown_overlay(
+/// 渲染左侧导航：弹窗标题 + 分区，启用了跳板机、代理的分区右侧显示小圆点
+fn render_left_nav(
     state: Entity<ServerDialogState>,
+    p: &crate::theme::Palette,
     cx: &App,
-) -> Option<impl IntoElement> {
+) -> impl IntoElement {
     let state_read = state.read(cx);
-    let show_dropdown = state_read.show_group_dropdown;
-    let available_groups = state_read.available_groups.clone();
+    let lang = state_read.lang.clone();
+    let current = state_read.current_section;
+    let (enable_jump_host, enable_proxy) = (state_read.enable_jump_host, state_read.enable_proxy);
+    let title = if state_read.is_edit {
+        "server_dialog.edit_title"
+    } else {
+        "server_dialog.add_title"
+    };
 
-    if !show_dropdown || available_groups.is_empty() {
-        return None;
-    }
-
-    let state_for_dropdown = state.clone();
-
-    Some(
-        div()
-            .id("group-dropdown-overlay")
-            .absolute()
-            // 定位到对话框内分组输入框下方
-            // 左侧菜单 180px + 左内边距 24px - 微调 8px
-            .left(px(180. + 24. - 8.))
-            // 标题栏高度 56px + 表单内边距 + 分组标签和输入框高度
-            .top(px(56. + 24. + 24. + 32. + 4.)) // 约 140px
-            // 与输入框宽度一致：对话框宽度 700 - 左侧菜单 180 - 左右内边距 48 + 微调 12px
-            .w(px(700. - 180. - 48. + 12.))
-            .bg(cx.theme().popover)
-            .border_1()
-            .border_color(cx.theme().border)
-            .rounded_md()
-            .shadow_lg()
-            .max_h(px(200.))
-            .children(available_groups.into_iter().map(move |group_name| {
-                let state_for_select = state_for_dropdown.clone();
-                let group_name_for_display = group_name.clone();
-                let group_name_for_click = group_name.clone();
-                div()
-                    .id(SharedString::from(format!("group-overlay-{}", group_name)))
-                    .px_3()
-                    .py_2()
-                    .bg(cx.theme().popover)
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(cx.theme().list_hover))
-                    .on_click(move |_, _, cx| {
-                        state_for_select.update(cx, |s, _| {
-                            s.pending_group_value = Some(group_name_for_click.clone());
-                            s.show_group_dropdown = false;
-                        });
-                    })
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().foreground)
-                            .child(group_name_for_display),
-                    )
-            })),
+    dialog_sidebar(i18n::t(&lang, title), NAV_WIDTH, p).child(
+        dialog_nav_list("server-dialog-nav").children(DialogSection::ALL.into_iter().map(
+            |section| {
+                let marked = match section {
+                    DialogSection::BasicInfo => false,
+                    DialogSection::JumpHost => enable_jump_host,
+                    DialogSection::ProxySettings => enable_proxy,
+                };
+                let state = state.clone();
+                dialog_nav_item(
+                    SharedString::from(format!("server-nav-{:?}", section)),
+                    section.icon(),
+                    i18n::t(&lang, section.label_key()),
+                    section == current,
+                    marked,
+                    p,
+                )
+                .on_click(move |_, _, cx| {
+                    state.update(cx, |s, cx| {
+                        s.select_section(section);
+                        cx.notify();
+                    });
+                })
+            },
+        )),
     )
 }
 
-/// 渲染弹窗内容
-fn render_dialog_content(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
-    let state_for_section = state.clone();
-    let state_for_cancel = state.clone();
-    let state_for_dropdown = state.clone();
-
-    // 使用全局主题帮助函数
-    let bg_color = crate::theme::popover_color(cx);
-    let border_color = cx.theme().border;
-
-    div()
-        .id("server-dialog-content")
-        .w(px(700.))
-        .h(px(500.))
-        .bg(bg_color)
-        .border_1()
-        .border_color(border_color)
-        .rounded_lg()
-        .shadow_lg()
-        .flex()
-        .relative() // 添加 relative 使下拉菜单相对于此容器定位
-        .overflow_hidden()
-        // 阻止鼠标事件传播到底层的遮罩
-        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-            cx.stop_propagation();
-        })
-        // 阻止滚动事件穿透到底层内容
-        .on_scroll_wheel(|_, _, cx| {
-            cx.stop_propagation();
-        })
-        .child(render_left_menu(state_for_section, cx))
-        .child(render_right_content(state, state_for_cancel, cx))
-        // 下拉菜单覆盖层 - 在对话框内容最后渲染，确保在最顶层
-        .children(render_group_dropdown_overlay(state_for_dropdown, cx))
-}
-
-/// 渲染左侧导航菜单
-fn render_left_menu(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
-    // 加载当前语言
-    let lang = storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or(Language::Chinese);
-
-    let sections = [
-        (
-            DialogSection::BasicInfo,
-            i18n::t(&lang, "server_dialog.nav.basic_info"),
-            icons::SERVER,
-        ),
-        (
-            DialogSection::JumpHost,
-            i18n::t(&lang, "server_dialog.nav.jump_host"),
-            icons::LINK,
-        ),
-        (
-            DialogSection::ProxySettings,
-            i18n::t(&lang, "server_dialog.nav.proxy"),
-            icons::GLOBE,
-        ),
-        (
-            DialogSection::OtherSettings,
-            i18n::t(&lang, "server_dialog.nav.other"),
-            icons::SETTINGS,
-        ),
-    ];
-
-    let sidebar_bg = crate::theme::sidebar_color(cx);
-    let border_color = cx.theme().border;
-    let hover_bg = cx.theme().muted;
-    let icon_color = cx.theme().muted_foreground;
-    let text_color = cx.theme().foreground;
-
-    div()
-        .w(px(180.))
-        .h_full()
-        .bg(sidebar_bg)
-        .rounded_l_lg() // Ensure left side is rounded
-        .border_r_1()
-        .border_color(border_color)
-        .flex()
-        .flex_col()
-        .p_4()
-        .gap_2()
-        .children(sections.into_iter().map(|(section, label, icon)| {
-            let state = state.clone();
-            render_menu_item(
-                state, section, label, icon, hover_bg, icon_color, text_color,
-            )
-        }))
-}
-
-/// 渲染单个菜单项
-fn render_menu_item(
-    state: Entity<ServerDialogState>,
-    section: DialogSection,
-    label: &'static str,
-    icon: &'static str,
-    hover_bg: gpui::Hsla,
-    icon_color: gpui::Hsla,
-    text_color: gpui::Hsla,
-) -> impl IntoElement {
-    let state_for_click = state.clone();
-
-    div()
-        .id(SharedString::from(format!("menu-{:?}", section)))
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .cursor_pointer()
-        .flex()
-        .items_center()
-        .gap_2()
-        .hover(move |s| s.bg(hover_bg))
-        .on_click(move |_, _, cx| {
-            state_for_click.update(cx, |s, _| {
-                s.current_section = section;
-            });
-        })
-        .child(render_icon(icon, icon_color.into()))
-        .child(div().text_sm().text_color(text_color).child(label))
-}
-
-/// 渲染右侧内容区域
+/// 渲染右侧：分区标题、表单和底栏
 fn render_right_content(
     state: Entity<ServerDialogState>,
-    state_for_cancel: Entity<ServerDialogState>,
+    form_width: Pixels,
+    fit: &TextFitter,
+    p: &crate::theme::Palette,
     cx: &App,
 ) -> impl IntoElement {
-    // 加载当前语言和编辑模式
-    let lang = storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or(Language::Chinese);
-    let is_edit = state.read(cx).is_edit;
-    let title = if is_edit {
-        i18n::t(&lang, "server_dialog.edit_title")
-    } else {
-        i18n::t(&lang, "server_dialog.add_title")
+    let state_read = state.read(cx);
+    let lang = state_read.lang.clone();
+    let section = state_read.current_section;
+    let scroll_handle = state_read.scroll_handle.clone();
+    let errors = state_read.visible_errors(cx);
+    // 底栏：写入失败的原因，或第一条校验错误
+    let message = state_read
+        .save_error
+        .clone()
+        .map(SharedString::from)
+        .or_else(|| {
+            errors
+                .first()
+                .map(|(_, key)| SharedString::from(i18n::t(&lang, key)))
+        });
+
+    let form = match section {
+        DialogSection::BasicInfo => {
+            render_basic_info_form(state.clone(), &errors, cx).into_any_element()
+        }
+        DialogSection::JumpHost => {
+            render_jump_host_form(state.clone(), &errors, form_width, fit, cx).into_any_element()
+        }
+        DialogSection::ProxySettings => {
+            render_proxy_settings_form(state.clone(), &errors, cx).into_any_element()
+        }
     };
+
+    let state_for_close = state.clone();
+    let state_for_cancel = state.clone();
+    let state_for_save = state.clone();
 
     div()
         .flex_1()
-        // 允许收缩到可用宽度：否则较长的说明文字会按单行宽度撑开内容区，挤压左侧菜单并被裁切
         .min_w_0()
         .h_full()
         .flex()
         .flex_col()
-        // 标题栏
+        .child(dialog_pane_header(
+            i18n::t(&lang, section.label_key()),
+            i18n::t(&lang, "common.close"),
+            move |_, cx| {
+                state_for_close.update(cx, |s, cx| {
+                    s.close();
+                    cx.notify();
+                });
+            },
+            CONTENT_PADDING_X,
+            p,
+        ))
+        .child(dialog_scroll_area(
+            "server-form-scroll",
+            &scroll_handle,
+            CONTENT_PADDING_X,
+            form,
+        ))
         .child(
-            div()
-                .h(px(56.))
-                .flex_shrink_0()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .flex()
-                .items_center()
-                .px_6()
+            dialog_pane_footer(message, CONTENT_PADDING_X, p)
                 .child(
-                    div()
-                        .text_lg()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
-                        .child(title),
+                    text_button(
+                        "server-cancel-btn",
+                        ButtonKind::Secondary,
+                        i18n::t(&lang, "common.cancel"),
+                        p,
+                    )
+                    .on_click(move |_, _, cx| {
+                        state_for_cancel.update(cx, |s, cx| {
+                            s.close();
+                            cx.notify();
+                        });
+                    }),
+                )
+                .child(
+                    text_button(
+                        "server-save-btn",
+                        ButtonKind::Primary,
+                        i18n::t(&lang, "common.save"),
+                        p,
+                    )
+                    .on_click(move |_, window, cx| {
+                        state_for_save.update(cx, |s, cx| s.try_save(window, cx));
+                    }),
                 ),
         )
-        // 表单区域
-        .child(
-            div()
-                .id("form-scroll")
-                .flex_1()
-                .min_h(px(0.))
-                .overflow_y_scrollbar()
-                .p_4()
-                .child(match state.read(cx).current_section {
-                    DialogSection::BasicInfo => {
-                        render_basic_info_form(state.clone(), cx).into_any_element()
-                    }
-                    DialogSection::JumpHost => {
-                        render_jump_host_form(state.clone(), cx).into_any_element()
-                    }
-                    DialogSection::ProxySettings => {
-                        render_proxy_settings_form(state.clone(), cx).into_any_element()
-                    }
-                    DialogSection::OtherSettings => {
-                        render_other_settings_form(state.clone(), cx).into_any_element()
-                    }
-                }),
-        )
-        // 底部按钮
-        .child(render_footer_buttons(state_for_cancel, cx))
 }
 
-/// 渲染底部按钮
-fn render_footer_buttons(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
-    let state_for_cancel = state.clone();
-    let state_for_save = state.clone();
+#[cfg(test)]
+mod tests {
+    // 不用 `use super::*`：会连带引入 gpui 的 `test` 宏，覆盖标准库的 `#[test]`
+    use super::{parse_port, validate, DialogSection, Field, FormValues};
 
-    // 加载当前语言
-    let lang = storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or(Language::Chinese);
-    let cancel_text = i18n::t(&lang, "common.cancel");
-    let save_text = i18n::t(&lang, "common.save");
+    fn valid() -> FormValues {
+        FormValues {
+            host: "10.0.0.1".into(),
+            username: "root".into(),
+            ..FormValues::default()
+        }
+    }
 
-    let border_color = cx.theme().border;
-    let secondary_bg = cx.theme().secondary;
-    let secondary_hover = cx.theme().secondary_hover;
-    let text_color = cx.theme().foreground;
-    let primary_bg = cx.theme().primary;
-    let primary_hover = cx.theme().primary_hover;
-    let primary_fg = cx.theme().primary_foreground;
+    fn fields(values: &FormValues) -> Vec<Field> {
+        validate(values)
+            .into_iter()
+            .map(|(field, _)| field)
+            .collect()
+    }
 
-    // 提前读取表单数据和编辑模式状态
-    let server_data = state.read(cx).to_server_data(cx);
-    let is_edit = state.read(cx).is_edit;
+    #[test]
+    fn host_and_username_are_required() {
+        assert!(validate(&valid()).is_empty());
+        let empty = FormValues {
+            host: "  ".into(),
+            username: String::new(),
+            ..valid()
+        };
+        assert_eq!(fields(&empty), vec![Field::Host, Field::Username]);
+    }
 
-    div()
-        .h(px(64.))
-        .flex_shrink_0()
-        .border_t_1()
-        .border_color(border_color)
-        .flex()
-        .items_center()
-        .justify_end()
-        .gap_3()
-        .px_6()
-        // 取消按钮
-        .child(
-            div()
-                .id("cancel-btn")
-                .px_4()
-                .py_2()
-                .bg(secondary_bg)
-                .border_1()
-                .border_color(border_color)
-                .rounded_md()
-                .cursor_pointer()
-                .hover(move |s| s.bg(secondary_hover))
-                .on_click(move |_, _, cx| {
-                    state_for_cancel.update(cx, |s, _| s.close());
-                })
-                .child(div().text_sm().text_color(text_color).child(cancel_text)),
-        )
-        // 保存按钮
-        .child(
-            div()
-                .id("save-btn")
-                .px_4()
-                .py_2()
-                .bg(primary_bg)
-                .rounded_md()
-                .cursor_pointer()
-                .hover(move |s| s.bg(primary_hover))
-                .on_click(move |_, _, cx| {
-                    // 根据是新增还是编辑模式调用不同的存储函数
-                    let result = if is_edit {
-                        storage::update_server(server_data.clone())
-                    } else {
-                        storage::add_server(server_data.clone())
-                    };
-                    match result {
-                        Ok(_) => {
-                            // 标记需要刷新，然后关闭弹窗
-                            state_for_save.update(cx, |s, _| {
-                                s.needs_refresh = true;
-                                s.close();
-                            });
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to save server: {:?}", e);
-                        }
-                    }
-                })
-                .child(div().text_sm().text_color(primary_fg).child(save_text)),
-        )
+    #[test]
+    fn ports_must_be_in_range() {
+        // 留空时使用默认端口 22
+        assert_eq!(parse_port("", Some(22)), Some(22));
+        assert_eq!(parse_port(" 2222 ", Some(22)), Some(2222));
+        assert_eq!(parse_port("65535", None), Some(65535));
+        for invalid in ["0", "65536", "-1", "22a", "1.5"] {
+            assert_eq!(parse_port(invalid, Some(22)), None, "{invalid}");
+        }
+        // 代理端口没有默认值
+        assert_eq!(parse_port("", None), None);
+
+        let bad_port = FormValues {
+            port: "70000".into(),
+            ..valid()
+        };
+        assert_eq!(fields(&bad_port), vec![Field::Port]);
+    }
+
+    #[test]
+    fn key_auth_needs_a_key_file() {
+        let key_auth = FormValues {
+            uses_private_key: true,
+            ..valid()
+        };
+        assert_eq!(fields(&key_auth), vec![Field::PrivateKey]);
+        let with_key = FormValues {
+            private_key: "1700000000_id_ed25519".into(),
+            ..key_auth
+        };
+        assert!(validate(&with_key).is_empty());
+    }
+
+    #[test]
+    fn jump_host_and_proxy_are_checked_only_when_enabled() {
+        let jump = FormValues {
+            enable_jump_host: true,
+            ..valid()
+        };
+        assert_eq!(fields(&jump), vec![Field::JumpHost]);
+        assert!(validate(&FormValues {
+            has_jump_host: true,
+            ..jump
+        })
+        .is_empty());
+
+        let proxy = FormValues {
+            enable_proxy: true,
+            ..valid()
+        };
+        assert_eq!(fields(&proxy), vec![Field::ProxyHost, Field::ProxyPort]);
+        assert!(validate(&FormValues {
+            proxy_host: "127.0.0.1".into(),
+            proxy_port: "1080".into(),
+            ..proxy
+        })
+        .is_empty());
+
+        // 关闭后不再校验
+        assert!(validate(&FormValues {
+            proxy_host: String::new(),
+            ..valid()
+        })
+        .is_empty());
+    }
+
+    #[test]
+    fn errors_map_to_their_sections() {
+        assert_eq!(Field::PrivateKey.section(), DialogSection::BasicInfo);
+        assert_eq!(Field::JumpHost.section(), DialogSection::JumpHost);
+        assert_eq!(Field::ProxyPort.section(), DialogSection::ProxySettings);
+    }
 }

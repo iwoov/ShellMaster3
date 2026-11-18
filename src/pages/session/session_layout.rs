@@ -9,11 +9,13 @@ use super::monitor_panel::render_monitor_panel;
 use super::session_sidebar::render_session_sidebar;
 use super::sftp_panel::render_sftp_panel;
 use super::terminal_page::render_terminal_panel;
+use crate::components::common::text::TextFitter;
 use crate::components::monitor::render_detail_dialog;
 use crate::components::sftp::{
     render_new_file_dialog_overlay, render_new_folder_dialog_overlay,
     render_properties_dialog_overlay,
 };
+use crate::models::settings::Language;
 use crate::state::{SessionState, SessionTab, SidebarPanel};
 
 /// 渲染 Session 主布局
@@ -21,6 +23,7 @@ pub fn render_session_layout(
     tab: &SessionTab,
     sidebar_collapsed: bool,
     session_state: Entity<SessionState>,
+    lang: &Language,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -266,9 +269,21 @@ pub fn render_session_layout(
     // 返回带有 dialog overlay 的容器
     let mut result = div().relative().size_full().child(main_content);
 
+    let viewport = window.viewport_size();
+    let fit = TextFitter::new(window, cx);
+
     // 添加 Monitor 详情弹窗
     if let Some(dialog_state) = monitor_detail_dialog {
-        result = result.child(render_detail_dialog(dialog_state, &tab.monitor_state, cx));
+        if dialog_state.read(cx).is_open() {
+            dialog_state.update(cx, |state, cx| state.prepare(lang, window, cx));
+        }
+        result = result.child(render_detail_dialog(
+            dialog_state,
+            &tab.monitor_state,
+            viewport,
+            &fit,
+            cx,
+        ));
     }
 
     // 添加 SFTP 新建文件夹弹窗
@@ -309,7 +324,8 @@ pub fn render_session_layout(
     if let Some(dialog_state) = properties_dialog {
         let is_open = dialog_state.read(cx).is_open;
         if is_open {
-            result = result.child(render_properties_dialog_overlay(dialog_state, cx));
+            dialog_state.update(cx, |state, cx| state.prepare(lang, window, cx));
+            result = result.child(render_properties_dialog_overlay(dialog_state, &fit, cx));
         }
     }
 

@@ -6,14 +6,19 @@ use gpui::prelude::*;
 use gpui::*;
 use gpui_component::color_picker::{ColorPickerEvent, ColorPickerState};
 use gpui_component::input::InputState;
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::ActiveTheme;
+use gpui_component::theme::{Theme as GpuiTheme, ThemeMode as GpuiThemeMode};
 use std::collections::HashMap;
 
-use crate::components::common::icon::render_icon;
+use crate::components::common::button::{text_button, ButtonKind};
+use crate::components::common::dialog::{
+    dialog_nav_item, dialog_nav_list, dialog_pane_footer, dialog_pane_header, dialog_panel,
+    dialog_scroll_area, dialog_sidebar, fit_to_viewport, keep_focus_in_dialog, DialogOverlay,
+};
 use crate::constants::icons;
 use crate::i18n;
-use crate::models::settings::{AiProviderId, ApiFormat, AppSettings, CustomProvider, ProviderRef};
+use crate::models::settings::{
+    AiProviderId, ApiFormat, AppSettings, CustomProvider, ProviderRef, ThemeMode,
+};
 use crate::services::storage;
 use crate::terminal::{hex_to_hsla, hsla_to_hex};
 
@@ -77,6 +82,20 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
+    /// 导航中的显示顺序
+    pub const ALL: [SettingsSection; 10] = [
+        SettingsSection::Theme,
+        SettingsSection::Terminal,
+        SettingsSection::KeyBindings,
+        SettingsSection::Sftp,
+        SettingsSection::Monitor,
+        SettingsSection::Connection,
+        SettingsSection::Sync,
+        SettingsSection::Ai,
+        SettingsSection::System,
+        SettingsSection::About,
+    ];
+
     pub fn label_key(&self) -> &'static str {
         match self {
             SettingsSection::Theme => "settings.nav.theme",
@@ -115,6 +134,15 @@ pub struct SettingsDialogState {
     pub settings: AppSettings,
     /// 标记设置是否有变更
     pub has_changes: bool,
+    /// 打开弹窗时的设置。取消时据此撤销已经即时生效的改动（主题模式、语言）
+    saved_settings: Option<AppSettings>,
+    /// 保存到磁盘失败时的错误信息
+    pub save_error: Option<String>,
+    /// 弹窗的焦点：用于接收 Esc；打开时聚焦
+    pub focus_handle: Option<FocusHandle>,
+    focus_pending: bool,
+    /// 内容区的滚动位置，切换分区时回到顶部
+    pub scroll_handle: ScrollHandle,
 
     // ============ 主题设置输入 ============
     pub ui_font_family_input: Option<Entity<InputState>>,
@@ -200,6 +228,11 @@ impl Default for SettingsDialogState {
             current_section: SettingsSection::Theme,
             settings,
             has_changes: false,
+            saved_settings: None,
+            save_error: None,
+            focus_handle: None,
+            focus_pending: false,
+            scroll_handle: ScrollHandle::new(),
             // 主题
             ui_font_family_input: None,
             ui_font_size_input: None,
@@ -268,10 +301,14 @@ impl SettingsDialogState {
     pub fn open(&mut self) {
         // 打开时重新加载设置
         self.settings = storage::load_settings().unwrap_or_default();
+        self.saved_settings = Some(self.settings.clone());
         self.visible = true;
         self.current_section = SettingsSection::Theme;
         self.has_changes = false;
         self.ai_save_error = None;
+        self.save_error = None;
+        self.focus_pending = true;
+        self.scroll_handle.set_offset(Point::default());
         // 清除输入状态以便重新加载
         self.reset_inputs();
         // 根据持久化的 verified 标志，预填 AI 测试状态
@@ -368,13 +405,58 @@ impl SettingsDialogState {
 
     pub fn close(&mut self) {
         self.visible = false;
+        self.saved_settings = None;
     }
 
-    pub fn save(&mut self) {
-        if let Err(e) = storage::save_settings(&self.settings) {
-            eprintln!("保存设置失败: {}", e);
+    /// 放弃本次修改并关闭：撤销已经即时生效的主题模式，内存中的设置（包括语言）恢复为打开时的值
+    pub fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(saved) = self.saved_settings.take() {
+            if saved.theme.mode != self.settings.theme.mode {
+                apply_theme_mode(&saved.theme.mode, window, cx);
+            }
+            self.settings = saved;
         }
+        self.close();
+        cx.notify();
+    }
+
+    /// 校验并保存；成功后关闭，失败时把原因留在弹窗里显示
+    pub fn try_save(&mut self, cx: &mut Context<Self>) {
+        // AI 设置校验：填了 key 必须先通过测试
+        if let Err(failing) = self.validate_ai_for_save(cx) {
+            let lang = &self.settings.theme.language;
+            self.ai_save_error = Some(format!(
+                "{}: {}",
+                i18n::t(lang, "settings.ai.save_blocked"),
+                failing.join(", ")
+            ));
+            self.select_section(SettingsSection::Ai);
+            cx.notify();
+            return;
+        }
+        self.ai_save_error = None;
+        self.sync_from_inputs(cx);
+        match self.save() {
+            Ok(()) => self.close(),
+            Err(e) => {
+                let lang = &self.settings.theme.language;
+                self.save_error = Some(format!("{}{:#}", i18n::t(lang, "settings.save_failed"), e));
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn save(&mut self) -> anyhow::Result<()> {
+        storage::save_settings(&self.settings)?;
         self.has_changes = false;
+        self.save_error = None;
+        Ok(())
+    }
+
+    /// 切换分区，内容滚回顶部
+    pub fn select_section(&mut self, section: SettingsSection) {
+        self.current_section = section;
+        self.scroll_handle.set_offset(Point::default());
     }
 
     /// 标记设置已变更
@@ -744,7 +826,7 @@ impl SettingsDialogState {
             if entry.name.is_none() {
                 let value = c.name.clone();
                 entry.name = Some(cx.new(|cx| {
-                    let mut state = InputState::new(window, cx).placeholder("名称 / Name");
+                    let mut state = InputState::new(window, cx).placeholder(i18n::t(&self.settings.theme.language, "settings.ai.name_placeholder"));
                     state.set_value(value, window, cx);
                     state
                 }));
@@ -786,7 +868,7 @@ impl SettingsDialogState {
             let value = self.settings.ai.system_prompt.clone();
             self.ai_system_prompt_input = Some(cx.new(|cx| {
                 let mut state = InputState::new(window, cx)
-                    .placeholder("系统提示词…")
+                    .placeholder(i18n::t(&self.settings.theme.language, "settings.ai.system_prompt_placeholder"))
                     .auto_grow(3, 12);
                 state.set_value(value, window, cx);
                 state
@@ -799,6 +881,17 @@ impl SettingsDialogState {
             self.ai_context_lines_input =
                 Some(create_int_number_input(value, 1, 500, 10, window, cx));
         }
+
+        // 弹窗焦点：打开时聚焦，Esc 才能关闭弹窗（否则按键会落到弹窗下面的界面）
+        let focus_handle = self
+            .focus_handle
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        if self.focus_pending {
+            self.focus_pending = false;
+            focus_handle.focus(window);
+        }
+        keep_focus_in_dialog(cx.weak_entity(), |s: &Self| s.visible, &focus_handle, window);
     }
 
     /// 从 AI 输入框读取当前值，构造一个 AiProviderConfig（不修改 settings）
@@ -1011,6 +1104,11 @@ impl SettingsDialogState {
         }
 
         // SFTP
+        if let Some(input) = &self.concurrent_transfers_input {
+            if let Ok(v) = input.read(cx).value().trim().parse::<u32>() {
+                self.settings.sftp.concurrent_transfers = v.clamp(1, 10);
+            }
+        }
         if let Some(input) = &self.local_default_path_input {
             self.settings.sftp.local_default_path = input.read(cx).value().to_string();
         }
@@ -1188,154 +1286,100 @@ impl SettingsDialogState {
     }
 }
 
+/// 立即切换界面的主题模式
+pub fn apply_theme_mode(mode: &ThemeMode, window: &mut Window, cx: &mut App) {
+    match mode {
+        ThemeMode::Light => GpuiTheme::change(GpuiThemeMode::Light, Some(window), cx),
+        ThemeMode::Dark => GpuiTheme::change(GpuiThemeMode::Dark, Some(window), cx),
+        ThemeMode::System => GpuiTheme::sync_system_appearance(Some(window), cx),
+    }
+}
+
+/// 期望的弹窗尺寸，窗口较小时会收缩
+const DIALOG_SIZE: Size<Pixels> = size(px(860.), px(600.));
+/// 左侧导航宽度
+const NAV_WIDTH: Pixels = px(200.);
+/// 内容区左右留白
+const CONTENT_PADDING_X: Pixels = px(28.);
+
 /// 渲染设置弹窗覆盖层
 pub fn render_settings_dialog_overlay(
     state: Entity<SettingsDialogState>,
+    viewport: Size<Pixels>,
     cx: &App,
 ) -> impl IntoElement {
-    let state_for_close = state.clone();
-    let state_for_content = state.clone();
+    let p = crate::theme::palette(cx);
+    let dialog_size = fit_to_viewport(DIALOG_SIZE, viewport);
+    let focus_handle = state.read(cx).focus_handle.clone();
 
-    div()
-        .id("settings-dialog-container")
-        .absolute()
-        .inset_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        // 背景遮罩层
-        .child(
-            div()
-                .id("settings-dialog-backdrop")
-                .absolute()
-                .inset_0()
-                .bg(rgba(0x00000080))
-                .on_click(move |_, _, cx| {
-                    state_for_close.update(cx, |s, _| s.close());
-                }),
+    let state_for_escape = state.clone();
+    DialogOverlay::new()
+        .focus(focus_handle.as_ref())
+        .on_escape(move |window, cx| {
+            state_for_escape.update(cx, |s, cx| s.cancel(window, cx));
+        })
+        .render(
+            "settings-dialog-overlay",
+            dialog_panel(&p)
+                .flex_row()
+                .w(dialog_size.width)
+                .h(dialog_size.height)
+                .bg(p.background)
+                .child(render_left_nav(state.clone(), &p, cx))
+                .child(render_right_content(state, &p, cx)),
+            &p,
         )
-        // 弹窗内容
-        .child(render_dialog_content(state_for_content, cx))
 }
 
-/// 渲染弹窗内容
-fn render_dialog_content(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
-    let state_for_nav = state.clone();
-    let state_for_cancel = state.clone();
-    let state_for_save = state.clone();
-
-    // 使用全局主题帮助函数
-    let bg_color = crate::theme::popover_color(cx);
-    let border_color = cx.theme().border;
-
-    div()
-        .id("settings-dialog-content")
-        .w(px(800.))
-        .h(px(560.))
-        .bg(bg_color)
-        .border_1()
-        .border_color(border_color)
-        .rounded_lg()
-        .shadow_lg()
-        .flex()
-        .overflow_hidden()
-        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-            cx.stop_propagation();
-        })
-        // 阻止滚动事件穿透到底层内容
-        .on_scroll_wheel(|_, _, cx| {
-            cx.stop_propagation();
-        })
-        .child(render_left_nav(state_for_nav, cx))
-        .child(render_right_content(
-            state,
-            state_for_cancel,
-            state_for_save,
-            cx,
-        ))
-}
-
-/// 渲染左侧导航菜单
-fn render_left_nav(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
-    let sections = [
-        SettingsSection::Theme,
-        SettingsSection::Terminal,
-        SettingsSection::KeyBindings,
-        SettingsSection::Sftp,
-        SettingsSection::Monitor,
-        SettingsSection::Connection,
-        SettingsSection::Sync,
-        SettingsSection::Ai,
-        SettingsSection::System,
-        SettingsSection::About,
-    ];
-
-    let bg_color = crate::theme::sidebar_color(cx);
-    let border_color = cx.theme().border;
-
-    div()
-        .w(px(180.))
-        .h_full()
-        .bg(bg_color)
-        .rounded_l_lg()
-        .border_r_1()
-        .border_color(border_color)
-        .flex()
-        .flex_col()
-        .p_4()
-        .gap_1()
-        .children(sections.into_iter().map(|section| {
-            let state = state.clone();
-            render_nav_item(state, section, cx)
-        }))
-}
-
-/// 渲染导航项
-fn render_nav_item(
+/// 渲染左侧导航
+fn render_left_nav(
     state: Entity<SettingsDialogState>,
-    section: SettingsSection,
+    p: &crate::theme::Palette,
     cx: &App,
 ) -> impl IntoElement {
-    let state_for_click = state.clone();
-    let hover_bg = cx.theme().muted;
-    let icon_color = cx.theme().muted_foreground;
-    let text_color = cx.theme().foreground;
-    let lang = &state.read(cx).settings.theme.language;
+    let state_read = state.read(cx);
+    let lang = state_read.settings.theme.language.clone();
+    let current = state_read.current_section;
 
-    div()
-        .id(SharedString::from(format!("settings-nav-{:?}", section)))
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .cursor_pointer()
-        .flex()
-        .items_center()
-        .gap_2()
-        .hover(move |s| s.bg(hover_bg))
-        .on_click(move |_, _, cx| {
-            state_for_click.update(cx, |s, _| {
-                s.current_section = section;
-            });
-        })
-        .child(render_icon(section.icon(), icon_color.into()))
-        .child(
-            div()
-                .text_sm()
-                .text_color(text_color)
-                .child(i18n::t(lang, section.label_key())),
-        )
+    dialog_sidebar(i18n::t(&lang, "settings.title"), NAV_WIDTH, p).child(
+        dialog_nav_list("settings-nav").children(SettingsSection::ALL.into_iter().map(|section| {
+            let state = state.clone();
+            dialog_nav_item(
+                SharedString::from(format!("settings-nav-{:?}", section)),
+                section.icon(),
+                i18n::t(&lang, section.label_key()),
+                section == current,
+                false,
+                p,
+            )
+            .on_click(move |_, _, cx| {
+                state.update(cx, |s, cx| {
+                    s.select_section(section);
+                    cx.notify();
+                });
+            })
+        })),
+    )
 }
 
-/// 渲染右侧内容区域
+/// 渲染右侧：分区标题、内容和底栏
 fn render_right_content(
     state: Entity<SettingsDialogState>,
-    state_for_cancel: Entity<SettingsDialogState>,
-    state_for_save: Entity<SettingsDialogState>,
+    p: &crate::theme::Palette,
     cx: &App,
 ) -> impl IntoElement {
-    let state_for_panel = state.clone();
-    let border_color = cx.theme().border;
-    let title_color = cx.theme().foreground;
+    let state_read = state.read(cx);
+    let lang = state_read.settings.theme.language.clone();
+    let section = state_read.current_section;
+    let scroll_handle = state_read.scroll_handle.clone();
+    let error = state_read
+        .save_error
+        .clone()
+        .or_else(|| state_read.ai_save_error.clone());
+
+    let state_for_close = state.clone();
+    let state_for_cancel = state.clone();
+    let state_for_save = state.clone();
 
     div()
         .flex_1()
@@ -1344,41 +1388,46 @@ fn render_right_content(
         .h_full()
         .flex()
         .flex_col()
-        // 标题栏
+        .child(dialog_pane_header(
+            i18n::t(&lang, section.label_key()),
+            i18n::t(&lang, "common.close"),
+            move |window, cx| {
+                state_for_close.update(cx, |s, cx| s.cancel(window, cx));
+            },
+            CONTENT_PADDING_X,
+            p,
+        ))
+        .child(dialog_scroll_area(
+            "settings-form-scroll",
+            &scroll_handle,
+            CONTENT_PADDING_X,
+            render_section_content(state, cx),
+        ))
         .child(
-            div()
-                .h(px(56.))
-                .flex_shrink_0()
-                .border_b_1()
-                .border_color(border_color)
-                .flex()
-                .items_center()
-                .px_6()
+            dialog_pane_footer(error.map(SharedString::from), CONTENT_PADDING_X, p)
                 .child(
-                    div()
-                        .text_lg()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(title_color)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(title_color)
-                        .child(i18n::t(
-                            &state.read(cx).settings.theme.language,
-                            "settings.title",
-                        )),
+                    text_button(
+                        "settings-cancel-btn",
+                        ButtonKind::Secondary,
+                        i18n::t(&lang, "common.cancel"),
+                        p,
+                    )
+                    .on_click(move |_, window, cx| {
+                        state_for_cancel.update(cx, |s, cx| s.cancel(window, cx));
+                    }),
+                )
+                .child(
+                    text_button(
+                        "settings-save-btn",
+                        ButtonKind::Primary,
+                        i18n::t(&lang, "common.save"),
+                        p,
+                    )
+                    .on_click(move |_, _, cx| {
+                        state_for_save.update(cx, |s, cx| s.try_save(cx));
+                    }),
                 ),
         )
-        // 内容区域
-        .child(
-            div()
-                .id("settings-form-scroll")
-                .flex_1()
-                .min_h(px(0.))
-                .overflow_y_scrollbar()
-                .p_6()
-                .child(render_section_content(state_for_panel, cx)),
-        )
-        // 底部按钮
-        .child(render_footer_buttons(state_for_cancel, state_for_save, cx))
 }
 
 /// 渲染当前分区内容
@@ -1397,92 +1446,4 @@ fn render_section_content(state: Entity<SettingsDialogState>, cx: &App) -> impl 
         SettingsSection::System => render_system_panel(state, cx).into_any_element(),
         SettingsSection::About => render_about_panel(state, cx).into_any_element(),
     }
-}
-
-/// 渲染底部按钮
-fn render_footer_buttons(
-    state_for_cancel: Entity<SettingsDialogState>,
-    state_for_save: Entity<SettingsDialogState>,
-    cx: &App,
-) -> impl IntoElement {
-    let border_color = cx.theme().border;
-    let secondary_bg = cx.theme().secondary;
-    let secondary_hover = cx.theme().secondary_hover;
-    let text_color = cx.theme().foreground;
-    let primary_bg = cx.theme().primary;
-    let primary_hover = cx.theme().primary_hover;
-    let primary_fg = cx.theme().primary_foreground;
-    let lang = &state_for_cancel.read(cx).settings.theme.language;
-
-    div()
-        .h(px(64.))
-        .flex_shrink_0()
-        .border_t_1()
-        .border_color(border_color)
-        .flex()
-        .items_center()
-        .justify_end()
-        .gap_3()
-        .px_6()
-        // 取消按钮
-        .child(
-            div()
-                .id("settings-cancel-btn")
-                .px_4()
-                .py_2()
-                .rounded_md()
-                .border_1()
-                .border_color(border_color)
-                .bg(secondary_bg)
-                .cursor_pointer()
-                .hover(move |s| s.bg(secondary_hover))
-                .on_click(move |_, _, cx| {
-                    state_for_cancel.update(cx, |s, _| s.close());
-                })
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(text_color)
-                        .child(i18n::t(lang, "common.cancel")),
-                ),
-        )
-        // 保存按钮
-        .child(
-            div()
-                .id("settings-save-btn")
-                .px_4()
-                .py_2()
-                .rounded_md()
-                .bg(primary_bg)
-                .cursor_pointer()
-                .hover(move |s| s.bg(primary_hover))
-                .on_click(move |_, _, cx| {
-                    state_for_save.update(cx, |s, cx| {
-                        // AI 设置校验：填了 key 必须先通过测试
-                        let app: &App = cx;
-                        if let Err(failing) = s.validate_ai_for_save(app) {
-                            let lang = &s.settings.theme.language;
-                            let msg = format!(
-                                "{}: {}",
-                                i18n::t(lang, "settings.ai.save_blocked"),
-                                failing.join(", ")
-                            );
-                            s.ai_save_error = Some(msg);
-                            s.current_section = SettingsSection::Ai;
-                            cx.notify();
-                            return;
-                        }
-                        s.ai_save_error = None;
-                        s.sync_from_inputs(cx);
-                        s.save();
-                        s.close();
-                    });
-                })
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(primary_fg)
-                        .child(i18n::t(lang, "common.save")),
-                ),
-        )
 }

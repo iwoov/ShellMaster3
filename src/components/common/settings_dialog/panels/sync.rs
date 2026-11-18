@@ -1,12 +1,14 @@
 // 数据同步面板
 
+use crate::components::common::button::{text_button, ButtonKind};
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::button::Button;
 
 use crate::i18n;
 
-use super::super::helpers::{render_input_row, render_section_title, render_switch_row};
+use super::super::helpers::{
+    render_card, render_input_row, render_section_title, render_switch_row,
+};
 use super::super::SettingsDialogState;
 
 /// 渲染数据同步面板
@@ -14,6 +16,7 @@ pub fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
     let state_read = state.read(cx);
     let sync = &state_read.settings.sync;
     let lang = &state_read.settings.theme.language;
+    let p = crate::theme::palette(cx);
 
     // 获取输入状态
     let webdav_url_input = state_read.webdav_url_input.clone();
@@ -36,10 +39,7 @@ pub fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    render_card(cx)
                         .child(render_switch_row(
                             "sync-enabled",
                             i18n::t(lang, "settings.sync.enabled"),
@@ -69,10 +69,7 @@ pub fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    render_card(cx)
                         .child(render_switch_row(
                             "sync-servers",
                             i18n::t(lang, "settings.sync.servers"),
@@ -118,10 +115,7 @@ pub fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    render_card(cx)
                         .children(webdav_url_input.as_ref().map(|input| {
                             render_input_row(i18n::t(lang, "settings.sync.webdav_url"), input, cx)
                         }))
@@ -143,33 +137,23 @@ pub fn render_sync_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl I
                             render_input_row(i18n::t(lang, "settings.sync.webdav_path"), input, cx)
                         })),
                 )
-                // 测试和同步按钮
+                // 测试和同步按钮（功能尚未实现）
                 .child(
                     div()
                         .flex()
-                        .gap_3()
-                        .mt_2()
-                        .child(
-                            Button::new("test-webdav")
-                                .outline()
-                                .child(i18n::t(lang, "settings.sync.test_connection"))
-                                .on_click({
-                                    let _state = state.clone();
-                                    move |_event, _window, _cx| {
-                                        // TODO: 实现测试连接功能
-                                    }
-                                }),
-                        )
-                        .child(
-                            Button::new("sync-now")
-                                .child(i18n::t(lang, "settings.sync.sync_now"))
-                                .on_click({
-                                    let _state = state.clone();
-                                    move |_event, _window, _cx| {
-                                        // TODO: 实现同步功能
-                                    }
-                                }),
-                        ),
+                        .gap(px(8.))
+                        .child(text_button(
+                            "test-webdav",
+                            ButtonKind::Secondary,
+                            i18n::t(lang, "settings.sync.test_connection"),
+                            &p,
+                        ))
+                        .child(text_button(
+                            "sync-now",
+                            ButtonKind::Secondary,
+                            i18n::t(lang, "settings.sync.sync_now"),
+                            &p,
+                        )),
                 ),
         )
 }

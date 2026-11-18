@@ -3,6 +3,7 @@
 use gpui::*;
 use gpui_component::ActiveTheme;
 
+use crate::components::common::button::{text_button, ButtonKind};
 use crate::components::common::icon::render_icon;
 use crate::constants::icons;
 use crate::i18n;
@@ -594,93 +595,62 @@ pub fn render_connecting_page(
                                     ),
                             )
                     }))
-                    // 操作按钮
+                    // 操作按钮：首次连接时「信任并保存」是主操作；密钥变化（可能被劫持）时
+                    // 「拒绝」是主操作，「信任并保存」标红
                     .child({
                         let ps_accept = progress_state.clone();
                         let ps_once = progress_state.clone();
                         let ps_reject = progress_state.clone();
+                        let p = crate::theme::palette(cx);
+                        let (accept_kind, reject_kind) = if hk.is_mismatch {
+                            (ButtonKind::Danger, ButtonKind::Primary)
+                        } else {
+                            (ButtonKind::Primary, ButtonKind::Secondary)
+                        };
 
                         div()
                             .flex()
+                            .flex_wrap()
                             .gap_2()
                             .mt_1()
-                            // 信任并保存
                             .child(
-                                div()
-                                    .id("hk-accept-save")
-                                    .px_3()
-                                    .py(px(6.0))
-                                    .bg(primary)
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .hover(|s| s.opacity(0.9))
-                                    .on_click(move |_, _, cx| {
-                                        ps_accept.update(cx, |state, _| {
-                                            state.respond_host_key(HostKeyAction::AcceptAndSave);
-                                        });
-                                    })
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(gpui::white())
-                                            .child(i18n::t(
-                                                &lang,
-                                                "connecting.host_key.btn_accept_save",
-                                            )),
-                                    ),
+                                text_button(
+                                    "hk-accept-save",
+                                    accept_kind,
+                                    i18n::t(&lang, "connecting.host_key.btn_accept_save"),
+                                    &p,
+                                )
+                                .on_click(move |_, _, cx| {
+                                    ps_accept.update(cx, |state, _| {
+                                        state.respond_host_key(HostKeyAction::AcceptAndSave);
+                                    });
+                                }),
                             )
-                            // 仅本次信任
                             .child(
-                                div()
-                                    .id("hk-accept-once")
-                                    .px_3()
-                                    .py(px(6.0))
-                                    .bg(cx.theme().secondary)
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(cx.theme().secondary_hover))
-                                    .on_click(move |_, _, cx| {
-                                        ps_once.update(cx, |state, _| {
-                                            state.respond_host_key(HostKeyAction::AcceptOnce);
-                                        });
-                                    })
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(foreground)
-                                            .child(i18n::t(
-                                                &lang,
-                                                "connecting.host_key.btn_accept_once",
-                                            )),
-                                    ),
+                                text_button(
+                                    "hk-accept-once",
+                                    ButtonKind::Secondary,
+                                    i18n::t(&lang, "connecting.host_key.btn_accept_once"),
+                                    &p,
+                                )
+                                .on_click(move |_, _, cx| {
+                                    ps_once.update(cx, |state, _| {
+                                        state.respond_host_key(HostKeyAction::AcceptOnce);
+                                    });
+                                }),
                             )
-                            // 拒绝
                             .child(
-                                div()
-                                    .id("hk-reject")
-                                    .px_3()
-                                    .py(px(6.0))
-                                    .bg(destructive.opacity(0.1))
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(destructive.opacity(0.2)))
-                                    .on_click(move |_, _, cx| {
-                                        ps_reject.update(cx, |state, _| {
-                                            state.respond_host_key(HostKeyAction::Reject);
-                                        });
-                                    })
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(destructive)
-                                            .child(i18n::t(
-                                                &lang,
-                                                "connecting.host_key.btn_reject",
-                                            )),
-                                    ),
+                                text_button(
+                                    "hk-reject",
+                                    reject_kind,
+                                    i18n::t(&lang, "connecting.host_key.btn_reject"),
+                                    &p,
+                                )
+                                .on_click(move |_, _, cx| {
+                                    ps_reject.update(cx, |state, _| {
+                                        state.respond_host_key(HostKeyAction::Reject);
+                                    });
+                                }),
                             )
                     }),
             )

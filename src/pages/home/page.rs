@@ -322,9 +322,14 @@ impl HomePage {
             // 服务器弹窗
             .children(if dialog_visible {
                 self.dialog_state.update(cx, |state, cx| {
-                    state.ensure_inputs_created(window, cx);
+                    state.ensure_inputs_created(&lang, window, cx);
                 });
-                Some(render_server_dialog_overlay(dialog_state, cx))
+                Some(render_server_dialog_overlay(
+                    dialog_state,
+                    viewport,
+                    &fit,
+                    cx,
+                ))
             } else {
                 None
             })
@@ -340,7 +345,11 @@ impl HomePage {
                 self.settings_dialog_state.update(cx, |state, cx| {
                     state.ensure_inputs_created(window, cx);
                 });
-                Some(render_settings_dialog_overlay(settings_dialog_state, cx))
+                Some(render_settings_dialog_overlay(
+                    settings_dialog_state,
+                    viewport,
+                    cx,
+                ))
             } else {
                 None
             })
@@ -351,7 +360,7 @@ impl HomePage {
                 if snippets_dialog_open {
                     let dialog_state = self.snippets_state.read(cx).dialog_state.clone();
                     dialog_state.update(cx, |state, cx| {
-                        state.ensure_inputs_created(window, cx);
+                        state.ensure_inputs_created(&lang, window, cx);
                     });
                     Some(
                         crate::components::common::snippets_dialog::render_snippets_dialog_overlay(
@@ -372,6 +381,13 @@ impl HomePage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let session_state = self.session_state.clone();
+        let lang = self
+            .settings_dialog_state
+            .read(cx)
+            .settings
+            .theme
+            .language
+            .clone();
         let state = session_state.read(cx);
 
         // 获取当前活动标签
@@ -475,7 +491,7 @@ impl HomePage {
                         let is_open = dialog.read(cx).is_open;
                         if is_open {
                             dialog.update(cx, |ds, cx| {
-                                ds.ensure_input_created(window, cx);
+                                ds.ensure_input_created(&lang, window, cx);
                             });
                         }
                     }
@@ -486,7 +502,7 @@ impl HomePage {
                         let is_open = dialog.read(cx).is_open;
                         if is_open {
                             dialog.update(cx, |ds, cx| {
-                                ds.ensure_input_created(window, cx);
+                                ds.ensure_input_created(&lang, window, cx);
                             });
                         }
                     }
@@ -496,6 +512,7 @@ impl HomePage {
                         &tab,
                         sidebar_collapsed,
                         session_state.clone(),
+                        &lang,
                         window,
                         cx,
                     )
@@ -508,6 +525,7 @@ impl HomePage {
                         &tab,
                         sidebar_collapsed,
                         session_state.clone(),
+                        &lang,
                         window,
                         cx,
                     )
@@ -520,6 +538,7 @@ impl HomePage {
                         &tab,
                         sidebar_collapsed,
                         session_state.clone(),
+                        &lang,
                         window,
                         cx,
                     )

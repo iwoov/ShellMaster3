@@ -3,6 +3,7 @@
 pub mod editor;
 pub mod file_list;
 pub mod folder_tree;
+mod name_dialog;
 pub mod new_file_dialog;
 pub mod new_folder_dialog;
 pub mod path_bar;

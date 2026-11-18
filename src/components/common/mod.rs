@@ -7,4 +7,5 @@ pub mod input;
 pub mod server_dialog;
 pub mod settings_dialog;
 pub mod snippets_dialog;
+pub mod text;
 pub mod window_controls;

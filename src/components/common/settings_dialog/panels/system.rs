@@ -5,7 +5,9 @@ use gpui::*;
 
 use crate::i18n;
 
-use super::super::helpers::{render_number_row, render_section_title, render_switch_row};
+use super::super::helpers::{
+    render_card, render_number_row, render_section_title, render_switch_row,
+};
 use super::super::SettingsDialogState;
 
 /// 渲染系统配置面板
@@ -32,10 +34,7 @@ pub fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    render_card(cx)
                         .child(render_switch_row(
                             "sys-launch-login",
                             i18n::t(lang, "settings.system.auto_start"),
@@ -73,10 +72,7 @@ pub fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    render_card(cx)
                         .child(render_switch_row(
                             "sys-close-tray",
                             i18n::t(lang, "settings.system.close_to_tray"),
@@ -114,10 +110,7 @@ pub fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    render_card(cx)
                         .child(render_switch_row(
                             "sys-notify-disconnect",
                             i18n::t(lang, "settings.system.notify_disconnect"),
@@ -147,10 +140,7 @@ pub fn render_system_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
+                    render_card(cx)
                         .child(render_switch_row(
                             "sys-logging",
                             i18n::t(lang, "settings.system.logging_enabled"),

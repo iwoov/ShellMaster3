@@ -1,274 +1,206 @@
-// 属性对话框渲染
+// 属性对话框渲染（只读）：文件图标 + 名称，下面一张卡片列出类型、路径、大小等
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
 
 use super::state::PropertiesDialogState;
+use crate::components::common::button::icon_button;
+use crate::components::common::dialog::{dialog_panel, DialogOverlay};
+use crate::components::common::icon::icon_sized;
+use crate::components::common::input::{settings_card, settings_row};
+use crate::components::common::text::TextFitter;
 use crate::constants::icons;
 use crate::i18n;
-use crate::models::settings::Language;
 use crate::models::sftp::FileType;
-use crate::services::storage;
+use crate::theme::Palette;
+
+/// 弹窗宽度
+const DIALOG_WIDTH: Pixels = px(400.);
+/// 弹窗左右留白
+const PADDING_X: Pixels = px(20.);
+/// 属性行里留给标签的宽度（值从这之后开始，过长时截断）
+const LABEL_RESERVE: Pixels = px(96.);
 
 /// 渲染属性对话框覆盖层
 pub fn render_properties_dialog_overlay(
     state: Entity<PropertiesDialogState>,
+    fit: &TextFitter,
     cx: &App,
 ) -> impl IntoElement {
     let state_data = state.read(cx);
-
-    // 如果没有 entry，返回空
-    let entry = match &state_data.entry {
-        Some(e) => e.clone(),
-        None => return div().into_any_element(),
+    let Some(entry) = state_data.entry.clone() else {
+        return div().into_any_element();
     };
+    let p = crate::theme::palette(cx);
+    let lang = state_data.lang.clone();
+    let t = |key| i18n::t(&lang, key);
 
-    // 加载当前语言
-    let lang = storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or(Language::Chinese);
-
-    // 主题颜色
-    let dialog_bg = cx.theme().popover;
-    let border_color = cx.theme().border;
-    let title_color = hsla(210.0 / 360.0, 1.0, 0.5, 1.0); // 蓝色标题
-    let label_color = cx.theme().muted_foreground;
-    let value_color = cx.theme().foreground;
-    let section_bg = cx.theme().secondary;
-    let bg_overlay = hsla(0.0, 0.0, 0.0, 0.5);
-
-    // 获取动态数据
-    let symlink_target = state_data.symlink_target.clone();
-    let folder_size_display = state_data.format_folder_size();
-    let is_folder = entry.is_dir();
     let is_symlink = entry.file_type == FileType::Symlink;
-
-    // 格式化修改时间
-    let modified_str = entry
+    let type_display = match entry.file_type {
+        FileType::Directory => t("sftp.properties.type_folder"),
+        FileType::File => t("sftp.properties.type_file"),
+        FileType::Symlink => t("sftp.properties.type_symlink"),
+        FileType::Other => t("sftp.properties.type_other"),
+    };
+    let size_display = if entry.is_dir() {
+        state_data.format_folder_size(&lang)
+    } else {
+        entry.format_size()
+    };
+    let modified = entry
         .modified
-        .map(|t| {
-            let datetime: chrono::DateTime<chrono::Local> = t.into();
+        .map(|time| {
+            let datetime: chrono::DateTime<chrono::Local> = time.into();
             datetime.format("%Y-%m-%d %H:%M:%S").to_string()
         })
         .unwrap_or_else(|| "-".to_string());
-
-    // 权限格式化（同时显示符号和八进制）
-    let perms_display = format!(
+    // 权限同时显示符号和八进制
+    let permissions = format!(
         "{} ({:o})",
         entry.format_permissions(),
         entry.permissions & 0o777
     );
+    let symlink_target = state_data
+        .symlink_target
+        .clone()
+        .unwrap_or_else(|| "…".to_string());
 
-    // 标题
-    let title = i18n::t(&lang, "sftp.properties.title");
-
-    // 标签文本
-    let type_label = i18n::t(&lang, "sftp.properties.type");
-    let path_label = i18n::t(&lang, "sftp.properties.path");
-    let size_label = i18n::t(&lang, "sftp.properties.size");
-    let modified_label = i18n::t(&lang, "sftp.properties.modified");
-    let permissions_label = i18n::t(&lang, "sftp.properties.permissions");
-    let link_target_label = i18n::t(&lang, "sftp.properties.link_target");
-
-    // 类型显示
-    let type_display = match entry.file_type {
-        FileType::Directory => i18n::t(&lang, "sftp.properties.type_folder"),
-        FileType::File => i18n::t(&lang, "sftp.properties.type_file"),
-        FileType::Symlink => i18n::t(&lang, "sftp.properties.type_symlink"),
-        FileType::Other => i18n::t(&lang, "sftp.properties.type_other"),
+    // 值的可用宽度：弹窗宽度去掉留白、卡片边框、行内边距、标签和间距
+    let value_width = DIALOG_WIDTH - PADDING_X * 2. - px(2.) - px(28.) - px(16.) - LABEL_RESERVE;
+    let row = |id: &'static str, label: &'static str, value: &str, mono: bool| {
+        let value = if mono {
+            fit.mono_label_with_tooltip(id, value, value_width, 12.)
+        } else {
+            fit.label_with_tooltip(id, value, value_width, 13., FontWeight::NORMAL)
+        };
+        settings_row(label, None, value.text_color(p.text), &p)
     };
 
-    // 大小显示
-    let size_display = if is_folder {
-        folder_size_display
-    } else {
-        entry.format_size()
-    };
+    let card = settings_card(&p)
+        .child(row(
+            "properties-path",
+            t("sftp.properties.path"),
+            &entry.path,
+            true,
+        ))
+        .child(row(
+            "properties-size",
+            t("sftp.properties.size"),
+            &size_display,
+            false,
+        ))
+        .child(row(
+            "properties-modified",
+            t("sftp.properties.modified"),
+            &modified,
+            false,
+        ))
+        .child(row(
+            "properties-permissions",
+            t("sftp.properties.permissions"),
+            &permissions,
+            true,
+        ))
+        .when(is_symlink, |card| {
+            card.child(row(
+                "properties-link-target",
+                t("sftp.properties.link_target"),
+                &symlink_target,
+                true,
+            ))
+        });
 
     let state_for_close = state.clone();
+    let state_for_escape = state.clone();
     let state_for_backdrop = state.clone();
+    let close = move |state: &Entity<PropertiesDialogState>, cx: &mut App| {
+        state.update(cx, |s, cx| {
+            s.close();
+            cx.notify();
+        });
+    };
 
-    div()
-        .id("properties-dialog-overlay")
-        .absolute()
-        .inset_0()
-        .bg(bg_overlay)
-        .flex()
-        .items_start()
-        .pt(px(100.))
-        .justify_center()
-        // 点击遮罩关闭
-        .on_click(move |_, _, cx| {
-            state_for_backdrop.update(cx, |s, _| s.close());
-        })
-        .child(
-            div()
-                .id("properties-dialog")
-                .w(px(320.))
-                .bg(dialog_bg)
-                .border_1()
-                .border_color(border_color)
-                .rounded_lg()
-                .shadow_lg()
-                .overflow_hidden()
-                .flex()
-                .flex_col()
-                // 阻止点击穿透
-                .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                    cx.stop_propagation();
-                })
-                // 标题栏
-                .child(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .border_b_1()
-                        .border_color(border_color)
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(title_color)
-                                .child(title.to_string()),
-                        )
-                        .child(
-                            div()
-                                .id("close-properties-dialog")
-                                .w(px(20.))
-                                .h(px(20.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(4.))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(cx.theme().secondary_hover))
-                                .on_click(move |_, _, cx| {
-                                    state_for_close.update(cx, |s, _| s.close());
-                                })
-                                .child(svg().path(icons::X).size(px(14.)).text_color(label_color)),
-                        ),
-                )
-                // 文件名区域
-                .child(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .border_b_1()
-                        .border_color(border_color)
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            // 文件图标
-                            svg()
-                                .path(match entry.file_type {
-                                    FileType::Directory => icons::FOLDER,
-                                    FileType::Symlink => icons::LINK,
-                                    _ => icons::FILE,
-                                })
-                                .size(px(16.))
-                                .text_color(label_color),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(value_color)
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .child(entry.name.clone()),
-                        ),
-                )
-                // 内容区域 - 使用 section 样式
-                .child(
-                    div().p_3().child(
-                        div()
-                            .w_full()
-                            .bg(section_bg)
-                            .rounded(px(6.))
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .px_3()
-                                    .py_2()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    // 类型
-                                    .child(render_property_row(
-                                        &type_label,
-                                        &type_display,
-                                        label_color,
-                                        value_color,
-                                    ))
-                                    // 完整路径
-                                    .child(render_property_row(
-                                        &path_label,
-                                        &entry.path,
-                                        label_color,
-                                        value_color,
-                                    ))
-                                    // 大小
-                                    .child(render_property_row(
-                                        &size_label,
-                                        &size_display,
-                                        label_color,
-                                        value_color,
-                                    ))
-                                    // 修改时间
-                                    .child(render_property_row(
-                                        &modified_label,
-                                        &modified_str,
-                                        label_color,
-                                        value_color,
-                                    ))
-                                    // 权限
-                                    .child(render_property_row(
-                                        &permissions_label,
-                                        &perms_display,
-                                        label_color,
-                                        value_color,
-                                    ))
-                                    // 符号链接目标（仅对符号链接显示）
-                                    .when(is_symlink, |this| {
-                                        let target = symlink_target.as_deref().unwrap_or("...");
-                                        this.child(render_property_row(
-                                            &link_target_label,
-                                            target,
-                                            label_color,
-                                            value_color,
-                                        ))
-                                    }),
-                            ),
-                    ),
-                ),
-        )
+    let panel = dialog_panel(&p)
+        .w(DIALOG_WIDTH)
+        .child(render_header(
+            entry.file_type,
+            &entry.name,
+            type_display,
+            fit,
+            &p,
+            icon_button("properties-close-btn", icons::X, t("common.close"), &p)
+                .on_click(move |_, _, cx| close(&state_for_close, cx)),
+        ))
+        .child(div().px(PADDING_X).pt(px(4.)).pb(px(20.)).child(card));
+
+    // 只读弹窗：点遮罩也可以关闭
+    DialogOverlay::new()
+        .focus(state_data.focus_handle.as_ref())
+        .on_escape(move |_, cx| close(&state_for_escape, cx))
+        .on_backdrop_click(move |_, cx| close(&state_for_backdrop, cx))
+        .render("properties-dialog-overlay", panel, &p)
         .into_any_element()
 }
 
-/// 渲染属性行
-fn render_property_row(label: &str, value: &str, label_color: Hsla, value_color: Hsla) -> Div {
+/// 头部：文件类型图标块、名称和类型，右上角是关闭按钮
+fn render_header(
+    file_type: FileType,
+    name: &str,
+    type_display: &'static str,
+    fit: &TextFitter,
+    p: &Palette,
+    close_button: impl IntoElement,
+) -> Div {
+    let icon = match file_type {
+        FileType::Directory => icons::FOLDER,
+        FileType::Symlink => icons::LINK,
+        _ => icons::FILE,
+    };
+    // 名称可用宽度：弹窗宽度去掉左右留白、图标块、间距和关闭按钮
+    let name_width = DIALOG_WIDTH - PADDING_X - px(12.) - px(36.) - px(12.) - px(12.) - px(28.);
+
     div()
         .flex()
-        .justify_between()
-        .py(px(1.))
+        .items_center()
+        .gap(px(12.))
+        .pl(PADDING_X)
+        .pr(px(12.))
+        .pt(px(16.))
+        .pb(px(14.))
         .child(
             div()
-                .text_xs()
-                .text_color(label_color)
-                .child(label.to_string()),
+                .flex_none()
+                .size(px(36.))
+                .rounded(px(8.))
+                .bg(p.primary.opacity(0.12))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(icon_sized(icon, 18., p.primary)),
         )
         .child(
             div()
-                .text_xs()
-                .text_color(value_color)
-                .max_w(px(180.))
-                .overflow_hidden()
-                .text_ellipsis()
-                .child(value.to_string()),
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(
+                    fit.label_with_tooltip(
+                        "properties-name",
+                        name,
+                        name_width,
+                        15.,
+                        FontWeight::SEMIBOLD,
+                    )
+                    .text_color(p.text),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(p.text_muted)
+                        .child(type_display),
+                ),
         )
+        .child(close_button)
 }

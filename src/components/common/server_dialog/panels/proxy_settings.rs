@@ -1,226 +1,126 @@
-// 代理设置面板
+// 代理：通过 HTTP 或 SOCKS5 代理连接
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_component::switch::Switch;
 
-use crate::constants::icons;
+use crate::components::common::input::{
+    field_error, form_field, segmented, settings_card, settings_row, text_field,
+};
 use crate::i18n;
 use crate::models::server::ProxyType;
-use crate::models::settings::Language;
-use crate::services::storage;
 
-use super::super::helpers::{render_form_label, render_switch};
-use super::super::ServerDialogState;
+use super::super::helpers::{error_text, field_pair, input_or_placeholder, notice};
+use super::super::{Field, FormErrors, ServerDialogState};
 
-/// 渲染代理设置表单
-pub fn render_proxy_settings_form(state: Entity<ServerDialogState>, cx: &App) -> impl IntoElement {
-    use gpui_component::input::Input;
+/// 端口一栏的宽度
+const PORT_WIDTH: Pixels = px(110.);
 
-    // 加载当前语言
-    let lang = storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or(Language::Chinese);
+/// 渲染代理表单
+pub fn render_proxy_settings_form(
+    state: Entity<ServerDialogState>,
+    errors: &FormErrors,
+    cx: &App,
+) -> impl IntoElement {
+    let p = crate::theme::palette(cx);
+    let s = state.read(cx);
+    let lang = s.lang.clone();
+    let t = |key| i18n::t(&lang, key);
+    let enabled = s.enable_proxy;
 
-    let state_read = state.read(cx);
-    let enabled = state_read.enable_proxy;
-    let proxy_type = state_read.proxy_type.clone();
+    let state_for_toggle = state.clone();
+    let toggle = Switch::new("server-proxy-switch")
+        .checked(enabled)
+        .on_click(move |checked, _, cx| {
+            state_for_toggle.update(cx, |s, cx| {
+                s.enable_proxy = *checked;
+                cx.notify();
+            });
+        });
 
-    let loading_text = i18n::t(&lang, "common.loading");
-    let host_input = if let Some(input) = &state_read.proxy_host_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child(loading_text).into_any_element()
-    };
-    let port_input = if let Some(input) = &state_read.proxy_port_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child(loading_text).into_any_element()
-    };
-    let username_input = if let Some(input) = &state_read.proxy_username_input {
-        Input::new(input).into_any_element()
-    } else {
-        div().child(loading_text).into_any_element()
-    };
-    let password_input = if let Some(input) = &state_read.proxy_password_input {
-        Input::new(input).mask_toggle().into_any_element()
-    } else {
-        div().child(loading_text).into_any_element()
-    };
-
-    div()
+    let form = div()
         .flex()
         .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(render_form_label(
-                    i18n::t(&lang, "server_dialog.enable_proxy"),
-                    icons::GLOBE,
-                    cx,
-                ))
-                .child({
-                    let state = state.clone();
-                    render_switch(enabled, move |_, _, cx| {
-                        state.update(cx, |s, _| {
-                            s.enable_proxy = !s.enable_proxy;
-                        });
-                    })
-                }),
-        )
-        .children(if enabled {
-            Some(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    // 代理类型
-                    .child(div().flex().flex_col().gap_2().child({
-                        let toggle_bg = cx.theme().muted;
-                        let selected_bg = cx.theme().popover;
-                        let unselected_bg = cx.theme().muted;
-                        let selected_text = cx.theme().foreground;
-                        let unselected_text = cx.theme().muted_foreground;
+        .gap(px(14.))
+        .child(settings_card(&p).child(settings_row(
+            t("server_dialog.enable_proxy"),
+            Some(t("server_dialog.proxy_desc").into()),
+            toggle,
+            &p,
+        )));
+    if !enabled {
+        return form;
+    }
 
-                        div()
-                            .flex()
-                            .gap_1()
-                            .p_1()
-                            .bg(toggle_bg)
-                            .rounded_md()
-                            .child(render_proxy_type_button(
-                                state.clone(),
-                                ProxyType::Http,
-                                "HTTP",
-                                proxy_type == ProxyType::Http,
-                                selected_bg,
-                                unselected_bg,
-                                selected_text,
-                                unselected_text,
-                            ))
-                            .child(render_proxy_type_button(
-                                state.clone(),
-                                ProxyType::Socks5,
-                                "SOCKS5",
-                                proxy_type == ProxyType::Socks5,
-                                selected_bg,
-                                unselected_bg,
-                                selected_text,
-                                unselected_text,
-                            ))
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(render_form_label(
-                                        i18n::t(&lang, "server_dialog.proxy_host"),
-                                        icons::SERVER,
-                                        cx,
-                                    ))
-                                    .child(host_input),
-                            )
-                            .child(
-                                div()
-                                    .w(px(100.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(render_form_label(
-                                        i18n::t(&lang, "server_dialog.proxy_port"),
-                                        icons::LINK,
-                                        cx,
-                                    ))
-                                    .child(port_input),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(render_form_label(
-                                i18n::t(&lang, "server_dialog.proxy_username"),
-                                icons::USER,
-                                cx,
-                            ))
-                            .child(username_input),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(render_form_label(
-                                i18n::t(&lang, "server_dialog.proxy_password"),
-                                icons::LOCK,
-                                cx,
-                            ))
-                            .child(password_input),
-                    ),
-            )
-        } else {
-            None
-        })
-}
+    let host_error = error_text(errors, Field::ProxyHost, &lang);
+    let port_error = error_text(errors, Field::ProxyPort, &lang);
 
-/// 渲染代理类型切换按钮
-fn render_proxy_type_button(
-    state: Entity<ServerDialogState>,
-    proxy_type: ProxyType,
-    label: &'static str,
-    selected: bool,
-    selected_bg: gpui::Hsla,
-    unselected_bg: gpui::Hsla,
-    selected_text: gpui::Hsla,
-    unselected_text: gpui::Hsla,
-) -> impl IntoElement {
-    div()
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .py_1()
-        .rounded_sm()
-        .cursor_pointer()
-        .bg(if selected { selected_bg } else { unselected_bg })
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            state.update(cx, |s, _| {
-                s.proxy_type = proxy_type.clone();
-            });
+    let state_for_type = state.clone();
+    let proxy_type = form_field(
+        t("server_dialog.proxy_type"),
+        div().flex().child(segmented(
+            "server-proxy-type",
+            vec![
+                (ProxyType::Http, "HTTP".into()),
+                (ProxyType::Socks5, "SOCKS5".into()),
+            ],
+            &s.proxy_type,
+            false,
+            move |proxy_type, _, cx| {
+                state_for_type.update(cx, |s, cx| {
+                    s.proxy_type = proxy_type;
+                    cx.notify();
+                });
+            },
+            &p,
+        )),
+        None,
+        &p,
+    );
+
+    let address = field_pair(
+        form_field(
+            t("server_dialog.proxy_host"),
+            input_or_placeholder(s.proxy_host_input.as_ref(), |input| {
+                field_error(text_field(input), host_error.is_some(), &p)
+            }),
+            None,
+            &p,
+        ),
+        form_field(
+            t("server_dialog.proxy_port"),
+            input_or_placeholder(s.proxy_port_input.as_ref(), |input| {
+                field_error(text_field(input), port_error.is_some(), &p)
+            }),
+            None,
+            &p,
+        ),
+        PORT_WIDTH,
+        [host_error.clone(), port_error.clone()]
+            .into_iter()
+            .flatten(),
+        &p,
+    );
+
+    form
+        // 跳板机优先：同时启用时连接不经过这个代理
+        .when(s.enable_jump_host, |form| {
+            form.child(notice(t("server_dialog.proxy_ignored"), p.warning))
         })
-        .shadow(if selected {
-            vec![BoxShadow {
-                color: rgba(0x00000010).into(),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(2.),
-                spread_radius: px(0.),
-            }]
-        } else {
-            vec![]
-        })
-        .child(
-            div()
-                .text_sm()
-                .font_weight(if selected {
-                    FontWeight::MEDIUM
-                } else {
-                    FontWeight::NORMAL
-                })
-                .text_color(if selected {
-                    selected_text
-                } else {
-                    unselected_text
-                })
-                .child(label),
-        )
+        .child(proxy_type)
+        .child(address)
+        .child(form_field(
+            t("server_dialog.proxy_username"),
+            input_or_placeholder(s.proxy_username_input.as_ref(), text_field),
+            None,
+            &p,
+        ))
+        .child(form_field(
+            t("server_dialog.proxy_password"),
+            input_or_placeholder(s.proxy_password_input.as_ref(), |input| {
+                text_field(input).mask_toggle()
+            }),
+            None,
+            &p,
+        ))
 }

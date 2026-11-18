@@ -2,16 +2,18 @@
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::button::Button;
 use gpui_component::color_picker::{ColorPicker, ColorPickerState};
-use gpui_component::input::{Input, InputState, NumberInput, NumberInputEvent, StepAction};
+use gpui_component::input::{InputState, NumberInput, NumberInputEvent, StepAction};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::switch::Switch;
-use gpui_component::{ActiveTheme, Sizable};
+use gpui_component::Sizable;
 
-use crate::components::common::icon::render_icon;
-use crate::constants::icons;
+use crate::components::common::button::{CONTROL_HEIGHT, CONTROL_RADIUS};
+use crate::components::common::input::{
+    dropdown_icon_button, select_trigger, settings_card, settings_row, text_field,
+};
 use crate::terminal::rgb_to_hsla;
+use crate::theme::palette;
 
 use super::SettingsDialogState;
 
@@ -62,13 +64,66 @@ pub const TERMINAL_THEMES: &[&str] = &[
 ];
 
 // ======================== 辅助渲染函数 ========================
+//
+// 每个分组是一张卡片（`render_card`），卡片里一行一个设置项（`render_*_row`），
+// 行与行之间由行自带的上边框分隔。
 
+/// 文本输入框、下拉框的宽度
+pub const CONTROL_WIDTH: Pixels = px(240.);
+/// 数字输入框的宽度
+pub const NUMBER_WIDTH: Pixels = px(150.);
+/// 颜色选择器的宽度
+const COLOR_WIDTH: Pixels = px(160.);
+
+/// 分组标题（卡片上方的小标题）
 pub fn render_section_title(title: impl Into<SharedString>, cx: &App) -> impl IntoElement {
+    let p = palette(cx);
     div()
-        .text_base()
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().foreground)
+        .px(px(2.))
+        .mb(px(-4.))
+        .text_size(px(12.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(p.text_muted)
         .child(title.into())
+}
+
+/// 分组卡片，在里面放 `render_*_row`
+pub fn render_card(cx: &App) -> Div {
+    settings_card(&palette(cx))
+}
+
+/// 自定义控件的设置行
+pub fn render_row(
+    label: impl Into<SharedString>,
+    description: Option<SharedString>,
+    control: impl IntoElement,
+    cx: &App,
+) -> Div {
+    settings_row(label, description, control, &palette(cx))
+}
+
+/// 卡片里占满整行的内容（如终端预览），与上下行之间同样有分隔线
+pub fn render_block_row(content: impl IntoElement, cx: &App) -> impl IntoElement {
+    let p = palette(cx);
+    div()
+        .mt(px(-1.))
+        .border_t_1()
+        .border_color(p.line)
+        .px(px(14.))
+        .py(px(12.))
+        .child(content)
+}
+
+/// 设置行下方的补充说明，紧贴上一行显示
+pub fn render_hint(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
+    let p = palette(cx);
+    div()
+        .px(px(14.))
+        .mt(px(-6.))
+        .pb(px(10.))
+        .text_size(px(12.))
+        .text_color(p.text_muted)
+        .child(text.into())
 }
 
 /// 渲染带输入框的设置行（用于文本输入）
@@ -77,25 +132,12 @@ pub fn render_input_row(
     input: &Entity<InputState>,
     cx: &App,
 ) -> impl IntoElement {
-    let text_color = cx.theme().foreground;
-
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_3()
-        .px_4()
-        .bg(cx.theme().muted)
-        .rounded_lg()
-        .mb_2()
-        .child(
-            div()
-                .w(px(120.))
-                .text_sm()
-                .text_color(text_color)
-                .child(label),
-        )
-        .child(div().w(px(200.)).child(Input::new(input).appearance(true)))
+    render_row(
+        label,
+        None,
+        div().w(CONTROL_WIDTH).child(text_field(input)),
+        cx,
+    )
 }
 
 /// 渲染颜色选择行：色块 + hex 标签，点击弹出调色板（顶部为 `featured` 快捷色，可直接输入 hex）。
@@ -109,107 +151,77 @@ pub fn render_color_picker_row(
     featured: Vec<Hsla>,
     cx: &App,
 ) -> impl IntoElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_3()
-        .px_4()
-        .bg(cx.theme().muted)
-        .rounded_lg()
-        .mb_2()
-        .child(
-            div()
-                .w(px(120.))
-                .text_sm()
-                .text_color(cx.theme().foreground)
-                .child(label),
-        )
-        .child(
-            div().w(px(200.)).child(
-                // 样式作用在可点击的整行上，让它与同区域的输入框/下拉按钮观感一致。
-                // small 尺寸的色块（20px + 4px 外边距）刚好放进 32px 高的框里。
-                ColorPicker::new(picker)
-                    .small()
-                    .featured_colors(featured)
-                    .label(current_hex.to_string())
-                    .w_full()
-                    .h(px(32.))
-                    .border_1()
-                    .border_color(cx.theme().input)
-                    .text_color(cx.theme().foreground)
-                    .cursor_pointer(),
-            ),
-        )
+    let p = palette(cx);
+    render_row(
+        label,
+        None,
+        div().w(COLOR_WIDTH).child(
+            // 样式作用在可点击的整行上，让它与同区域的输入框、下拉框观感一致。
+            // small 尺寸的色块（20px + 4px 外边距）刚好放进 30px 高的框里。
+            ColorPicker::new(picker)
+                .small()
+                .featured_colors(featured)
+                .label(current_hex.to_string())
+                .w_full()
+                .h(CONTROL_HEIGHT)
+                .rounded(CONTROL_RADIUS)
+                .border_1()
+                .border_color(p.field_border)
+                .bg(p.field)
+                .text_size(px(13.))
+                .text_color(p.text)
+                .cursor_pointer(),
+        ),
+        cx,
+    )
 }
 
-/// 渲染字体输入框（带下拉选择按钮）
+/// 渲染字体输入框（右侧按钮弹出推荐字体，也可直接输入）
 pub fn render_font_input_row(
     cx: &App,
     label: &'static str,
     input: &Entity<InputState>,
     fonts: &[&'static str],
 ) -> impl IntoElement {
-    use gpui::Corner;
-
     let input_clone = input.clone();
     let fonts = fonts.to_vec();
-    let fonts_clone = fonts.clone();
 
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_3()
-        .px_4()
-        .bg(cx.theme().muted)
-        .rounded_lg()
-        .mb_2()
-        .child(
-            div()
-                .w(px(120.))
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(label),
-        )
-        .child(
-            div()
-                .w(px(200.))
-                .flex()
-                .items_center()
-                .gap_1()
-                // 字体允许直接输入，兼容用户安装但不在推荐列表中的等宽字体。
-                .child(div().flex_1().child(Input::new(input).appearance(true)))
-                .child(
-                    Button::new("font-dropdown")
-                        .w(px(32.))
-                        .h(px(32.))
-                        .outline()
-                        .child(render_icon(
-                            icons::CHEVRON_DOWN,
-                            cx.theme().muted_foreground.into(),
-                        ))
-                        .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
-                            let mut menu = menu.min_w(px(200.));
-                            for font in &fonts_clone {
-                                let font_name: SharedString = (*font).into();
-                                let input_for_click = input_clone.clone();
-                                let font_val = font.to_string();
-                                menu = menu.item(PopupMenuItem::new(font_name).on_click(
-                                    move |_, window, cx| {
-                                        input_for_click.update(cx, |state, cx| {
-                                            state.set_value(font_val.clone(), window, cx);
-                                        });
-                                    },
-                                ));
-                            }
-                            menu
-                        }),
+    render_row(
+        label,
+        None,
+        div()
+            .w(CONTROL_WIDTH)
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            // 字体允许直接输入，兼容用户安装但不在推荐列表中的等宽字体。
+            .child(div().flex_1().min_w_0().child(text_field(input)))
+            .child(
+                dropdown_icon_button("font-dropdown", cx).dropdown_menu_with_anchor(
+                    Corner::TopRight,
+                    move |menu, _, _| {
+                        let mut menu = menu.min_w(CONTROL_WIDTH);
+                        for font in &fonts {
+                            let font_name: SharedString = (*font).into();
+                            let input_for_click = input_clone.clone();
+                            let font_val = font.to_string();
+                            menu = menu.item(PopupMenuItem::new(font_name).on_click(
+                                move |_, window, cx| {
+                                    input_for_click.update(cx, |state, cx| {
+                                        state.set_value(font_val.clone(), window, cx);
+                                    });
+                                },
+                            ));
+                        }
+                        menu
+                    },
                 ),
-        )
+            ),
+        cx,
+    )
 }
 
-/// 渲染主题选择行（带下拉菜单）
+/// 渲染终端配色选择行（带下拉菜单）
 pub fn render_theme_select_row(
     label: &'static str,
     current_value: &str,
@@ -217,98 +229,62 @@ pub fn render_theme_select_row(
     state: Entity<SettingsDialogState>,
     cx: &App,
 ) -> impl IntoElement {
-    use gpui::Corner;
-
-    let current = current_value.to_string();
-
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_3()
-        .px_4()
-        .bg(cx.theme().muted)
-        .rounded_lg()
-        .mb_2()
-        .child(
-            div()
-                .w(px(120.))
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(label),
+    render_row(
+        label,
+        None,
+        select_trigger(
+            "theme-dropdown",
+            current_value.to_string(),
+            CONTROL_WIDTH,
+            cx,
         )
-        .child(
-            // 使用全宽按钮作为下拉触发器，anchor 设为 TopLeft 以便菜单在正下方显示
-            Button::new("theme-dropdown")
-                .w(px(200.))
-                .h(px(32.))
-                .outline()
-                .justify_start() // 内容左对齐
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between() // 两端对齐：文字左侧，图标右侧
-                        .w(px(180.)) // 明确设置宽度，减去按钮内边距
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().foreground)
-                                .child(current),
-                        )
-                        .child(render_icon(
-                            icons::CHEVRON_DOWN,
-                            cx.theme().muted_foreground.into(),
-                        )),
-                )
-                .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
-                    let mut menu = menu.min_w(px(200.));
-                    for theme in themes {
-                        let theme_name: SharedString = (*theme).into();
-                        let theme_val = theme.to_string();
-                        let state_clone = state.clone();
-                        menu = menu.item(PopupMenuItem::new(theme_name).on_click(
-                            move |_, window, cx| {
-                                let p = crate::terminal::palette_for(&theme_val);
-                                let hex = |(r, g, b): (u8, u8, u8)| {
-                                    format!("#{:02x}{:02x}{:02x}", r, g, b)
-                                };
-                                state_clone.update(cx, |s, cx| {
-                                    s.settings.terminal.color_scheme = theme_val.clone();
-                                    // 选择主题时同步前景/背景/光标/选择色
-                                    s.settings.terminal.foreground_color = hex(p.foreground);
-                                    s.settings.terminal.background_color = hex(p.background);
-                                    s.settings.terminal.cursor_color = hex(p.cursor);
-                                    s.settings.terminal.selection_color = hex(p.selection);
-                                    s.mark_changed();
-                                    // 预览卡片直接读取 settings，需要重绘
-                                    cx.notify();
+        .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
+            let mut menu = menu.min_w(CONTROL_WIDTH);
+            for theme in themes {
+                let theme_name: SharedString = (*theme).into();
+                let theme_val = theme.to_string();
+                let state_clone = state.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(theme_name).on_click(move |_, window, cx| {
+                        let p = crate::terminal::palette_for(&theme_val);
+                        let hex = |(r, g, b): (u8, u8, u8)| format!("#{:02x}{:02x}{:02x}", r, g, b);
+                        state_clone.update(cx, |s, cx| {
+                            s.settings.terminal.color_scheme = theme_val.clone();
+                            // 选择主题时同步前景/背景/光标/选择色
+                            s.settings.terminal.foreground_color = hex(p.foreground);
+                            s.settings.terminal.background_color = hex(p.background);
+                            s.settings.terminal.cursor_color = hex(p.cursor);
+                            s.settings.terminal.selection_color = hex(p.selection);
+                            s.mark_changed();
+                            // 预览卡片直接读取 settings，需要重绘
+                            cx.notify();
+                        });
+
+                        // 同步 4 个颜色选择器的色块。`set_value` 不会触发 Change 事件，
+                        // settings 已在上面直接写入，所以不会重复写。
+                        let pickers = {
+                            let state = state_clone.read(cx);
+                            [
+                                (state.terminal_foreground_picker.clone(), p.foreground),
+                                (state.terminal_background_picker.clone(), p.background),
+                                (state.terminal_cursor_picker.clone(), p.cursor),
+                                (state.terminal_selection_picker.clone(), p.selection),
+                            ]
+                        };
+                        for (picker, (r, g, b)) in pickers {
+                            if let Some(picker) = picker {
+                                picker.update(cx, |picker, cx| {
+                                    picker.set_value(rgb_to_hsla(r, g, b), window, cx);
                                 });
-
-                                // 同步 4 个颜色选择器的色块。`set_value` 不会触发 Change 事件，
-                                // settings 已在上面直接写入，所以不会重复写。
-                                let pickers = {
-                                    let state = state_clone.read(cx);
-                                    [
-                                        (state.terminal_foreground_picker.clone(), p.foreground),
-                                        (state.terminal_background_picker.clone(), p.background),
-                                        (state.terminal_cursor_picker.clone(), p.cursor),
-                                        (state.terminal_selection_picker.clone(), p.selection),
-                                    ]
-                                };
-                                for (picker, (r, g, b)) in pickers {
-                                    if let Some(picker) = picker {
-                                        picker.update(cx, |picker, cx| {
-                                            picker.set_value(rgb_to_hsla(r, g, b), window, cx);
-                                        });
-                                    }
-                                }
-                            },
-                        ));
-                    }
-                    menu
-                }),
-        )
+                            }
+                        }
+                    }),
+                );
+            }
+            menu
+        }),
+        cx,
+    )
 }
 
 /// 渲染下拉选择行：点击按钮弹出选项菜单，选中后通过 `update_fn` 写回设置
@@ -321,71 +297,35 @@ pub fn render_select_row<T: Clone + PartialEq + 'static>(
     update_fn: fn(&mut SettingsDialogState, T),
     cx: &App,
 ) -> impl IntoElement {
-    use gpui::Corner;
-
     let current_label = options
         .iter()
         .find(|(value, _)| value == current)
         .map(|(_, label)| *label)
         .unwrap_or_default();
 
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_3()
-        .px_4()
-        .bg(cx.theme().muted)
-        .rounded_lg()
-        .mb_2()
-        .child(
-            div()
-                .w(px(120.))
-                .text_sm()
-                .text_color(cx.theme().foreground)
-                .child(label),
-        )
-        .child(
-            Button::new(id)
-                .w(px(200.))
-                .h(px(32.))
-                .outline()
-                .justify_start()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .w(px(180.))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().foreground)
-                                .child(current_label),
-                        )
-                        .child(render_icon(
-                            icons::CHEVRON_DOWN,
-                            cx.theme().muted_foreground.into(),
-                        )),
-                )
-                .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
-                    let mut menu = menu.min_w(px(200.));
-                    for (value, option_label) in options.iter().cloned() {
-                        let state = state.clone();
-                        menu = menu.item(PopupMenuItem::new(option_label).on_click(
-                            move |_, _, cx| {
-                                let value = value.clone();
-                                state.update(cx, |s, cx| {
-                                    update_fn(s, value);
-                                    s.mark_changed();
-                                    cx.notify();
-                                });
-                            },
-                        ));
-                    }
-                    menu
-                }),
-        )
+    render_row(
+        label,
+        None,
+        select_trigger(id, current_label, CONTROL_WIDTH, cx).dropdown_menu_with_anchor(
+            Corner::TopLeft,
+            move |menu, _, _| {
+                let mut menu = menu.min_w(CONTROL_WIDTH);
+                for (value, option_label) in options.iter().cloned() {
+                    let state = state.clone();
+                    menu = menu.item(PopupMenuItem::new(option_label).on_click(move |_, _, cx| {
+                        let value = value.clone();
+                        state.update(cx, |s, cx| {
+                            update_fn(s, value);
+                            s.mark_changed();
+                            cx.notify();
+                        });
+                    }));
+                }
+                menu
+            },
+        ),
+        cx,
+    )
 }
 
 /// 渲染带数字输入框的设置行（带 +/- 按钮）
@@ -394,29 +334,14 @@ pub fn render_number_row(
     input: &Entity<InputState>,
     cx: &App,
 ) -> impl IntoElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_3()
-        .px_4()
-        .bg(cx.theme().muted)
-        .rounded_lg()
-        .mb_2()
-        .child(
-            div()
-                .w(px(120.))
-                .text_sm()
-                .text_color(cx.theme().foreground)
-                .child(label),
-        )
-        .child(
-            div()
-                .w(px(200.))
-                .flex()
-                .justify_end() // 靠右对齐
-                .child(NumberInput::new(input).appearance(true)),
-        )
+    render_row(
+        label,
+        None,
+        div()
+            .w(NUMBER_WIDTH)
+            .child(NumberInput::new(input).appearance(true)),
+        cx,
+    )
 }
 
 /// 渲染带开关的设置行
@@ -428,48 +353,38 @@ pub fn render_switch_row(
     update_fn: fn(&mut SettingsDialogState, bool),
     cx: &App,
 ) -> impl IntoElement {
-    let text_color = cx.theme().foreground;
-
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_3()
-        .px_4()
-        .bg(cx.theme().muted)
-        .rounded_lg()
-        .mb_2()
-        .child(div().text_sm().text_color(text_color).child(label))
-        .child(
-            Switch::new(id)
-                .checked(checked)
-                .on_click(move |new_val, _, cx| {
-                    state.update(cx, |s, _| {
-                        update_fn(s, *new_val);
-                        s.mark_changed();
-                    });
-                }),
-        )
+    render_row(
+        label,
+        None,
+        Switch::new(id)
+            .checked(checked)
+            .on_click(move |new_val, _, cx| {
+                state.update(cx, |s, cx| {
+                    update_fn(s, *new_val);
+                    s.mark_changed();
+                    cx.notify();
+                });
+            }),
+        cx,
+    )
 }
 
-pub fn render_about_row(label: &'static str, value: &'static str, cx: &App) -> impl IntoElement {
-    div()
-        .flex()
-        .items_center()
-        .gap_4()
-        .child(
-            div()
-                .w(px(80.))
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(label),
-        )
-        .child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().foreground)
-                .child(value),
-        )
+/// 渲染只读信息行（关于页）
+pub fn render_about_row(
+    label: impl Into<SharedString>,
+    value: impl Into<SharedString>,
+    cx: &App,
+) -> impl IntoElement {
+    let p = palette(cx);
+    render_row(
+        label,
+        None,
+        div()
+            .text_size(px(13.))
+            .text_color(p.text_muted)
+            .child(value.into()),
+        cx,
+    )
 }
 
 /// 创建带初始值和占位符的文本输入框（`masked` 为 true 时按密码显示）

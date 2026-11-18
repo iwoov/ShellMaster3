@@ -1,10 +1,15 @@
 // 属性对话框状态管理
 
+use gpui::{Context, FocusHandle, Window};
 use tokio_util::sync::CancellationToken;
 
+use crate::components::common::dialog::keep_focus_in_dialog;
+use crate::i18n;
+use crate::models::settings::Language;
 use crate::models::sftp::FileEntry;
 
 /// 属性对话框状态
+#[derive(Default)]
 pub struct PropertiesDialogState {
     /// 是否打开
     pub is_open: bool,
@@ -20,20 +25,11 @@ pub struct PropertiesDialogState {
     pub tab_id: String,
     /// 取消计算的 token
     cancellation_token: Option<CancellationToken>,
-}
-
-impl Default for PropertiesDialogState {
-    fn default() -> Self {
-        Self {
-            is_open: false,
-            entry: None,
-            symlink_target: None,
-            folder_size: None,
-            is_calculating_size: false,
-            tab_id: String::new(),
-            cancellation_token: None,
-        }
-    }
+    /// 界面语言，由调用方在每次渲染前传入
+    pub lang: Language,
+    pub focus_handle: Option<FocusHandle>,
+    /// 打开后第一次渲染时聚焦弹窗（Esc 才能关闭）
+    focus_pending: bool,
 }
 
 impl PropertiesDialogState {
@@ -48,6 +44,26 @@ impl PropertiesDialogState {
         self.folder_size = None;
         self.is_calculating_size = false;
         self.tab_id = tab_id;
+        self.focus_pending = true;
+    }
+
+    /// 渲染前调用：记下界面语言，打开后第一次渲染时聚焦弹窗，之后保证焦点留在弹窗里
+    pub fn prepare(&mut self, lang: &Language, window: &mut Window, cx: &mut Context<Self>) {
+        self.lang = lang.clone();
+        let focus_handle = self
+            .focus_handle
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        if self.focus_pending {
+            self.focus_pending = false;
+            focus_handle.focus(window);
+        }
+        keep_focus_in_dialog(
+            cx.weak_entity(),
+            |s: &Self| s.is_open,
+            &focus_handle,
+            window,
+        );
     }
 
     /// 关闭对话框
@@ -61,6 +77,7 @@ impl PropertiesDialogState {
         self.folder_size = None;
         self.is_calculating_size = false;
         self.tab_id.clear();
+        self.focus_pending = false;
     }
 
     /// 取消计算
@@ -94,7 +111,7 @@ impl PropertiesDialogState {
     }
 
     /// 格式化文件夹大小
-    pub fn format_folder_size(&self) -> String {
+    pub fn format_folder_size(&self, lang: &Language) -> String {
         if let Some(size) = self.folder_size {
             let size_f = size as f64;
             if size_f >= 1_073_741_824.0 {
@@ -107,7 +124,7 @@ impl PropertiesDialogState {
                 format!("{} B", size)
             }
         } else if self.is_calculating_size {
-            "计算中...".to_string()
+            i18n::t(lang, "sftp.properties.calculating").to_string()
         } else {
             "-".to_string()
         }

@@ -50,6 +50,14 @@ pub fn init(cx: &mut App) {
     dark_config.colors.secondary_hover = Some("#1E2B3A".into());
     dark_config.colors.secondary_foreground = Some("#E7EDF5".into());
 
+    // 组件库控件：输入框聚焦边框、开关关闭态、删除等危险操作按钮（默认值是灰色系，与主题不搭）
+    dark_config.colors.ring = Some("#4C8DFF".into());
+    dark_config.colors.switch = Some("#2B3747".into());
+    dark_config.colors.danger = Some("#E5484D".into());
+    dark_config.colors.danger_hover = Some("#D13F44".into());
+    dark_config.colors.danger_active = Some("#B8373B".into());
+    dark_config.colors.danger_foreground = Some("#FFFFFF".into());
+
     // ================== Light Mode Customization ==================
     light_config.colors.background = Some("#F4F7FA".into());
     light_config.colors.foreground = Some("#172033".into());
@@ -78,6 +86,13 @@ pub fn init(cx: &mut App) {
     light_config.colors.secondary_hover = Some("#E2EAF3".into());
     light_config.colors.secondary_foreground = Some("#172033".into());
 
+    light_config.colors.ring = Some("#2867D8".into());
+    light_config.colors.switch = Some("#CBD5E1".into());
+    light_config.colors.danger = Some("#DC2626".into());
+    light_config.colors.danger_hover = Some("#C42020".into());
+    light_config.colors.danger_active = Some("#A91B1B".into());
+    light_config.colors.danger_foreground = Some("#FFFFFF".into());
+
     // 更新全局主题
     let theme = Theme::global_mut(cx);
     theme.dark_theme = Rc::new(dark_config);
@@ -99,11 +114,6 @@ pub fn background_color(cx: &App) -> Hsla {
     cx.theme().background
 }
 
-/// 获取适配深色模式的弹窗/卡片背景色
-pub fn popover_color(cx: &App) -> Hsla {
-    cx.theme().popover
-}
-
 /// 获取适配深色模式的侧边栏背景色
 pub fn sidebar_color(cx: &App) -> Hsla {
     cx.theme().sidebar
@@ -114,9 +124,9 @@ pub fn titlebar_color(cx: &App) -> Hsla {
     cx.theme().title_bar
 }
 
-/// 主页使用的界面色板。
+/// 主页和弹窗使用的界面色板。
 ///
-/// gpui-component 的主题只有一档 hover / muted，主页的列表、卡片需要更细的层次
+/// gpui-component 的主题只有一档 hover / muted，列表、卡片、表单需要更细的层次
 /// （行悬停、选中、内嵌底色、三档文字），这里按深浅模式补齐，其余直接取主题色。
 #[derive(Clone, Copy)]
 pub struct Palette {
@@ -148,6 +158,14 @@ pub struct Palette {
     pub primary_hover: Hsla,
     pub primary_foreground: Hsla,
     pub success: Hsla,
+    pub warning: Hsla,
+    pub danger: Hsla,
+    pub danger_hover: Hsla,
+    /// 弹窗遮罩
+    pub overlay: Hsla,
+    /// 输入框、下拉框、分段切换的底色和边框（与组件库输入框一致）
+    pub field: Hsla,
+    pub field_border: Hsla,
     pub is_dark: bool,
 }
 
@@ -176,6 +194,16 @@ pub fn palette(cx: &App) -> Palette {
         primary_hover: theme.primary_hover,
         primary_foreground: theme.primary_foreground,
         success: pick(0x22C55E, 0x16A34A),
+        warning: pick(0xF59E0B, 0xB45309),
+        danger: theme.danger,
+        danger_hover: theme.danger_hover,
+        overlay: if is_dark {
+            gpui::black().opacity(0.55)
+        } else {
+            Hsla::from(rgb(0x0F172A)).opacity(0.3)
+        },
+        field: theme.background,
+        field_border: theme.input,
         is_dark,
     }
 }

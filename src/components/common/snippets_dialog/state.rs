@@ -1,8 +1,9 @@
 // Snippets 弹窗状态管理
 
-use gpui::{App, AppContext, Context, Entity, Window};
+use gpui::{App, AppContext, Context, Entity, FocusHandle, Window};
 use gpui_component::input::InputState;
 
+use crate::components::common::dialog::keep_focus_in_dialog;
 use crate::i18n;
 use crate::models::settings::Language;
 use crate::models::{SnippetCommand, SnippetGroup};
@@ -17,6 +18,29 @@ pub enum SnippetsDialogMode {
     EditGroup,
     AddCommand,
     EditCommand,
+}
+
+/// 需要校验的字段
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnippetField {
+    Name,
+    Command,
+}
+
+/// 校验分组或命令：名称必填；命令弹窗里命令内容也必填。
+/// 返回出错的字段和提示文字的 i18n key，按表单中的顺序排列。
+pub fn validate_snippet(name: &str, command: Option<&str>) -> Vec<(SnippetField, &'static str)> {
+    let mut errors = Vec::new();
+    if name.trim().is_empty() {
+        errors.push((SnippetField::Name, "snippets.dialog.error.name_required"));
+    }
+    if command.is_some_and(|command| command.trim().is_empty()) {
+        errors.push((
+            SnippetField::Command,
+            "snippets.dialog.error.command_required",
+        ));
+    }
+    errors
 }
 
 /// Snippets 弹窗状态
@@ -35,6 +59,15 @@ pub struct SnippetsDialogState {
     pub current_parent_id: Option<String>,
     /// 需要刷新页面
     pub needs_page_refresh: bool,
+    /// 界面语言，由调用方在每次渲染前传入
+    pub lang: Language,
+    /// 点过保存且校验没通过之后为 true：此后实时显示校验结果
+    show_errors: bool,
+    /// 写入文件失败时的提示
+    pub save_error: Option<String>,
+    pub focus_handle: Option<FocusHandle>,
+    /// 打开后第一次渲染时聚焦名称输入框
+    focus_pending: bool,
     /// 待设置的初始值（用于编辑模式）
     pending_name_value: Option<String>,
     pending_command_value: Option<String>,
@@ -50,6 +83,11 @@ impl Default for SnippetsDialogState {
             command_input: None,
             current_parent_id: None,
             needs_page_refresh: false,
+            lang: Language::default(),
+            show_errors: false,
+            save_error: None,
+            focus_handle: None,
+            focus_pending: false,
             pending_name_value: None,
             pending_command_value: None,
         }
@@ -75,32 +113,30 @@ impl SnippetsDialogState {
         self.current_parent_id = parent_id;
     }
 
-    /// 确保输入框已创建（在 Window 上下文中调用）
-    pub fn ensure_inputs_created(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let lang = storage::load_settings()
-            .map(|s| s.theme.language)
-            .unwrap_or(Language::Chinese);
-
+    /// 确保输入框已创建（在 Window 上下文中调用），并处理打开时的焦点
+    pub fn ensure_inputs_created(
+        &mut self,
+        lang: &Language,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.lang = lang.clone();
         let is_group = self.is_group_dialog();
-        let name_placeholder = if is_group {
-            i18n::t(&lang, "snippets.dialog.enter_name")
-        } else {
-            i18n::t(&lang, "snippets.dialog.enter_name")
-        };
 
         // 创建名称输入框
         if self.name_input.is_none() {
+            let placeholder = i18n::t(lang, "snippets.dialog.enter_name");
             self.name_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder(name_placeholder)));
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
 
-        // 创建命令输入框（仅命令弹窗，多行模式）
+        // 创建命令输入框（仅命令弹窗，多行，随内容增高）
         if !is_group && self.command_input.is_none() {
-            let cmd_placeholder = i18n::t(&lang, "snippets.dialog.enter_command");
+            let placeholder = i18n::t(lang, "snippets.dialog.enter_command");
             self.command_input = Some(cx.new(|cx| {
                 InputState::new(window, cx)
-                    .placeholder(cmd_placeholder)
-                    .auto_grow(2, 6) // 2-6 行自动增长
+                    .placeholder(placeholder)
+                    .auto_grow(3, 8)
             }));
         }
 
@@ -115,6 +151,20 @@ impl SnippetsDialogState {
                 input.update(cx, |s, cx| s.set_value(cmd, window, cx));
             }
         }
+
+        // 打开时聚焦名称输入框；之后保证焦点留在弹窗里，Esc 和回车始终有效
+        let focus_handle = self
+            .focus_handle
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        if self.focus_pending {
+            self.focus_pending = false;
+            match &self.name_input {
+                Some(input) => input.update(cx, |input, cx| input.focus(window, cx)),
+                None => focus_handle.focus(window),
+            }
+        }
+        keep_focus_in_dialog(cx.weak_entity(), Self::is_open, &focus_handle, window);
     }
 
     /// 打开添加组弹窗
@@ -158,12 +208,15 @@ impl SnippetsDialogState {
         self.pending_command_value = Some(command.command.clone());
     }
 
-    /// 重置输入框状态
+    /// 重置输入框和提示（打开时调用）
     fn reset_inputs(&mut self) {
         self.name_input = None;
         self.command_input = None;
         self.pending_name_value = None;
         self.pending_command_value = None;
+        self.show_errors = false;
+        self.save_error = None;
+        self.focus_pending = true;
     }
 
     /// 关闭弹窗
@@ -172,6 +225,7 @@ impl SnippetsDialogState {
         self.editing_group = None;
         self.editing_command = None;
         self.reset_inputs();
+        self.focus_pending = false;
     }
 
     /// 获取输入框的文本值
@@ -182,36 +236,104 @@ impl SnippetsDialogState {
             .unwrap_or_default()
     }
 
-    /// 保存组
-    pub fn save_group(&mut self, cx: &App) -> bool {
-        if let Some(mut group) = self.editing_group.take() {
-            group.name = Self::get_input_text(&self.name_input, cx);
-            let result = if self.dialog_mode == SnippetsDialogMode::AddGroup {
-                storage::add_snippet_group(group)
-            } else {
-                storage::update_snippet_group(group)
-            };
-            self.needs_page_refresh = result.is_ok();
-            self.close();
-            return result.is_ok();
-        }
-        false
+    /// 当前表单的校验结果
+    fn errors(&self, cx: &App) -> Vec<(SnippetField, &'static str)> {
+        let name = Self::get_input_text(&self.name_input, cx);
+        let command =
+            (!self.is_group_dialog()).then(|| Self::get_input_text(&self.command_input, cx));
+        validate_snippet(&name, command.as_deref())
     }
 
-    /// 保存命令
-    pub fn save_command(&mut self, cx: &App) -> bool {
-        if let Some(mut cmd) = self.editing_command.take() {
-            cmd.name = Self::get_input_text(&self.name_input, cx);
-            cmd.command = Self::get_input_text(&self.command_input, cx);
-            let result = if self.dialog_mode == SnippetsDialogMode::AddCommand {
-                storage::add_snippet_command(cmd)
-            } else {
-                storage::update_snippet_command(cmd)
-            };
-            self.needs_page_refresh = result.is_ok();
-            self.close();
-            return result.is_ok();
+    /// 当前要显示的校验错误（还没点过保存时不显示）
+    pub fn visible_errors(&self, cx: &App) -> Vec<(SnippetField, &'static str)> {
+        if self.show_errors {
+            self.errors(cx)
+        } else {
+            Vec::new()
         }
-        false
+    }
+
+    /// 校验并保存。校验不通过时聚焦出错的输入框；写入失败时显示错误，弹窗不关闭。
+    pub fn try_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let errors = self.errors(cx);
+        if let Some(&(field, _)) = errors.first() {
+            self.show_errors = true;
+            self.save_error = None;
+            let input = match field {
+                SnippetField::Name => &self.name_input,
+                SnippetField::Command => &self.command_input,
+            };
+            if let Some(input) = input {
+                input.update(cx, |input, cx| input.focus(window, cx));
+            }
+            cx.notify();
+            return;
+        }
+
+        let name = Self::get_input_text(&self.name_input, cx)
+            .trim()
+            .to_string();
+        let result = if self.is_group_dialog() {
+            self.editing_group.clone().map(|mut group| {
+                group.name = name;
+                if self.dialog_mode == SnippetsDialogMode::AddGroup {
+                    storage::add_snippet_group(group)
+                } else {
+                    storage::update_snippet_group(group)
+                }
+            })
+        } else {
+            let command = Self::get_input_text(&self.command_input, cx);
+            self.editing_command.clone().map(|mut cmd| {
+                cmd.name = name;
+                cmd.command = command;
+                if self.dialog_mode == SnippetsDialogMode::AddCommand {
+                    storage::add_snippet_command(cmd)
+                } else {
+                    storage::update_snippet_command(cmd)
+                }
+            })
+        };
+
+        match result {
+            Some(Err(err)) => {
+                self.save_error = Some(format!(
+                    "{}{:#}",
+                    i18n::t(&self.lang, "snippets.dialog.save_failed"),
+                    err
+                ));
+            }
+            saved => {
+                self.needs_page_refresh = saved.is_some();
+                self.close();
+            }
+        }
+        cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_snippet, SnippetField};
+
+    fn fields(name: &str, command: Option<&str>) -> Vec<SnippetField> {
+        validate_snippet(name, command)
+            .into_iter()
+            .map(|(field, _)| field)
+            .collect()
+    }
+
+    #[test]
+    fn names_and_commands_are_required() {
+        // 分组只需要名称
+        assert_eq!(fields("运维", None), vec![]);
+        assert_eq!(fields("  ", None), vec![SnippetField::Name]);
+        // 命令还需要命令内容
+        assert_eq!(fields("磁盘", Some("df -h")), vec![]);
+        assert_eq!(fields("磁盘", Some(" \n ")), vec![SnippetField::Command]);
+        assert_eq!(
+            fields("", Some("")),
+            vec![SnippetField::Name, SnippetField::Command]
+        );
     }
 }

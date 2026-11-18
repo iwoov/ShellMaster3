@@ -1,178 +1,151 @@
-// Snippets 弹窗渲染组件
+// Snippets 弹窗渲染组件：新建 / 编辑分组和命令
 
 use gpui::*;
-use gpui_component::input::Input;
 use gpui_component::ActiveTheme;
 
+use crate::components::common::button::{text_button, ButtonKind};
+use crate::components::common::dialog::{
+    dialog_footer, dialog_header, dialog_panel, DialogOverlay,
+};
+use crate::components::common::input::{field_error, form_field, text_area, text_field};
 use crate::i18n;
-use crate::models::settings::Language;
-use crate::services::storage;
 
-use super::state::{SnippetsDialogMode, SnippetsDialogState};
+use super::state::{SnippetField, SnippetsDialogMode, SnippetsDialogState};
+
+/// 弹窗宽度
+const DIALOG_WIDTH: Pixels = px(460.);
 
 /// 渲染 Snippets 弹窗覆盖层
 pub fn render_snippets_dialog_overlay(
     state: Entity<SnippetsDialogState>,
     cx: &App,
 ) -> impl IntoElement {
-    let lang = storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or(Language::Chinese);
-
+    let p = crate::theme::palette(cx);
     let state_read = state.read(cx);
+    let lang = state_read.lang.clone();
+    let t = |key| i18n::t(&lang, key);
     let is_group_dialog = state_read.is_group_dialog();
-    let dialog_title = match state_read.dialog_mode {
-        SnippetsDialogMode::AddGroup => i18n::t(&lang, "snippets.add_group"),
-        SnippetsDialogMode::EditGroup => i18n::t(&lang, "snippets.dialog.edit_group"),
-        SnippetsDialogMode::AddCommand => i18n::t(&lang, "snippets.add_command"),
-        SnippetsDialogMode::EditCommand => i18n::t(&lang, "snippets.dialog.edit_command"),
-        _ => "",
+    let title = match state_read.dialog_mode {
+        SnippetsDialogMode::AddGroup => t("snippets.add_group"),
+        SnippetsDialogMode::EditGroup => t("snippets.dialog.edit_group"),
+        SnippetsDialogMode::AddCommand => t("snippets.add_command"),
+        SnippetsDialogMode::EditCommand => t("snippets.dialog.edit_command"),
+        SnippetsDialogMode::Closed => "",
     };
 
-    // 获取输入框 Entity
-    let name_input = state_read.name_input.clone();
-    let command_input = state_read.command_input.clone();
+    let errors = state_read.visible_errors(cx);
+    let error_for = |field| {
+        errors
+            .iter()
+            .find(|(error_field, _)| *error_field == field)
+            .map(|(_, key)| SharedString::from(t(key)))
+    };
+    let name_error = error_for(SnippetField::Name);
+    let command_error = error_for(SnippetField::Command);
 
-    let state_cancel = state.clone();
-    let state_save = state;
+    // 名称
+    let name_field = form_field(
+        if is_group_dialog {
+            t("snippets.dialog.group_name")
+        } else {
+            t("snippets.dialog.command_name")
+        },
+        match &state_read.name_input {
+            Some(input) => {
+                field_error(text_field(input), name_error.is_some(), &p).into_any_element()
+            }
+            None => div().into_any_element(),
+        },
+        name_error,
+        &p,
+    );
 
-    let bg_color = cx.theme().popover;
-    let border_color = cx.theme().border;
-    let foreground = cx.theme().foreground;
-    let muted_foreground = cx.theme().muted_foreground;
+    // 命令内容（等宽字体，多行）
+    let mono_font = cx.theme().mono_font_family.clone();
+    let command_field = (!is_group_dialog).then(|| {
+        form_field(
+            t("snippets.dialog.command_content"),
+            match &state_read.command_input {
+                Some(input) => field_error(text_area(input), command_error.is_some(), &p)
+                    .font_family(mono_font)
+                    .into_any_element(),
+                None => div().into_any_element(),
+            },
+            command_error,
+            &p,
+        )
+    });
 
-    div()
-        .id("snippets-dialog-overlay")
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .bg(gpui::black().opacity(0.5))
-        .flex()
-        .items_center()
-        .justify_center()
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            cx.stop_propagation();
-        })
+    let state_for_close = state.clone();
+    let state_for_cancel = state.clone();
+    let state_for_save = state.clone();
+    let state_for_escape = state.clone();
+    let state_for_enter = state.clone();
+
+    let panel = dialog_panel(&p)
+        .w(DIALOG_WIDTH)
+        .child(dialog_header(
+            title,
+            None,
+            t("common.close"),
+            move |_, cx| {
+                state_for_close.update(cx, |s, cx| {
+                    s.close();
+                    cx.notify();
+                });
+            },
+            &p,
+        ))
         .child(
             div()
-                .w(px(420.))
-                .bg(bg_color)
-                .rounded_lg()
-                .border_1()
-                .border_color(border_color)
-                .p_6()
+                .px(px(20.))
+                .pt(px(12.))
                 .flex()
                 .flex_col()
-                .gap_4()
-                // 标题
-                .child(
-                    div()
-                        .text_lg()
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(foreground)
-                        .child(dialog_title),
-                )
-                // 名称输入
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(div().text_sm().text_color(muted_foreground).child(
-                            if is_group_dialog {
-                                i18n::t(&lang, "snippets.dialog.group_name")
-                            } else {
-                                i18n::t(&lang, "snippets.dialog.command_name")
-                            },
-                        ))
-                        .child(if let Some(input) = &name_input {
-                            Input::new(input).into_any_element()
-                        } else {
-                            div()
-                                .text_sm()
-                                .text_color(muted_foreground)
-                                .child(i18n::t(&lang, "common.loading"))
-                                .into_any_element()
-                        }),
-                )
-                // 命令内容输入 (仅命令弹窗)
-                .children(if !is_group_dialog {
-                    Some(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(muted_foreground)
-                                    .child(i18n::t(&lang, "snippets.dialog.command_content")),
-                            )
-                            .child(if let Some(input) = &command_input {
-                                Input::new(input).into_any_element()
-                            } else {
-                                div()
-                                    .text_sm()
-                                    .text_color(muted_foreground)
-                                    .child(i18n::t(&lang, "common.loading"))
-                                    .into_any_element()
-                            }),
-                    )
-                } else {
-                    None
-                })
-                // 底部按钮
-                .child(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap_3()
-                        .pt_2()
-                        .child(
-                            div()
-                                .id("dialog-cancel-btn")
-                                .px_4()
-                                .py_2()
-                                .bg(cx.theme().secondary)
-                                .rounded_md()
-                                .cursor_pointer()
-                                .hover(move |s| s.bg(cx.theme().secondary_hover))
-                                .on_click(move |_, _, cx| {
-                                    state_cancel.update(cx, |s, _| s.close());
-                                })
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(foreground)
-                                        .child(i18n::t(&lang, "common.cancel")),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id("dialog-save-btn")
-                                .px_4()
-                                .py_2()
-                                .bg(cx.theme().primary)
-                                .rounded_md()
-                                .cursor_pointer()
-                                .hover(move |s| s.bg(cx.theme().primary_hover))
-                                .on_click(move |_, _, cx| {
-                                    state_save.update(cx, |s, cx| {
-                                        if s.is_group_dialog() {
-                                            s.save_group(cx);
-                                        } else {
-                                            s.save_command(cx);
-                                        }
-                                    });
-                                })
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().primary_foreground)
-                                        .child(i18n::t(&lang, "common.save")),
-                                ),
-                        ),
-                ),
+                .gap(px(14.))
+                .child(name_field)
+                .children(command_field),
         )
+        .child(
+            dialog_footer(state_read.save_error.clone().map(SharedString::from), &p)
+                .child(
+                    text_button(
+                        "snippets-cancel-btn",
+                        ButtonKind::Secondary,
+                        t("common.cancel"),
+                        &p,
+                    )
+                    .on_click(move |_, _, cx| {
+                        state_for_cancel.update(cx, |s, cx| {
+                            s.close();
+                            cx.notify();
+                        });
+                    }),
+                )
+                .child(
+                    text_button(
+                        "snippets-save-btn",
+                        ButtonKind::Primary,
+                        t("common.save"),
+                        &p,
+                    )
+                    .on_click(move |_, window, cx| {
+                        state_for_save.update(cx, |s, cx| s.try_save(window, cx));
+                    }),
+                ),
+        );
+
+    // 回车保存：名称输入框里按回车会冒泡到这里；多行的命令输入框里回车是换行，不会冒泡
+    DialogOverlay::new()
+        .focus(state_read.focus_handle.as_ref())
+        .on_escape(move |_, cx| {
+            state_for_escape.update(cx, |s, cx| {
+                s.close();
+                cx.notify();
+            });
+        })
+        .on_enter(move |window, cx| {
+            state_for_enter.update(cx, |s, cx| s.try_save(window, cx));
+        })
+        .render("snippets-dialog-overlay", panel, &p)
 }

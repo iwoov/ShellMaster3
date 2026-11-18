@@ -5,7 +5,9 @@ use gpui::*;
 
 use crate::i18n;
 
-use super::super::helpers::{render_number_row, render_section_title, render_switch_row};
+use super::super::helpers::{
+    render_card, render_number_row, render_section_title, render_switch_row,
+};
 use super::super::SettingsDialogState;
 
 /// 渲染监控设置面板
@@ -35,10 +37,7 @@ pub fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> imp
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
+                    render_card(cx)
                         .children(history_retention_input.as_ref().map(|input| {
                             render_number_row(
                                 i18n::t(lang, "settings.monitor.history_retention"),
@@ -67,10 +66,7 @@ pub fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> imp
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    render_card(cx)
                         .child(render_switch_row(
                             "monitor-show-cpu",
                             i18n::t(lang, "settings.monitor.cpu"),
@@ -116,10 +112,7 @@ pub fn render_monitor_panel(state: Entity<SettingsDialogState>, cx: &App) -> imp
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
+                    render_card(cx)
                         .children(cpu_threshold_input.as_ref().map(|input| {
                             render_number_row(
                                 i18n::t(lang, "settings.monitor.cpu_threshold"),

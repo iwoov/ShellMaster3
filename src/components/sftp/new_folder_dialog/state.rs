@@ -1,13 +1,14 @@
 // 新建文件夹对话框状态管理
 
-use gpui::{App, AppContext, Context, Entity, Window};
+use gpui::{App, AppContext, Context, Entity, FocusHandle, Window};
 use gpui_component::input::InputState;
 
+use crate::components::common::dialog::keep_focus_in_dialog;
 use crate::i18n;
 use crate::models::settings::Language;
-use crate::services::storage;
 
 /// 新建文件夹对话框状态
+#[derive(Default)]
 pub struct NewFolderDialogState {
     /// 是否打开
     pub is_open: bool,
@@ -21,19 +22,11 @@ pub struct NewFolderDialogState {
     pub is_creating: bool,
     /// 关联的 tab_id
     pub tab_id: String,
-}
-
-impl Default for NewFolderDialogState {
-    fn default() -> Self {
-        Self {
-            is_open: false,
-            current_path: String::new(),
-            name_input: None,
-            error_message: None,
-            is_creating: false,
-            tab_id: String::new(),
-        }
-    }
+    /// 界面语言，由调用方在每次渲染前传入
+    pub lang: Language,
+    pub focus_handle: Option<FocusHandle>,
+    /// 打开后第一次渲染时聚焦输入框
+    focus_pending: bool,
 }
 
 impl NewFolderDialogState {
@@ -46,6 +39,7 @@ impl NewFolderDialogState {
         self.is_creating = false;
         // 重置输入框（将在渲染时创建）
         self.name_input = None;
+        self.focus_pending = true;
     }
 
     /// 关闭对话框
@@ -56,18 +50,41 @@ impl NewFolderDialogState {
         self.name_input = None;
         self.error_message = None;
         self.is_creating = false;
+        self.focus_pending = false;
     }
 
-    /// 确保输入框已创建
-    pub fn ensure_input_created(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// 确保输入框已创建，并处理打开时的焦点
+    pub fn ensure_input_created(
+        &mut self,
+        lang: &Language,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.lang = lang.clone();
         if self.name_input.is_none() {
-            let lang = storage::load_settings()
-                .map(|s| s.theme.language)
-                .unwrap_or(Language::Chinese);
-            let placeholder = i18n::t(&lang, "sftp.new_folder.placeholder");
+            let placeholder = i18n::t(lang, "sftp.new_folder.placeholder");
             self.name_input =
                 Some(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         }
+
+        // 打开时聚焦输入框；之后保证焦点留在弹窗里，Esc 和回车始终有效
+        let focus_handle = self
+            .focus_handle
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        if self.focus_pending {
+            self.focus_pending = false;
+            match &self.name_input {
+                Some(input) => input.update(cx, |input, cx| input.focus(window, cx)),
+                None => focus_handle.focus(window),
+            }
+        }
+        keep_focus_in_dialog(
+            cx.weak_entity(),
+            |s: &Self| s.is_open,
+            &focus_handle,
+            window,
+        );
     }
 
     /// 获取输入的文件夹名称
@@ -81,18 +98,17 @@ impl NewFolderDialogState {
     /// 验证文件夹名称
     pub fn validate_name(&mut self, cx: &App) -> bool {
         let name = self.get_folder_name(cx);
-        let lang = storage::load_settings()
-            .map(|s| s.theme.language)
-            .unwrap_or(Language::Chinese);
 
         if name.is_empty() {
-            self.error_message = Some(i18n::t(&lang, "sftp.new_folder.error_empty").to_string());
+            self.error_message =
+                Some(i18n::t(&self.lang, "sftp.new_folder.error_empty").to_string());
             return false;
         }
 
         // 检查非法字符
         if name.contains('/') || name.contains('\0') {
-            self.error_message = Some(i18n::t(&lang, "sftp.new_folder.error_invalid").to_string());
+            self.error_message =
+                Some(i18n::t(&self.lang, "sftp.new_folder.error_invalid").to_string());
             return false;
         }
 

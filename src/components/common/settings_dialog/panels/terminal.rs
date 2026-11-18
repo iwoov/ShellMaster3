@@ -2,12 +2,9 @@
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::button::Button;
-use gpui_component::menu::DropdownMenu;
-use gpui_component::ActiveTheme;
+use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 
-use crate::components::common::icon::render_icon;
-use crate::constants::icons;
+use crate::components::common::input::select_trigger;
 use crate::i18n;
 use crate::models::settings::{
     BellStyle, CursorStyle, FontWeight as TerminalFontWeight, Osc52Policy,
@@ -15,9 +12,9 @@ use crate::models::settings::{
 use crate::terminal::{palette_for, rgb_to_hsla};
 
 use super::super::helpers::{
-    render_color_picker_row, render_font_input_row, render_input_row, render_number_row,
-    render_section_title, render_switch_row, render_theme_select_row, TERMINAL_FONTS,
-    TERMINAL_THEMES,
+    render_block_row, render_card, render_color_picker_row, render_font_input_row,
+    render_input_row, render_number_row, render_row, render_section_title, render_switch_row,
+    render_theme_select_row, CONTROL_WIDTH, TERMINAL_FONTS, TERMINAL_THEMES,
 };
 use super::super::SettingsDialogState;
 use super::terminal_preview::render_terminal_preview;
@@ -72,10 +69,7 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
+                    render_card(cx)
                         .children(font_family_input.as_ref().map(|input| {
                             render_font_input_row(
                                 cx,
@@ -134,10 +128,7 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
+                    render_card(cx)
                         .child(render_theme_select_row(
                             i18n::t(lang, "settings.terminal.theme"),
                             &terminal.color_scheme,
@@ -146,7 +137,10 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
                             cx,
                         ))
                         // 模拟终端预览：实时反映下面的颜色、上面的字体，以及显示区的光标样式
-                        .child(render_terminal_preview(state_read, cx))
+                        .child(render_block_row(
+                            render_terminal_preview(state_read, cx),
+                            cx,
+                        ))
                         .children(foreground_picker.as_ref().map(|picker| {
                             render_color_picker_row(
                                 i18n::t(lang, "settings.terminal.foreground_color"),
@@ -219,10 +213,7 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
+                    render_card(cx)
                         // 光标样式选择器
                         .child(render_cursor_style_row(
                             i18n::t(lang, "settings.terminal.cursor_style"),
@@ -283,64 +274,67 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
                     i18n::t(lang, "settings.terminal.behavior"),
                     cx,
                 ))
-                .child(render_switch_row(
-                    "terminal-copy-on-select",
-                    i18n::t(lang, "settings.terminal.copy_on_select"),
-                    terminal.copy_on_select,
-                    state.clone(),
-                    |s, v| s.settings.terminal.copy_on_select = v,
-                    cx,
-                ))
-                .child(render_switch_row(
-                    "terminal-right-click-paste",
-                    i18n::t(lang, "settings.terminal.right_click_paste"),
-                    terminal.right_click_paste,
-                    state.clone(),
-                    |s, v| s.settings.terminal.right_click_paste = v,
-                    cx,
-                ))
-                .child(render_switch_row(
-                    "terminal-trim-copy",
-                    i18n::t(lang, "settings.terminal.trim_trailing_whitespace"),
-                    terminal.trim_trailing_whitespace,
-                    state.clone(),
-                    |s, v| s.settings.terminal.trim_trailing_whitespace = v,
-                    cx,
-                ))
-                .child(render_switch_row(
-                    "terminal-scroll-output",
-                    i18n::t(lang, "settings.terminal.scroll_on_output"),
-                    terminal.scroll_on_output,
-                    state.clone(),
-                    |s, v| s.settings.terminal.scroll_on_output = v,
-                    cx,
-                ))
-                .children(scroll_multiplier_input.as_ref().map(|input| {
-                    render_number_row(
-                        i18n::t(lang, "settings.terminal.scroll_multiplier"),
-                        input,
-                        cx,
-                    )
-                }))
-                .children(word_separators_input.as_ref().map(|input| {
-                    render_input_row(
-                        i18n::t(lang, "settings.terminal.word_separators"),
-                        input,
-                        cx,
-                    )
-                }))
-                .child(render_choice_row(
-                    "terminal-bell-style",
-                    i18n::t(lang, "settings.terminal.bell_style"),
-                    match &terminal.bell_style {
-                        BellStyle::None => i18n::t(lang, "settings.terminal.bell.none"),
-                        BellStyle::Visual => i18n::t(lang, "settings.terminal.bell.visual"),
-                        BellStyle::Sound => i18n::t(lang, "settings.terminal.bell.sound"),
-                    },
-                    ChoiceKind::Bell,
-                    state.clone(),
-                    cx,
-                )),
+                .child(
+                    render_card(cx)
+                        .child(render_switch_row(
+                            "terminal-copy-on-select",
+                            i18n::t(lang, "settings.terminal.copy_on_select"),
+                            terminal.copy_on_select,
+                            state.clone(),
+                            |s, v| s.settings.terminal.copy_on_select = v,
+                            cx,
+                        ))
+                        .child(render_switch_row(
+                            "terminal-right-click-paste",
+                            i18n::t(lang, "settings.terminal.right_click_paste"),
+                            terminal.right_click_paste,
+                            state.clone(),
+                            |s, v| s.settings.terminal.right_click_paste = v,
+                            cx,
+                        ))
+                        .child(render_switch_row(
+                            "terminal-trim-copy",
+                            i18n::t(lang, "settings.terminal.trim_trailing_whitespace"),
+                            terminal.trim_trailing_whitespace,
+                            state.clone(),
+                            |s, v| s.settings.terminal.trim_trailing_whitespace = v,
+                            cx,
+                        ))
+                        .child(render_switch_row(
+                            "terminal-scroll-output",
+                            i18n::t(lang, "settings.terminal.scroll_on_output"),
+                            terminal.scroll_on_output,
+                            state.clone(),
+                            |s, v| s.settings.terminal.scroll_on_output = v,
+                            cx,
+                        ))
+                        .children(scroll_multiplier_input.as_ref().map(|input| {
+                            render_number_row(
+                                i18n::t(lang, "settings.terminal.scroll_multiplier"),
+                                input,
+                                cx,
+                            )
+                        }))
+                        .children(word_separators_input.as_ref().map(|input| {
+                            render_input_row(
+                                i18n::t(lang, "settings.terminal.word_separators"),
+                                input,
+                                cx,
+                            )
+                        }))
+                        .child(render_choice_row(
+                            "terminal-bell-style",
+                            i18n::t(lang, "settings.terminal.bell_style"),
+                            match &terminal.bell_style {
+                                BellStyle::None => i18n::t(lang, "settings.terminal.bell.none"),
+                                BellStyle::Visual => i18n::t(lang, "settings.terminal.bell.visual"),
+                                BellStyle::Sound => i18n::t(lang, "settings.terminal.bell.sound"),
+                            },
+                            ChoiceKind::Bell,
+                            state.clone(),
+                            cx,
+                        )),
+                ),
         )
         // 安全与兼容性
         .child(
@@ -352,31 +346,48 @@ pub fn render_terminal_panel(state: Entity<SettingsDialogState>, cx: &App) -> im
                     i18n::t(lang, "settings.terminal.security_compatibility"),
                     cx,
                 ))
-                .child(render_choice_row(
-                    "terminal-osc52-policy",
-                    i18n::t(lang, "settings.terminal.osc52_policy"),
-                    match &terminal.osc52_policy {
-                        Osc52Policy::Disabled => i18n::t(lang, "settings.terminal.osc52.disabled"),
-                        Osc52Policy::WriteOnly => {
-                            i18n::t(lang, "settings.terminal.osc52.write_only")
-                        }
-                        Osc52Policy::ReadWrite => {
-                            i18n::t(lang, "settings.terminal.osc52.read_write")
-                        }
-                    },
-                    ChoiceKind::Osc52,
-                    state.clone(),
-                    cx,
-                ))
-                .children(term_type_input.as_ref().map(|input| {
-                    render_input_row(i18n::t(lang, "settings.terminal.term_type"), input, cx)
-                }))
-                .children(default_shell_input.as_ref().map(|input| {
-                    render_input_row(i18n::t(lang, "settings.terminal.default_shell"), input, cx)
-                }))
-                .children(shell_args_input.as_ref().map(|input| {
-                    render_input_row(i18n::t(lang, "settings.terminal.shell_args"), input, cx)
-                })),
+                .child(
+                    render_card(cx)
+                        .child(render_choice_row(
+                            "terminal-osc52-policy",
+                            i18n::t(lang, "settings.terminal.osc52_policy"),
+                            match &terminal.osc52_policy {
+                                Osc52Policy::Disabled => {
+                                    i18n::t(lang, "settings.terminal.osc52.disabled")
+                                }
+                                Osc52Policy::WriteOnly => {
+                                    i18n::t(lang, "settings.terminal.osc52.write_only")
+                                }
+                                Osc52Policy::ReadWrite => {
+                                    i18n::t(lang, "settings.terminal.osc52.read_write")
+                                }
+                            },
+                            ChoiceKind::Osc52,
+                            state.clone(),
+                            cx,
+                        ))
+                        .children(term_type_input.as_ref().map(|input| {
+                            render_input_row(
+                                i18n::t(lang, "settings.terminal.term_type"),
+                                input,
+                                cx,
+                            )
+                        }))
+                        .children(default_shell_input.as_ref().map(|input| {
+                            render_input_row(
+                                i18n::t(lang, "settings.terminal.default_shell"),
+                                input,
+                                cx,
+                            )
+                        }))
+                        .children(shell_args_input.as_ref().map(|input| {
+                            render_input_row(
+                                i18n::t(lang, "settings.terminal.shell_args"),
+                                input,
+                                cx,
+                            )
+                        })),
+                ),
         )
 }
 
@@ -411,83 +422,37 @@ fn render_cursor_style_row(
     state: Entity<SettingsDialogState>,
     cx: &App,
 ) -> impl IntoElement {
-    use gpui::Corner;
-    use gpui_component::menu::PopupMenuItem;
-
-    let state_for_block = state.clone();
-    let state_for_bar = state.clone();
-    let state_for_underline = state.clone();
-
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_3()
-        .px_4()
-        .bg(cx.theme().muted)
-        .rounded_lg()
-        .mb_2()
-        .child(
-            div()
-                .w(px(120.))
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(label),
-        )
-        .child(
-            Button::new("cursor-style-dropdown")
-                .w(px(200.))
-                .h(px(32.))
-                .outline()
-                .justify_start()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .w(px(180.))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().foreground)
-                                .child(current_label),
-                        )
-                        .child(render_icon(
-                            icons::CHEVRON_DOWN,
-                            cx.theme().muted_foreground.into(),
-                        )),
-                )
-                .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
-                    menu.min_w(px(200.))
-                        .item(PopupMenuItem::new("Block").on_click({
-                            let state = state_for_block.clone();
-                            move |_, _, cx| {
-                                state.update(cx, |s, _| {
-                                    s.settings.terminal.cursor_style = CursorStyle::Block;
-                                    s.mark_changed();
-                                });
-                            }
-                        }))
-                        .item(PopupMenuItem::new("Bar").on_click({
-                            let state = state_for_bar.clone();
-                            move |_, _, cx| {
-                                state.update(cx, |s, _| {
-                                    s.settings.terminal.cursor_style = CursorStyle::Bar;
-                                    s.mark_changed();
-                                });
-                            }
-                        }))
-                        .item(PopupMenuItem::new("Underline").on_click({
-                            let state = state_for_underline.clone();
-                            move |_, _, cx| {
-                                state.update(cx, |s, _| {
-                                    s.settings.terminal.cursor_style = CursorStyle::Underline;
-                                    s.mark_changed();
-                                });
-                            }
-                        }))
-                }),
-        )
+    render_row(
+        label,
+        None,
+        select_trigger("cursor-style-dropdown", current_label, CONTROL_WIDTH, cx)
+            .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, cx| {
+                let lang = state.read(cx).settings.theme.language.clone();
+                [
+                    (CursorStyle::Block, "settings.terminal.cursor_style.block"),
+                    (CursorStyle::Bar, "settings.terminal.cursor_style.bar"),
+                    (
+                        CursorStyle::Underline,
+                        "settings.terminal.cursor_style.underline",
+                    ),
+                ]
+                .into_iter()
+                .fold(menu.min_w(CONTROL_WIDTH), |menu, (style, key)| {
+                    let state = state.clone();
+                    menu.item(
+                        PopupMenuItem::new(i18n::t(&lang, key)).on_click(move |_, _, cx| {
+                            let style = style.clone();
+                            state.update(cx, |s, cx| {
+                                s.settings.terminal.cursor_style = style;
+                                s.mark_changed();
+                                cx.notify();
+                            });
+                        }),
+                    )
+                })
+            }),
+        cx,
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -505,100 +470,71 @@ fn render_choice_row(
     state: Entity<SettingsDialogState>,
     cx: &App,
 ) -> impl IntoElement {
-    use gpui::Corner;
-    use gpui_component::menu::PopupMenuItem;
+    render_row(
+        label,
+        None,
+        select_trigger(id, current_label, CONTROL_WIDTH, cx).dropdown_menu_with_anchor(
+            Corner::TopLeft,
+            move |menu, _, cx| {
+                let lang = state.read(cx).settings.theme.language.clone();
+                let choices: Vec<(&'static str, u8)> = match kind {
+                    ChoiceKind::FontWeight => vec![
+                        (i18n::t(&lang, "settings.terminal.font_weight.normal"), 0),
+                        (i18n::t(&lang, "settings.terminal.font_weight.bold"), 1),
+                    ],
+                    ChoiceKind::Bell => vec![
+                        (i18n::t(&lang, "settings.terminal.bell.none"), 0),
+                        (i18n::t(&lang, "settings.terminal.bell.visual"), 1),
+                        (i18n::t(&lang, "settings.terminal.bell.sound"), 2),
+                    ],
+                    ChoiceKind::Osc52 => vec![
+                        (i18n::t(&lang, "settings.terminal.osc52.disabled"), 0),
+                        (i18n::t(&lang, "settings.terminal.osc52.write_only"), 1),
+                        (i18n::t(&lang, "settings.terminal.osc52.read_write"), 2),
+                    ],
+                };
 
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .py_3()
-        .px_4()
-        .bg(cx.theme().muted)
-        .rounded_lg()
-        .mb_2()
-        .child(
-            div()
-                .w(px(120.))
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(label),
-        )
-        .child(
-            Button::new(id)
-                .w(px(200.))
-                .h(px(32.))
-                .outline()
-                .justify_start()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .w(px(180.))
-                        .child(div().text_sm().child(current_label))
-                        .child(render_icon(
-                            icons::CHEVRON_DOWN,
-                            cx.theme().muted_foreground.into(),
-                        )),
-                )
-                .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, cx| {
-                    let lang = state.read(cx).settings.theme.language.clone();
-                    let choices: Vec<(&'static str, u8)> = match kind {
-                        ChoiceKind::FontWeight => vec![
-                            (i18n::t(&lang, "settings.terminal.font_weight.normal"), 0),
-                            (i18n::t(&lang, "settings.terminal.font_weight.bold"), 1),
-                        ],
-                        ChoiceKind::Bell => vec![
-                            (i18n::t(&lang, "settings.terminal.bell.none"), 0),
-                            (i18n::t(&lang, "settings.terminal.bell.visual"), 1),
-                            (i18n::t(&lang, "settings.terminal.bell.sound"), 2),
-                        ],
-                        ChoiceKind::Osc52 => vec![
-                            (i18n::t(&lang, "settings.terminal.osc52.disabled"), 0),
-                            (i18n::t(&lang, "settings.terminal.osc52.write_only"), 1),
-                            (i18n::t(&lang, "settings.terminal.osc52.read_write"), 2),
-                        ],
-                    };
-
-                    choices
-                        .into_iter()
-                        .fold(menu.min_w(px(200.)), |menu, (choice_label, value)| {
-                            let state = state.clone();
-                            menu.item(PopupMenuItem::new(choice_label).on_click(move |_, _, cx| {
-                                state.update(cx, |settings_state, _| {
-                                    match kind {
-                                        ChoiceKind::FontWeight => {
-                                            settings_state.settings.terminal.font_weight =
-                                                if value == 0 {
-                                                    TerminalFontWeight::Normal
-                                                } else {
-                                                    TerminalFontWeight::Bold
-                                                };
-                                        }
-                                        ChoiceKind::Bell => {
-                                            settings_state.settings.terminal.bell_style =
-                                                match value {
-                                                    1 => BellStyle::Visual,
-                                                    2 => BellStyle::Sound,
-                                                    _ => BellStyle::None,
-                                                };
-                                        }
-                                        ChoiceKind::Osc52 => {
-                                            settings_state.settings.terminal.osc52_policy =
-                                                match value {
-                                                    0 => Osc52Policy::Disabled,
-                                                    2 => Osc52Policy::ReadWrite,
-                                                    _ => Osc52Policy::WriteOnly,
-                                                };
-                                        }
+                choices.into_iter().fold(
+                    menu.min_w(CONTROL_WIDTH),
+                    |menu, (choice_label, value)| {
+                        let state = state.clone();
+                        menu.item(PopupMenuItem::new(choice_label).on_click(move |_, _, cx| {
+                            state.update(cx, |settings_state, cx| {
+                                match kind {
+                                    ChoiceKind::FontWeight => {
+                                        settings_state.settings.terminal.font_weight = if value == 0
+                                        {
+                                            TerminalFontWeight::Normal
+                                        } else {
+                                            TerminalFontWeight::Bold
+                                        };
                                     }
-                                    settings_state.mark_changed();
-                                });
-                            }))
-                        })
-                }),
-        )
+                                    ChoiceKind::Bell => {
+                                        settings_state.settings.terminal.bell_style = match value {
+                                            1 => BellStyle::Visual,
+                                            2 => BellStyle::Sound,
+                                            _ => BellStyle::None,
+                                        };
+                                    }
+                                    ChoiceKind::Osc52 => {
+                                        settings_state.settings.terminal.osc52_policy = match value
+                                        {
+                                            0 => Osc52Policy::Disabled,
+                                            2 => Osc52Policy::ReadWrite,
+                                            _ => Osc52Policy::WriteOnly,
+                                        };
+                                    }
+                                }
+                                settings_state.mark_changed();
+                                cx.notify();
+                            });
+                        }))
+                    },
+                )
+            },
+        ),
+        cx,
+    )
 }
 
 #[cfg(test)]

@@ -239,23 +239,46 @@ pub fn save_servers(config: &ServerConfig) -> Result<()> {
     Ok(())
 }
 
+/// 服务器引用的分组不存在时按同名新建：分组输入框里填的是名称，新分组的 id 就用这个名称
+fn ensure_group(config: &mut ServerConfig, group_id: Option<&str>) {
+    let Some(group_id) = group_id else {
+        return;
+    };
+    if !config.groups.iter().any(|g| g.id == group_id) {
+        config.groups.push(ServerGroupData {
+            id: group_id.to_string(),
+            name: group_id.to_string(),
+            icon_path: "icons/server.svg".to_string(),
+        });
+    }
+}
+
+/// 删除没有服务器的分组
+fn prune_empty_groups(config: &mut ServerConfig) {
+    let used: std::collections::HashSet<&str> = config
+        .servers
+        .iter()
+        .filter_map(|s| s.group_id.as_deref())
+        .collect();
+    config.groups.retain(|g| used.contains(g.id.as_str()));
+}
+
+/// 用新内容替换配置里的同一台服务器并整理分组：
+/// 改到一个新分组时创建它，原分组没有服务器了就删除。找不到这台服务器时返回 false。
+fn replace_server(config: &mut ServerConfig, server: ServerData) -> bool {
+    let Some(pos) = config.servers.iter().position(|s| s.id == server.id) else {
+        return false;
+    };
+    ensure_group(config, server.group_id.as_deref());
+    config.servers[pos] = server;
+    prune_empty_groups(config);
+    true
+}
+
 /// 添加服务器
 pub fn add_server(server: ServerData) -> Result<()> {
     let mut config = load_servers()?;
-
-    // 如果服务器指定了分组名但分组不存在，创建新分组
-    if let Some(group_id) = &server.group_id {
-        let group_exists = config.groups.iter().any(|g| g.id == *group_id);
-        if !group_exists {
-            // 使用 group_id 作为名称创建新分组
-            config.groups.push(ServerGroupData {
-                id: group_id.clone(),
-                name: group_id.clone(),
-                icon_path: "icons/server.svg".to_string(),
-            });
-        }
-    }
-
+    ensure_group(&mut config, server.group_id.as_deref());
     config.servers.push(server);
     save_servers(&config)?;
     Ok(())
@@ -264,11 +287,10 @@ pub fn add_server(server: ServerData) -> Result<()> {
 /// 更新服务器
 pub fn update_server(server: ServerData) -> Result<()> {
     let mut config = load_servers()?;
-    if let Some(pos) = config.servers.iter().position(|s| s.id == server.id) {
-        config.servers[pos] = server;
-        save_servers(&config)?;
+    if !replace_server(&mut config, server) {
+        anyhow::bail!("服务器已不存在，可能已被删除");
     }
-    Ok(())
+    save_servers(&config)
 }
 
 /// 更新服务器的最后连接时间
@@ -297,17 +319,8 @@ pub fn update_server_os(server_id: &str, os_name: &str) -> Result<()> {
 pub fn delete_server(server_id: &str) -> Result<()> {
     let mut config = load_servers()?;
     config.servers.retain(|s| s.id != server_id);
-
     // 自动删除空分组（没有服务器的分组）
-    let groups_with_servers: std::collections::HashSet<String> = config
-        .servers
-        .iter()
-        .filter_map(|s| s.group_id.clone())
-        .collect();
-    config
-        .groups
-        .retain(|g| groups_with_servers.contains(&g.id));
-
+    prune_empty_groups(&mut config);
     save_servers(&config)?;
     Ok(())
 }
@@ -594,5 +607,59 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         assert_eq!(mode(&target), 0o600);
         fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    fn server(id: &str, group_id: Option<&str>) -> ServerData {
+        ServerData {
+            id: id.to_string(),
+            group_id: group_id.map(str::to_string),
+            ..ServerData::default()
+        }
+    }
+
+    fn group(id: &str, name: &str) -> ServerGroupData {
+        ServerGroupData {
+            id: id.to_string(),
+            name: name.to_string(),
+            icon_path: "icons/server.svg".to_string(),
+        }
+    }
+
+    fn group_ids(config: &ServerConfig) -> Vec<&str> {
+        config.groups.iter().map(|g| g.id.as_str()).collect()
+    }
+
+    #[test]
+    fn moving_a_server_to_a_new_group_creates_it_and_drops_the_empty_one() {
+        let mut config = ServerConfig {
+            groups: vec![group("g-prod", "生产"), group("g-test", "测试")],
+            servers: vec![server("a", Some("g-prod")), server("b", Some("g-test"))],
+        };
+
+        // 编辑时填了一个新分组名：分组按名称创建，服务器仍然属于一个存在的分组
+        assert!(replace_server(&mut config, server("a", Some("预发"))));
+        assert_eq!(group_ids(&config), vec!["g-test", "预发"]);
+        assert_eq!(config.groups[1].name, "预发");
+        assert_eq!(config.servers[0].group_id.as_deref(), Some("预发"));
+
+        // 移出分组：原分组没有服务器了，一并删除
+        assert!(replace_server(&mut config, server("b", None)));
+        assert_eq!(group_ids(&config), vec!["预发"]);
+    }
+
+    #[test]
+    fn replacing_a_missing_server_changes_nothing() {
+        let mut config = ServerConfig {
+            groups: vec![group("g-prod", "生产")],
+            servers: vec![server("a", Some("g-prod"))],
+        };
+        assert!(!replace_server(&mut config, server("gone", Some("新分组"))));
+        assert_eq!(group_ids(&config), vec!["g-prod"]);
+        assert_eq!(config.servers.len(), 1);
     }
 }

@@ -2,162 +2,148 @@
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::ActiveTheme;
 
 use crate::i18n;
 
-use super::super::helpers::render_about_row;
+use super::super::helpers::{
+    render_about_row, render_block_row, render_card, render_section_title,
+};
 use super::super::SettingsDialogState;
 
-fn render_release_item(text: &'static str, cx: &App) -> impl IntoElement {
-    div()
-        .flex()
-        .items_start()
-        .gap_2()
-        .child(
-            div()
-                .mt(px(7.))
-                .w(px(5.))
-                .h(px(5.))
-                .flex_shrink_0()
-                .rounded_full()
-                .bg(cx.theme().primary),
-        )
-        .child(
-            div()
-                .text_sm()
-                .line_height(relative(1.45))
-                .text_color(cx.theme().foreground)
-                .child(text),
-        )
+/// 当前版本的更新说明
+const RELEASE_NOTES: [&str; 3] = [
+    "settings.about.release_0_1_4.preview",
+    "settings.about.release_0_1_4.highlight",
+    "settings.about.release_0_1_4.ls_color",
+];
+
+/// 运行平台的显示名称
+fn platform_name() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        other => other,
+    }
 }
 
 /// 渲染关于面板
 pub fn render_about_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
-    let lang = &state.read(cx).settings.theme.language;
+    let p = crate::theme::palette(cx);
+    let lang = state.read(cx).settings.theme.language.clone();
+    let version = concat!("v", env!("CARGO_PKG_VERSION"));
+
     div()
         .flex()
         .flex_col()
-        .items_center()
-        .gap_5()
-        .pt_4()
-        // Logo / 应用名
+        .gap_6()
+        // 应用图标、名称和版本
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .w(px(64.))
-                        .h(px(64.))
-                        .rounded_xl()
-                        .bg(cx.theme().primary)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .text_xl()
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(cx.theme().primary_foreground)
-                                .child("SM"),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_xl()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
-                        .child("ShellMaster"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(concat!("v", env!("CARGO_PKG_VERSION"))),
-                ),
+            render_card(cx).child(
+                div()
+                    .px(px(16.))
+                    .py(px(16.))
+                    .flex()
+                    .items_center()
+                    .gap(px(14.))
+                    .child(
+                        img("app-icon.png")
+                            .flex_none()
+                            .size(px(52.))
+                            .rounded(px(12.)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .text_size(px(18.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(p.text)
+                                    .child("ShellMaster"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .text_color(p.text_muted)
+                                    .child(version),
+                            ),
+                    ),
+            ),
         )
-        // 技术信息
+        // 运行环境
         .child(
             div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(render_about_row(
-                    i18n::t(lang, "settings.about.platform"),
-                    "macOS",
-                    cx,
-                ))
-                .child(render_about_row(
-                    i18n::t(lang, "settings.about.arch"),
-                    std::env::consts::ARCH,
-                    cx,
-                ))
-                .child(render_about_row("Rust", env!("CARGO_PKG_RUST_VERSION"), cx)),
-        )
-        // 当前版本更新说明
-        .child(
-            div()
-                .w_full()
-                .max_w(px(460.))
-                .p_4()
-                .rounded_lg()
-                .border_1()
-                .border_color(cx.theme().border)
-                .bg(cx.theme().secondary)
                 .flex()
                 .flex_col()
                 .gap_3()
+                .child(render_section_title(
+                    i18n::t(&lang, "settings.about.environment"),
+                    cx,
+                ))
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .text_base()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(cx.theme().foreground)
-                                .child(i18n::t(lang, "settings.about.whats_new")),
-                        )
-                        .child(
-                            div()
-                                .px_2()
-                                .py_1()
-                                .rounded_md()
-                                .bg(cx.theme().primary.opacity(0.12))
-                                .text_xs()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(cx.theme().primary)
-                                .child(concat!("v", env!("CARGO_PKG_VERSION"))),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(render_release_item(
-                            i18n::t(lang, "settings.about.release_0_1_4.preview"),
+                    render_card(cx)
+                        .child(render_about_row(
+                            i18n::t(&lang, "settings.about.platform"),
+                            platform_name(),
                             cx,
                         ))
-                        .child(render_release_item(
-                            i18n::t(lang, "settings.about.release_0_1_4.highlight"),
-                            cx,
-                        ))
-                        .child(render_release_item(
-                            i18n::t(lang, "settings.about.release_0_1_4.ls_color"),
+                        .child(render_about_row(
+                            i18n::t(&lang, "settings.about.arch"),
+                            std::env::consts::ARCH,
                             cx,
                         )),
                 ),
         )
+        // 当前版本更新说明
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(render_section_title(
+                    format!(
+                        "{} · {}",
+                        i18n::t(&lang, "settings.about.whats_new"),
+                        version
+                    ),
+                    cx,
+                ))
+                .child(render_card(cx).children(RELEASE_NOTES.iter().map(|key| {
+                    render_block_row(
+                        div()
+                            .flex()
+                            .items_start()
+                            .gap(px(10.))
+                            .child(
+                                div()
+                                    .mt(px(7.))
+                                    .size(px(5.))
+                                    .flex_none()
+                                    .rounded_full()
+                                    .bg(p.primary),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(13.))
+                                    .line_height(relative(1.5))
+                                    .text_color(p.text)
+                                    .child(i18n::t(&lang, key)),
+                            ),
+                        cx,
+                    )
+                }))),
+        )
         // 版权
         .child(
             div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(i18n::t(lang, "settings.about.copyright")),
+                .px(px(2.))
+                .text_size(px(12.))
+                .text_color(p.text_faint)
+                .child(i18n::t(&lang, "settings.about.copyright")),
         )
 }

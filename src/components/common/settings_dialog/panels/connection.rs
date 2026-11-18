@@ -2,27 +2,15 @@
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::ActiveTheme;
 
 use crate::i18n;
 use crate::models::settings::GlobalProxyType;
 
 use super::super::helpers::{
-    render_input_row, render_number_row, render_section_title, render_select_row,
-    render_switch_row,
+    render_card, render_hint, render_input_row, render_number_row, render_section_title,
+    render_select_row, render_switch_row,
 };
 use super::super::SettingsDialogState;
-
-/// 渲染设置项下方的说明文字
-fn render_hint(text: &'static str, cx: &App) -> impl IntoElement {
-    div()
-        .px_4()
-        .mt(px(-4.))
-        .mb_2()
-        .text_xs()
-        .text_color(cx.theme().muted_foreground)
-        .child(text)
-}
 
 /// 渲染连接设置面板
 pub fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
@@ -61,10 +49,7 @@ pub fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> 
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
+                    render_card(cx)
                         .children(default_port_input.as_ref().map(|input| {
                             render_number_row(
                                 i18n::t(lang, "settings.connection.default_port"),
@@ -119,10 +104,7 @@ pub fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> 
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
+                    render_card(cx)
                         .child(render_switch_row(
                             "conn-auto-reconnect",
                             i18n::t(lang, "settings.connection.reconnect_enabled"),
@@ -158,10 +140,7 @@ pub fn render_connection_panel(state: Entity<SettingsDialogState>, cx: &App) -> 
                     cx,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
+                    render_card(cx)
                         .child(render_select_row(
                             "conn-global-proxy-type",
                             i18n::t(lang, "settings.connection.global_proxy_type"),

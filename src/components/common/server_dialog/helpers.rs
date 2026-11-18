@@ -1,90 +1,98 @@
-// 辅助渲染函数
+// 服务器弹窗的表单辅助函数
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_component::input::{Input, InputState};
 
-use crate::components::common::icon::render_icon;
+use crate::components::common::button::CONTROL_HEIGHT;
+use crate::i18n;
+use crate::models::settings::Language;
+use crate::theme::Palette;
 
-/// 渲染表单标签
-pub fn render_form_label(label: &'static str, icon: &'static str, cx: &App) -> impl IntoElement {
-    let icon_color = cx.theme().muted_foreground;
-    let text_color = cx.theme().foreground;
+use super::{Field, FormErrors};
 
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .child(render_icon(icon, icon_color.into()))
-        .child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(text_color)
-                .child(SharedString::from(label)),
-        )
+/// 字段的错误提示（没有错误时为 None）
+pub fn error_text(errors: &FormErrors, field: Field, lang: &Language) -> Option<SharedString> {
+    errors
+        .iter()
+        .find(|(error_field, _)| *error_field == field)
+        .map(|(_, key)| SharedString::from(i18n::t(lang, key)))
 }
 
-/// 渲染开关组件 (使用 gpui-component Switch 保持一致性)
-pub fn render_switch(
-    checked: bool,
-    on_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
-) -> gpui_component::switch::Switch {
-    use gpui_component::switch::Switch;
-
-    Switch::new("server-dialog-switch")
-        .checked(checked)
-        .on_click(move |new_val, window, cx| {
-            on_click(new_val, window, cx);
-        })
+/// 输入框；还没创建时（打开后的第一帧之前）先占位，避免布局跳动
+pub fn input_or_placeholder(
+    input: Option<&Entity<InputState>>,
+    build: impl FnOnce(&Entity<InputState>) -> Input,
+) -> AnyElement {
+    match input {
+        Some(input) => build(input).into_any_element(),
+        None => div().h(CONTROL_HEIGHT).into_any_element(),
+    }
 }
 
-/// 渲染分组选择组件（Input + 内嵌下拉按钮）
-/// 使用 Input 的 suffix 功能将下拉按钮嵌入输入框内部，视觉上成为一个整体
-/// 下拉菜单使用 render_group_dropdown_overlay 在对话框顶层渲染，确保对齐
-pub fn render_group_select(
-    label: &'static str,
-    icon: &'static str,
-    group_input: Option<&gpui::Entity<gpui_component::input::InputState>>,
-    state: gpui::Entity<super::ServerDialogState>,
-    loading_text: &'static str,
-    cx: &App,
-) -> impl IntoElement {
-    use gpui_component::input::Input;
+/// 字段下方的错误提示
+pub fn error_line(text: SharedString, p: &Palette) -> Div {
+    div().text_size(px(12.)).text_color(p.danger).child(text)
+}
 
-    // 获取输入框背景色，用于下拉按钮
-    let input_bg = cx.theme().background;
-
+/// 两个字段并排（主机地址 + 端口）：左边占满剩余宽度，右边固定宽度。
+/// 两个字段的错误提示统一显示在这一行下方，避免在窄的一栏里折成好几行。
+pub fn field_pair(
+    left: Div,
+    right: Div,
+    right_width: Pixels,
+    errors: impl IntoIterator<Item = SharedString>,
+    p: &Palette,
+) -> Div {
     div()
         .flex()
         .flex_col()
-        .gap_2()
-        .child(render_form_label(label, icon, cx))
-        .child(if let Some(input) = group_input {
-            // 创建下拉按钮作为 suffix
-            // 点击时切换 show_group_dropdown 状态，由 overlay 显示下拉菜单
-            let state_for_click = state.clone();
-            let dropdown_button = div()
-                .id("group-dropdown-suffix")
+        .gap(px(6.))
+        .child(
+            div()
                 .flex()
-                .items_center()
-                .justify_center()
-                .px_1()
-                .mr(px(-12.))
-                .bg(input_bg)
-                .cursor_pointer()
-                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
-                    state_for_click.update(cx, |s, _| {
-                        s.show_group_dropdown = !s.show_group_dropdown;
-                    });
-                })
-                .child(render_icon(
-                    crate::constants::icons::CHEVRON_DOWN,
-                    cx.theme().muted_foreground.into(),
-                ));
+                .items_start()
+                .gap(px(12.))
+                .child(left.flex_1().min_w_0())
+                .child(right.flex_none().w(right_width)),
+        )
+        .children(errors.into_iter().map(|error| error_line(error, p)))
+}
 
-            Input::new(input).suffix(dropdown_button).into_any_element()
-        } else {
-            div().child(loading_text).into_any_element()
+/// 提示框（说明、警告等）：文字、底色和边框都取 `color` 的色调
+pub fn notice(text: impl Into<SharedString>, color: Hsla) -> Div {
+    div()
+        .px(px(12.))
+        .py(px(9.))
+        .rounded(px(8.))
+        .bg(color.opacity(0.08))
+        .border_1()
+        .border_color(color.opacity(0.3))
+        .text_size(px(12.))
+        .text_color(color)
+        .child(text.into())
+}
+
+/// 表单下方的说明文字
+pub fn hint(text: impl Into<SharedString>, p: &Palette) -> Div {
+    div()
+        .text_size(px(12.))
+        .text_color(p.text_muted)
+        .child(text.into())
+}
+
+/// 单选圆点
+pub fn radio(selected: bool, p: &Palette) -> Div {
+    div()
+        .flex_none()
+        .size(px(16.))
+        .rounded_full()
+        .border_1()
+        .border_color(if selected { p.primary } else { p.text_faint })
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(selected, |dot| {
+            dot.child(div().size(px(8.)).rounded_full().bg(p.primary))
         })
 }

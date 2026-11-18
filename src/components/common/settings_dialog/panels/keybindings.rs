@@ -2,10 +2,11 @@
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::ActiveTheme;
 
+use crate::components::common::input::{kbd, shortcut_keys};
 use crate::i18n;
 
+use super::super::helpers::{render_card, render_row, render_section_title};
 use super::super::SettingsDialogState;
 
 /// 定义快捷键配置结构
@@ -42,100 +43,54 @@ fn get_terminal_keybindings() -> Vec<KeyBindingItem> {
 
 /// 渲染按键绑定面板
 pub fn render_keybindings_panel(state: Entity<SettingsDialogState>, cx: &App) -> impl IntoElement {
-    let lang = &state.read(cx).settings.theme.language;
-    let border_color = cx.theme().border;
-    let muted_fg = cx.theme().muted_foreground;
-    let text_color = cx.theme().foreground;
-    let bg_hover = cx.theme().secondary;
+    let p = crate::theme::palette(cx);
+    let lang = state.read(cx).settings.theme.language.clone();
 
     // 根据平台选择不同的快捷键显示
-    #[cfg(target_os = "macos")]
-    let is_mac = true;
-    #[cfg(not(target_os = "macos"))]
-    let is_mac = false;
+    let is_mac = cfg!(target_os = "macos");
 
-    let global_bindings = get_global_keybindings();
-    let terminal_bindings = get_terminal_keybindings();
-
-    // 渲染快捷键分组的辅助闭包
-    let render_keybinding_section =
-        |title_key: &'static str, bindings: Vec<KeyBindingItem>| -> Div {
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                // 分组标题
-                .child(
+    let section = |title_key: &'static str, bindings: Vec<KeyBindingItem>| -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(render_section_title(i18n::t(&lang, title_key), cx))
+            .child(render_card(cx).children(bindings.into_iter().map(|item| {
+                let shortcut = if is_mac {
+                    item.shortcut_mac
+                } else {
+                    item.shortcut_other
+                };
+                render_row(
+                    i18n::t(&lang, item.action),
+                    None,
                     div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(text_color)
-                        .child(i18n::t(lang, title_key)),
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .children(shortcut_keys(shortcut).into_iter().map(|key| kbd(key, &p))),
+                    cx,
                 )
-                // 快捷键列表
-                .child(
-                    div()
-                        .rounded(px(6.))
-                        .border_1()
-                        .border_color(border_color)
-                        .overflow_hidden()
-                        .children(bindings.into_iter().enumerate().map(|(idx, item)| {
-                            let shortcut = if is_mac {
-                                item.shortcut_mac
-                            } else {
-                                item.shortcut_other
-                            };
-
-                            div()
-                                .w_full()
-                                .px_3()
-                                .py_2()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .when(idx > 0, |s| s.border_t_1().border_color(border_color))
-                                .hover(|s| s.bg(bg_hover))
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(text_color)
-                                        .child(i18n::t(lang, item.action)),
-                                )
-                                .child(
-                                    div()
-                                        .px_2()
-                                        .py(px(2.))
-                                        .rounded(px(4.))
-                                        .bg(cx.theme().muted)
-                                        .text_xs()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(muted_fg)
-                                        .child(shortcut),
-                                )
-                        })),
-                )
-        };
+            })))
+    };
 
     div()
         .flex()
         .flex_col()
-        .gap_4()
-        // 全局快捷键分组
-        .child(render_keybinding_section(
+        .gap_6()
+        .child(section(
             "settings.keybindings.global_title",
-            global_bindings,
+            get_global_keybindings(),
         ))
-        // 终端快捷键分组
-        .child(render_keybinding_section(
+        .child(section(
             "settings.keybindings.terminal_title",
-            terminal_bindings,
+            get_terminal_keybindings(),
         ))
-        // 底部提示
         .child(
             div()
-                .mt_4()
-                .text_sm()
-                .text_color(muted_fg)
-                .child(i18n::t(lang, "settings.keybindings.more_coming_soon")),
+                .px(px(2.))
+                .text_size(px(12.))
+                .text_color(p.text_muted)
+                .child(i18n::t(&lang, "settings.keybindings.more_coming_soon")),
         )
 }

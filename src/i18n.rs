@@ -222,12 +222,14 @@ fn zh_cn(key: &'static str) -> &'static str {
         "settings.about.environment" => "运行环境",
         "settings.about.arch" => "架构",
         "settings.about.whats_new" => "本次更新",
-        "settings.about.release_0_1_4.preview" => "终端设置新增配色预览卡片，并用颜色选择器调整前景、背景、光标和选区颜色。",
-        "settings.about.release_0_1_4.highlight" => {
-            "新增终端关键字高亮（错误、警告、IP、URL、路径、提示符），颜色随主题变化，可在设置中关闭。"
+        "settings.about.release_0_1_5.session" => {
+            "会话视图全新布局：左列监控与文件、中间终端、右侧快捷命令 / 传输 / AI 图标栏，各栏宽度可拖动，标题栏与左列对齐。"
         }
-        "settings.about.release_0_1_4.ls_color" => {
-            "新增可选的「自动启用 ls 颜色」，连接后自动为 ls 开启目录/文件着色。"
+        "settings.about.release_0_1_5.monitor" => {
+            "主机监控改为远端长驻采集脚本，新增磁盘读写总量与繁忙度、CPU 时间分布、每核使用率和磁盘详情弹窗。"
+        }
+        "settings.about.release_0_1_5.sftp" => {
+            "SFTP 重新设计：目录树、路径栏与可排序文件列表；传输支持悬停暂停 / 取消，并修正上传被标记为下载的问题。"
         }
         "settings.about.copyright" => "© 2024 ShellMaster. All rights reserved.",
 
@@ -902,12 +904,12 @@ fn en_us(key: &'static str) -> &'static str {
         "settings.about.environment" => "Environment",
         "settings.about.arch" => "Architecture",
         "settings.about.whats_new" => "What's New",
-        "settings.about.release_0_1_4.preview" =>
-            "Added a color preview card and color pickers for foreground, background, cursor and selection in terminal settings.",
-        "settings.about.release_0_1_4.highlight" =>
-            "Added client-side keyword highlighting (errors, warnings, IPs, URLs, paths, prompts) that follows the theme; can be turned off in settings.",
-        "settings.about.release_0_1_4.ls_color" =>
-            "Added an optional \"Auto-enable ls Colors\" setting that colorizes ls output after connecting.",
+        "settings.about.release_0_1_5.session" =>
+            "Rebuilt the session view: monitor and files on the left, terminal in the middle, snippets / transfers / AI rail on the right, with draggable column widths and a title bar aligned to the left column.",
+        "settings.about.release_0_1_5.monitor" =>
+            "Host monitoring now runs a remote collector script and adds disk read/write totals with busy %, a CPU-time breakdown, per-core usage and a disk detail dialog.",
+        "settings.about.release_0_1_5.sftp" =>
+            "Redesigned SFTP with a folder tree, path bar and sortable file list; transfers pause or cancel on row hover, and uploads are no longer labelled as downloads.",
         "settings.about.copyright" => "© 2024 ShellMaster. All rights reserved.",
 
         // Sidebar

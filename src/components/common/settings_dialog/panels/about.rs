@@ -12,9 +12,9 @@ use super::super::SettingsDialogState;
 
 /// 当前版本的更新说明
 const RELEASE_NOTES: [&str; 3] = [
-    "settings.about.release_0_1_4.preview",
-    "settings.about.release_0_1_4.highlight",
-    "settings.about.release_0_1_4.ls_color",
+    "settings.about.release_0_1_5.session",
+    "settings.about.release_0_1_5.monitor",
+    "settings.about.release_0_1_5.sftp",
 ];
 
 /// 运行平台的显示名称

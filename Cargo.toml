@@ -1,6 +1,6 @@
 [package]
 name = "shellmaster3"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 authors = ["ShellMaster Team"]
 description = "SSH/SFTP 客户端"

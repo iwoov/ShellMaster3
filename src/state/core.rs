@@ -136,6 +136,57 @@ impl SessionState {
         self.sidebar_collapsed = !self.sidebar_collapsed;
     }
 
+    /// 按窗口宽度算出会话视图各栏的实际宽度
+    pub fn session_columns(
+        &self,
+        window_width: gpui::Pixels,
+    ) -> crate::pages::session::SessionColumns {
+        crate::pages::session::fit_columns(
+            window_width,
+            self.left_column_width,
+            self.sidebar_width,
+            !self.sidebar_collapsed,
+        )
+    }
+
+    /// `key` 对应的条目是否刚被复制过（显示对勾）
+    pub fn is_copied(&self, key: &str) -> bool {
+        self.copied_key.as_deref() == Some(key)
+    }
+
+    /// 复制文字到剪贴板，并让 `key` 对应的复制按钮短暂显示为对勾
+    pub fn copy_with_feedback(
+        session_state: &gpui::Entity<SessionState>,
+        key: String,
+        text: String,
+        cx: &mut gpui::App,
+    ) {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+
+        let token = session_state.read(cx).copy_feedback_token.wrapping_add(1);
+        session_state.update(cx, |state, cx| {
+            state.copied_key = Some(key.clone());
+            state.copy_feedback_token = token;
+            cx.notify();
+        });
+
+        let session_state = session_state.clone();
+        cx.spawn(async move |cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1200))
+                .await;
+            let _ = cx.update(|cx| {
+                session_state.update(cx, |state, cx| {
+                    if state.copy_feedback_token == token && state.is_copied(&key) {
+                        state.copied_key = None;
+                        cx.notify();
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+
     /// 设置当前激活的侧边栏面板
     pub fn set_sidebar_panel(&mut self, panel: SidebarPanel) {
         self.active_sidebar_panel = panel;

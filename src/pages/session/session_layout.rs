@@ -1,14 +1,25 @@
-// Session 主布局组件 - 使用可拖动分隔条
+// 会话主布局
+//
+// ┌──────────┬──────────────────────────────┬───────────┬────┐
+// │ 监控      │ 终端                          │ 右侧侧栏   │ 图 │
+// │ (左列)    │                              │           │ 标 │
+// ├──────────┼──────────────────────────────┤           │ 栏 │
+// │ 目录树    │ 文件列表                      │           │    │
+// └──────────┴──────────────────────────────┴───────────┴────┘
+//
+// 左列（监控、目录树）和右侧侧栏是固定宽度，由自己的分隔条拖动；标题栏品牌区与左列同宽。
+// 上下方向（终端 / SFTP 的高度）用组件库的 `v_resizable`。
 
-use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::resizable::{h_resizable, resizable_panel, v_resizable};
-use gpui_component::ActiveTheme;
+use gpui_component::resizable::{resizable_panel, v_resizable};
 
+use super::activity_rail::render_activity_rail;
+use super::columns::{left_width_from_drag, sidebar_width_from_drag, SessionColumns};
 use super::monitor_panel::render_monitor_panel;
 use super::session_sidebar::render_session_sidebar;
 use super::sftp_panel::render_sftp_panel;
 use super::terminal_page::render_terminal_panel;
+use crate::components::common::panel::splitter;
 use crate::components::common::text::TextFitter;
 use crate::components::monitor::render_detail_dialog;
 use crate::components::sftp::{
@@ -16,261 +27,172 @@ use crate::components::sftp::{
     render_properties_dialog_overlay,
 };
 use crate::models::settings::Language;
-use crate::state::{SessionState, SessionTab, SidebarPanel};
+use crate::state::{SessionState, SessionTab};
+
+/// SFTP 面板的初始高度
+const SFTP_INITIAL_HEIGHT: Pixels = px(300.);
 
 /// 渲染 Session 主布局
 pub fn render_session_layout(
     tab: &SessionTab,
-    sidebar_collapsed: bool,
+    columns: SessionColumns,
     session_state: Entity<SessionState>,
     lang: &Language,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
+    let p = crate::theme::palette(cx);
+
     // 获取命令输入状态和终端焦点句柄
     let command_input = session_state.read(cx).command_input.clone();
     let terminal_focus_handle = session_state.read(cx).get_terminal_focus_handle();
 
-    // 获取 Monitor 详情弹窗状态
+    // 弹窗状态
     let monitor_detail_dialog = session_state.read(cx).monitor_detail_dialog.clone();
-    let monitor_detail_dialog_for_panel = monitor_detail_dialog.clone();
-
-    // 获取 SFTP 新建文件夹对话框状态
     let new_folder_dialog = session_state.read(cx).get_sftp_new_folder_dialog();
-    // 获取 SFTP 新建文件对话框状态
     let new_file_dialog = session_state.read(cx).get_sftp_new_file_dialog();
-    // 获取 SFTP 属性对话框状态
     let properties_dialog = session_state.read(cx).get_sftp_properties_dialog();
+    let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
+    let active_panel = session_state.read(cx).active_sidebar_panel;
+    let fit = TextFitter::new(window, cx);
 
-    // 获取 tab_id 用于网络接口选择
-    let tab_id = tab.id.clone();
-
-    // 上方区域：Monitor | Terminal （水平分隔）
-    let top_area = h_resizable("session-top-h")
+    // 上方一行：监控 | 终端
+    let top_row = div()
+        .size_full()
+        .flex()
+        .flex_row()
         .child(
-            resizable_panel()
-                .size(px(229.)) // Monitor 面板初始宽度 230px
+            div()
+                .flex_none()
+                .w(columns.left)
+                .h_full()
+                .border_r_1()
+                .border_color(p.border)
                 .child(render_monitor_panel(
-                    &tab.monitor_state,
-                    monitor_detail_dialog_for_panel,
+                    tab,
+                    columns.left,
+                    monitor_detail_dialog.clone(),
                     session_state.clone(),
-                    tab_id,
+                    lang,
+                    &fit,
                     cx,
                 )),
         )
-        .child(resizable_panel().child(render_terminal_panel(
-            tab,
-            command_input,
-            session_state.clone(),
-            terminal_focus_handle,
-            cx,
-        )));
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .child(render_terminal_panel(
+                    tab,
+                    command_input,
+                    session_state.clone(),
+                    terminal_focus_handle,
+                    cx,
+                )),
+        );
 
-    // 左侧区域：上方区域 | SFTP （垂直分隔）
-    let session_state_for_sftp = session_state.clone();
-    let tab_id_for_sftp = tab.id.clone();
-    // 获取 SFTP 文件列表视图（如果存在）
+    // 下方一行：SFTP（目录树与左列同宽 | 文件列表）
     let sftp_file_list_view = session_state.read(cx).get_sftp_file_list_view(&tab.id);
-    // 获取 SFTP 路径栏状态（如果存在）
     let sftp_path_bar_state = session_state.read(cx).get_sftp_path_bar_state(&tab.id);
-    let left_area = v_resizable("session-left-v")
-        .child(resizable_panel().child(top_area))
-        .child(resizable_panel().size(px(300.)).child(render_sftp_panel(
-            tab.sftp_state.as_ref(),
-            sftp_file_list_view,
-            sftp_path_bar_state,
-            session_state_for_sftp,
-            tab_id_for_sftp,
-            window,
-            cx,
-        ))); // SFTP ~40%
+    let sftp_row = render_sftp_panel(
+        tab.sftp_state.as_ref(),
+        sftp_file_list_view,
+        sftp_path_bar_state,
+        session_state.clone(),
+        tab.id.clone(),
+        columns.left,
+        lang,
+        &fit,
+        window,
+        cx,
+    );
 
-    // 获取主题颜色
-    let border_color = cx.theme().border;
-    let sidebar_bg = crate::theme::sidebar_color(cx);
-    let hover_bg = cx.theme().list_active; // 使用更明显的悬停颜色
-    let icon_color = cx.theme().muted_foreground;
-    let active_icon_color = cx.theme().foreground;
-
-    // 获取当前激活的面板
-    let active_panel = session_state.read(cx).active_sidebar_panel;
-
-    // 图标路径
-    use crate::constants::icons;
-
-    // 小侧栏宽度固定 28px
-    let sidebar_width = 28.;
-
-    // 创建命令行图标按钮
-    let is_snippets_active = active_panel == SidebarPanel::Snippets;
-    let snippets_session_state = session_state.clone();
-    let snippets_button = div()
-        .id("mini-sidebar-snippets")
-        .size(px(24.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .rounded(px(4.))
-        .when(is_snippets_active, |s| s.bg(hover_bg))
-        .hover(|s| s.bg(hover_bg))
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            snippets_session_state.update(cx, |state, _| {
-                // 如果已经是当前面板，则切换侧边栏折叠状态
-                if state.active_sidebar_panel == SidebarPanel::Snippets {
-                    state.toggle_sidebar();
-                } else {
-                    // 切换到该面板并确保侧边栏展开
-                    state.load_snippets_config();
-                    state.set_sidebar_panel(SidebarPanel::Snippets);
-                    if state.sidebar_collapsed {
-                        state.sidebar_collapsed = false;
-                    }
-                }
-            });
-        })
+    // 左边的主区域：上下两行可拖动高度；左列的分隔条盖在两行上面（左列右边线位于 left-1..left）
+    let main_area = div()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .relative()
         .child(
-            svg()
-                .path(icons::COMMAND)
-                .size(px(16.))
-                .text_color(if is_snippets_active {
-                    active_icon_color
-                } else {
-                    icon_color
-                }),
-        );
-
-    // 创建传输管理图标按钮
-    let is_transfer_active = active_panel == SidebarPanel::Transfer;
-    let transfer_session_state = session_state.clone();
-    let transfer_button = div()
-        .id("mini-sidebar-transfer")
-        .size(px(24.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .rounded(px(4.))
-        .when(is_transfer_active, |s| s.bg(hover_bg))
-        .hover(|s| s.bg(hover_bg))
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            transfer_session_state.update(cx, |state, _| {
-                // 如果已经是当前面板，则切换侧边栏折叠状态
-                if state.active_sidebar_panel == SidebarPanel::Transfer {
-                    state.toggle_sidebar();
-                } else {
-                    // 切换到该面板并确保侧边栏展开
-                    state.set_sidebar_panel(SidebarPanel::Transfer);
-                    if state.sidebar_collapsed {
-                        state.sidebar_collapsed = false;
-                    }
+            v_resizable("session-left-v")
+                .child(resizable_panel().child(top_row))
+                .child(resizable_panel().size(SFTP_INITIAL_HEIGHT).child(sftp_row)),
+        )
+        .child(splitter(
+            "session-left-column",
+            columns.left - px(0.5),
+            &p,
+            {
+                let session_state = session_state.clone();
+                move |x, _, cx| {
+                    session_state.update(cx, |state, cx| {
+                        state.left_column_width = left_width_from_drag(x);
+                        cx.notify();
+                    });
                 }
-            });
-        })
-        .child(
-            svg()
-                .path(icons::TRANSFER)
-                .size(px(16.))
-                .text_color(if is_transfer_active {
-                    active_icon_color
-                } else {
-                    icon_color
-                }),
-        );
+            },
+        ));
 
-    // 创建 AI 对话图标按钮
-    let is_ai_active = active_panel == SidebarPanel::AiChat;
-    let ai_session_state = session_state.clone();
-    let ai_button = div()
-        .id("mini-sidebar-ai")
-        .size(px(24.))
+    let transfers_running = tab
+        .active_transfers
+        .iter()
+        .any(|transfer| transfer.status.is_active());
+
+    let mut main_content = div()
+        .size_full()
         .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .rounded(px(4.))
-        .when(is_ai_active, |s| s.bg(hover_bg))
-        .hover(|s| s.bg(hover_bg))
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            ai_session_state.update(cx, |state, _| {
-                if state.active_sidebar_panel == SidebarPanel::AiChat {
-                    state.toggle_sidebar();
-                } else {
-                    state.set_sidebar_panel(SidebarPanel::AiChat);
-                    if state.sidebar_collapsed {
-                        state.sidebar_collapsed = false;
-                    }
-                }
-            });
-        })
-        .child(
-            svg()
-                .path(icons::SPARKLES)
-                .size(px(16.))
-                .text_color(if is_ai_active {
-                    active_icon_color
-                } else {
-                    icon_color
-                }),
+        .flex_row()
+        .relative()
+        .child(main_area);
+    if !sidebar_collapsed {
+        main_content = main_content.child(
+            div()
+                .flex_none()
+                .w(columns.sidebar)
+                .h_full()
+                .border_l_1()
+                .border_color(p.border)
+                .child(render_session_sidebar(
+                    tab,
+                    active_panel,
+                    columns.sidebar,
+                    session_state.clone(),
+                    lang,
+                    &fit,
+                    window,
+                    cx,
+                )),
         );
-
-    // 小侧栏组件 - 始终存在，包含三个图标按钮
-    let mini_sidebar = div()
-        .w(px(sidebar_width))
-        .flex_shrink_0()
-        .border_l_1()
-        .border_color(border_color)
-        .bg(sidebar_bg)
-        .flex()
-        .flex_col()
-        .items_center()
-        .pt_3()
-        .gap_2()
-        .child(snippets_button)
-        .child(transfer_button)
-        .child(ai_button);
-
-    // 主布局：使用简单的 flex 容器
-    // 包装在 relative 容器中以支持 dialog overlay
-    let main_content = if sidebar_collapsed {
-        // 折叠时：直接使用 h_resizable 填满左侧 + 小侧栏在右侧
-        div()
-            .size_full()
-            .flex()
-            .flex_row()
-            .child(h_resizable("session-main-collapsed").child(resizable_panel().child(left_area)))
-            .child(mini_sidebar)
-    } else {
-        // 展开时：h_resizable 包含 left_area + session_sidebar，小侧栏在最右侧
-        div()
-            .size_full()
-            .flex()
-            .flex_row()
-            .child(
-                h_resizable("session-main-expanded")
-                    .child(resizable_panel().child(left_area))
-                    .child(
-                        resizable_panel()
-                            // Zed 当前 Agent Panel 的默认宽度为 300px；内容区仍可拖动扩展。
-                            .size(px(300.))
-                            .size_range(px(260.)..px(2000.))
-                            .child(render_session_sidebar(
-                                tab,
-                                active_panel,
-                                session_state.clone(),
-                                window,
-                                cx,
-                            )),
-                    ),
-            )
-            .child(mini_sidebar)
-    };
+    }
+    main_content = main_content.child(render_activity_rail(
+        &session_state,
+        transfers_running,
+        lang,
+        &p,
+        cx,
+    ));
+    if !sidebar_collapsed {
+        // 侧栏左边线位于 sidebar_left..sidebar_left+1
+        let window_width = columns.window;
+        let session_state = session_state.clone();
+        main_content = main_content.child(splitter(
+            "session-sidebar",
+            columns.sidebar_left() + px(0.5),
+            &p,
+            move |x, _, cx| {
+                session_state.update(cx, |state, cx| {
+                    state.sidebar_width = sidebar_width_from_drag(window_width, x);
+                    cx.notify();
+                });
+            },
+        ));
+    }
 
     // 返回带有 dialog overlay 的容器
     let mut result = div().relative().size_full().child(main_content);
 
     let viewport = window.viewport_size();
-    let fit = TextFitter::new(window, cx);
 
     // 添加 Monitor 详情弹窗
     if let Some(dialog_state) = monitor_detail_dialog {

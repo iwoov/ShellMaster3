@@ -239,9 +239,10 @@ impl SessionState {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let lang = crate::services::storage::load_settings()
-            .map(|s| s.theme.language)
-            .unwrap_or(crate::models::settings::Language::Chinese);
+        let lang = crate::services::storage::cached_settings()
+            .theme
+            .language
+            .clone();
         let placeholder = crate::i18n::t(&lang, "session.terminal.command_placeholder");
 
         if self.command_input.is_none() {
@@ -292,9 +293,10 @@ impl SessionState {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let lang = crate::services::storage::load_settings()
-            .map(|s| s.theme.language)
-            .unwrap_or(crate::models::settings::Language::Chinese);
+        let lang = crate::services::storage::cached_settings()
+            .theme
+            .language
+            .clone();
         let placeholder = crate::i18n::t(&lang, "terminal.search.placeholder");
 
         if self.search_input.is_none() {
@@ -494,6 +496,9 @@ impl SessionState {
                                             }
                                             MonitorEvent::NetworkInfo(info) => {
                                                 tab.monitor_state.update_network_info(info);
+                                            }
+                                            MonitorEvent::DiskIo(info) => {
+                                                tab.monitor_state.update_disk_io(info);
                                             }
                                             MonitorEvent::DiskInfo(info) => {
                                                 tab.monitor_state.update_disk_info(info);

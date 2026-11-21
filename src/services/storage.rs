@@ -369,7 +369,35 @@ pub fn save_settings(settings: &AppSettings) -> Result<()> {
     let path = get_settings_file()?;
     let content = serde_json::to_string_pretty(settings).context("无法序列化设置配置")?;
     write_private_file(&path, content.as_bytes()).context("无法写入设置配置文件")?;
+    store_settings_cache(settings.clone());
     Ok(())
+}
+
+/// 已保存设置的内存副本，供界面渲染使用（渲染每帧都要用到设置，不能每次都读盘解析 JSON）
+static SETTINGS_CACHE: std::sync::RwLock<Option<std::sync::Arc<AppSettings>>> =
+    std::sync::RwLock::new(None);
+
+fn store_settings_cache(settings: AppSettings) {
+    if let Ok(mut cache) = SETTINGS_CACHE.write() {
+        *cache = Some(std::sync::Arc::new(settings));
+    }
+}
+
+/// 已保存的设置。第一次调用时从磁盘读取，之后由 [`save_settings`] 更新；读取失败时用默认设置。
+///
+/// 只给渲染用：需要「当前磁盘内容」的地方（例如设置弹窗打开时）仍然调用 [`load_settings`]。
+pub fn cached_settings() -> std::sync::Arc<AppSettings> {
+    if let Ok(cache) = SETTINGS_CACHE.read() {
+        if let Some(settings) = cache.as_ref() {
+            return settings.clone();
+        }
+    }
+    let settings = std::sync::Arc::new(load_settings().unwrap_or_default());
+    if let Ok(mut cache) = SETTINGS_CACHE.write() {
+        // 另一个线程可能已经先写入了，保留先到的那份
+        return cache.get_or_insert_with(|| settings.clone()).clone();
+    }
+    settings
 }
 
 // ======================== Snippets (快捷命令) 持久化 ========================
@@ -603,7 +631,10 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         write_private_file(&link, b"new").unwrap();
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         assert_eq!(mode(&target), 0o600);
         fs::remove_dir_all(&dir).unwrap();

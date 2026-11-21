@@ -27,9 +27,7 @@ pub fn render_terminal_view(
     // 预计算布局
     let layout = layout_grid(term, settings, search_matches, search_current);
 
-    // 获取颜色设置（背景应用不透明度设置）
-    let bg_opacity = (settings.background_opacity as f32 / 100.0).clamp(0.0, 1.0);
-    let bg_color = hex_to_hsla(&settings.background_color).opacity(bg_opacity);
+    // 背景色由外层的终端区域铺满（含四周留白），这里只画网格内容
     let cursor_color = hex_to_hsla(&settings.cursor_color);
     let flash_color = hex_to_hsla(&settings.foreground_color).opacity(0.25);
 
@@ -58,7 +56,6 @@ pub fn render_terminal_view(
 
     div()
         .size_full()
-        .bg(bg_color)
         .relative()
         .overflow_hidden()
         .child(
@@ -213,24 +210,4 @@ fn paint_cursor(
             ));
         }
     }
-}
-
-/// 渲染空终端（用于未连接状态）
-#[allow(dead_code)]
-pub fn render_empty_terminal(settings: &TerminalSettings, message: &str, _cx: &App) -> Div {
-    let bg_color = hex_to_hsla(&settings.background_color);
-    let fg_color = hex_to_hsla(&settings.foreground_color);
-
-    div()
-        .size_full()
-        .bg(bg_color)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .text_color(fg_color.opacity(0.5))
-                .text_sm()
-                .child(message.to_string()),
-        )
 }

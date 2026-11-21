@@ -17,4 +17,4 @@ pub use new_file_dialog::{render_new_file_dialog_overlay, NewFileDialogState};
 pub use new_folder_dialog::{render_new_folder_dialog_overlay, NewFolderDialogState};
 pub use path_bar::{PathBarEvent, PathBarState};
 pub use properties_dialog::{render_properties_dialog_overlay, PropertiesDialogState};
-pub use toolbar::{render_sftp_toolbar, SftpToolbarEvent};
+pub use toolbar::{render_sftp_list_header, render_sftp_tree_header, SftpToolbarEvent};

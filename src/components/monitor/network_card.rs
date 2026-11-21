@@ -1,299 +1,172 @@
-// 网络状态区块组件
+// 监控面板「网络」组：网卡选择、下载 / 上传速度、半分钟网速曲线
 
 use gpui::*;
-use gpui_component::button::Button;
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_component::{ActiveTheme, StyledExt};
+use gpui_component::Sizable;
 
+use super::detail_dialog::DetailDialogType;
+use super::view::{chart_well, empty_hint, section, speed_row, MonitorCtx};
+use crate::components::common::icon::icon_sized;
+use crate::components::common::panel::{sparkline, SparkSeries};
+use crate::constants::icons;
 use crate::models::monitor::MonitorState;
-use crate::state::SessionState;
 
-use super::detail_dialog::{render_detail_button, DetailDialogState, DetailDialogType};
+/// 网速曲线的高度
+const NETWORK_CHART_HEIGHT: Pixels = px(40.);
+/// 网卡下拉按钮里名称的最大宽度
+const INTERFACE_NAME_MAX_WIDTH: Pixels = px(96.);
+/// 曲线纵轴的最小上限（1 KB/s），避免很小的流量被放大成满格
+const MIN_CHART_MAX: f64 = 1024.;
 
-/// 渲染网络状态区块（无卡片边框）
-pub fn render_network_card(
-    state: &MonitorState,
-    dialog_state: Entity<DetailDialogState>,
-    session_state: Entity<SessionState>,
-    tab_id: String,
-    cx: &App,
-) -> impl IntoElement {
-    let title_color = hsla(210.0 / 360.0, 1.0, 0.5, 1.0); // 蓝色标题
-    let label_color = cx.theme().foreground;
-    let border_color = cx.theme().border;
-    let chart_bg = cx.theme().secondary;
-
-    // 获取语言设置
-    let lang = crate::services::storage::load_settings()
-        .map(|s| s.theme.language)
+/// 渲染「网络」组
+pub(super) fn render_network_section(ctx: &MonitorCtx, cx: &App) -> impl IntoElement {
+    let network = ctx.state.current_network();
+    let interfaces: Vec<String> = network
+        .map(|network| network.interfaces.iter().map(|i| i.name.clone()).collect())
         .unwrap_or_default();
 
-    // 获取网络接口列表
-    let interfaces: Vec<String> = state
-        .current_network()
-        .map(|n| n.interfaces.iter().map(|i| i.name.clone()).collect())
-        .unwrap_or_default();
+    let picker = (!interfaces.is_empty())
+        .then(|| render_interface_picker(interfaces.clone(), ctx, cx).into_any_element());
 
-    let has_interfaces = !interfaces.is_empty();
-    let selected_index = state.selected_interface_index;
-    // 下拉框显示的是网卡名称，无数据时显示占位符
-    let selected_interface_name = interfaces
-        .get(selected_index)
-        .cloned()
-        .unwrap_or_else(|| "--".to_string());
+    let body: AnyElement = if network.is_none() {
+        empty_hint("—", ctx).into_any_element()
+    } else if interfaces.is_empty() {
+        empty_hint(ctx.t("monitor.no_interfaces"), ctx).into_any_element()
+    } else {
+        render_speeds(ctx).into_any_element()
+    };
 
-    div()
-        .w_full()
-        .py_2()
-        .border_b_1()
-        .border_color(border_color)
-        .flex()
-        .flex_col()
-        .gap_2()
-        // 标题行
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .text_xs()
-                        .font_medium()
-                        .text_color(title_color)
-                        .child(crate::i18n::t(&lang, "monitor.network")),
-                )
-                // 详情按钮
-                .child(render_detail_button(
-                    dialog_state,
-                    DetailDialogType::NetworkInfo,
-                    cx,
-                )),
-        )
-        // 网络接口选择行：标签 + 下拉框
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                // 左侧标签 "网络接口:"
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(label_color)
-                        .child(crate::i18n::t(&lang, "monitor.network_interface")),
-                )
-                // 右侧下拉框
-                .child(if has_interfaces {
-                    render_interface_dropdown(
-                        selected_interface_name,
-                        interfaces,
-                        session_state,
-                        tab_id,
-                        cx,
-                    )
-                    .into_any_element()
-                } else {
-                    // 无接口时显示静态占位符
-                    render_static_dropdown("--", cx).into_any_element()
-                }),
-        )
-        // 速率数据显示
-        .child(
-            div()
-                .w_full()
-                .bg(chart_bg)
-                .rounded(px(6.))
-                .p_2()
-                .flex()
-                .flex_col()
-                .gap_2()
-                // 历史趋势图
-                .child(render_simple_chart(state))
-                // 实时数值
-                .child(render_network_speed(state, cx)),
-        )
+    section(
+        "monitor-network",
+        ctx.t("monitor.section.network"),
+        picker,
+        Some(DetailDialogType::NetworkInfo),
+        ctx,
+    )
+    .child(body)
 }
 
-/// 渲染网络接口下拉选择器
-fn render_interface_dropdown(
-    selected_name: String,
-    interfaces: Vec<String>,
-    session_state: Entity<SessionState>,
-    tab_id: String,
-    cx: &App,
-) -> impl IntoElement {
-    use gpui::Corner;
-
-    let muted_color = cx.theme().muted_foreground;
-
-    Button::new("network-interface-dropdown")
-        .w(px(140.))
-        .h(px(28.))
-        .outline()
-        .justify_start()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .w(px(120.))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().foreground)
-                        .overflow_hidden()
-                        .child(selected_name),
-                )
-                .child(
-                    svg()
-                        .path(crate::constants::icons::CHEVRON_DOWN)
-                        .size(px(12.))
-                        .text_color(muted_color),
-                ),
-        )
-        .dropdown_menu_with_anchor(Corner::TopLeft, move |menu, _, _| {
-            let mut menu = menu.min_w(px(140.));
-            for (idx, iface_name) in interfaces.iter().enumerate() {
-                let name: SharedString = iface_name.clone().into();
-                let session_for_click = session_state.clone();
-                let tab_id_for_click = tab_id.clone();
-                menu = menu.item(PopupMenuItem::new(name).on_click(move |_, _, cx| {
-                    session_for_click.update(cx, |state, _| {
-                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_click)
-                        {
-                            tab.monitor_state.selected_interface_index = idx;
-                            // 清空速度历史以便重新计算新接口的速度
-                            tab.monitor_state.speed_history.clear();
-                        }
-                    });
-                }));
-            }
-            menu
-        })
-}
-
-/// 渲染静态下拉框（无接口时使用）
-fn render_static_dropdown(text: &'static str, cx: &App) -> impl IntoElement {
-    let border_color = cx.theme().border;
-    let muted_color = cx.theme().muted_foreground;
-
-    div()
-        .w(px(140.))
-        .px_2()
-        .py_1()
-        .bg(cx.theme().background)
-        .rounded(px(4.))
-        .border_1()
-        .border_color(border_color)
-        .flex()
-        .items_center()
-        .justify_between()
-        .child(div().text_xs().text_color(muted_color).child(text))
-        .child(
-            svg()
-                .path(crate::constants::icons::CHEVRON_DOWN)
-                .size(px(12.))
-                .text_color(muted_color),
-        )
-}
-
-/// 渲染简易柱状图（模拟历史趋势）
-fn render_simple_chart(state: &MonitorState) -> impl IntoElement {
-    let chart_line_color_tx = hsla(145.0 / 360.0, 0.6, 0.5, 0.8); // 绿色 TX
-    let chart_line_color_rx = hsla(210.0 / 360.0, 0.8, 0.6, 0.8); // 蓝色 RX
-
-    // 计算最大速度用于归一化
-    let max_speed = state
+/// 下载 / 上传速度和曲线
+fn render_speeds(ctx: &MonitorCtx) -> Div {
+    let p = &ctx.p;
+    let (rx, tx) = ctx.state.current_speed();
+    let (rx_color, tx_color) = if ctx.stale {
+        (p.text_faint, p.text_faint)
+    } else {
+        (p.primary, p.success)
+    };
+    let max = ctx
+        .state
         .speed_history
         .iter()
         .flat_map(|s| [s.rx_speed, s.tx_speed])
-        .fold(0.0_f64, f64::max)
-        .max(1024.0); // 至少 1KB/s 以避免除以0或过分放大微小波动
+        .fold(MIN_CHART_MAX, f64::max);
+    let rx_values = ctx
+        .state
+        .speed_history
+        .iter()
+        .map(|s| s.rx_speed as f32)
+        .collect();
+    let tx_values = ctx
+        .state
+        .speed_history
+        .iter()
+        .map(|s| s.tx_speed as f32)
+        .collect();
 
-    let container_height = 100.0_f32;
-
+    // 一行一个方向（左列很窄，两个方向放一行会挤在一起）
     div()
-        .w_full()
-        .h(px(container_height)) // 固定高度
-        .overflow_hidden() // 防止超出
         .flex()
-        .items_end()
-        .justify_end() // 靠右对齐，紧凑排列
-        .gap(px(1.))
-        .children(state.speed_history.iter().map(|s| {
-            let rx_px = (s.rx_speed as f32 / max_speed as f32 * container_height)
-                .clamp(0.0, container_height);
-            let tx_px = (s.tx_speed as f32 / max_speed as f32 * container_height)
-                .clamp(0.0, container_height);
-
-            div()
-                .h_full()
-                .flex()
-                .items_end()
-                .justify_center()
-                .gap(px(1.))
-                // RX Bar
-                .child(
-                    div()
-                        .w(px(3.)) // 固定宽度 3px 让柱子变细
-                        // 最小高度 2px 以便可见
-                        .h(px(rx_px))
-                        .min_h(px(2.))
-                        .bg(chart_line_color_rx)
-                        .rounded(px(1.)),
-                )
-                // TX Bar
-                .child(
-                    div()
-                        .w(px(3.))
-                        .h(px(tx_px))
-                        .min_h(px(2.))
-                        .bg(chart_line_color_tx)
-                        .rounded(px(1.)),
-                )
-        }))
+        .flex_col()
+        .gap(px(6.))
+        .child(speed_row(
+            icons::DOWNLOAD,
+            rx_color,
+            ctx.t("monitor.label.download"),
+            rx,
+            ctx,
+        ))
+        .child(speed_row(
+            icons::UPLOAD,
+            tx_color,
+            ctx.t("monitor.label.upload"),
+            tx,
+            ctx,
+        ))
+        .child(chart_well(NETWORK_CHART_HEIGHT, ctx).child(sparkline(
+            vec![
+                SparkSeries {
+                    values: rx_values,
+                    stroke: rx_color,
+                    fill: Some(rx_color.opacity(0.16)),
+                },
+                SparkSeries {
+                    values: tx_values,
+                    stroke: tx_color,
+                    fill: Some(tx_color.opacity(0.10)),
+                },
+            ],
+            max as f32,
+            MonitorState::MAX_HISTORY_SIZE,
+            NETWORK_CHART_HEIGHT - px(2.),
+        )))
 }
 
-/// 渲染网速数值显示
-fn render_network_speed(state: &MonitorState, cx: &App) -> impl IntoElement {
-    let muted_color = cx.theme().muted_foreground;
-    let chart_line_color_tx = hsla(145.0 / 360.0, 0.6, 0.5, 0.8); // 绿色 TX
-    let chart_line_color_rx = hsla(210.0 / 360.0, 0.8, 0.6, 0.8); // 蓝色 RX
+/// 小标题右侧的网卡下拉：当前网卡名 + 箭头，菜单里勾选当前网卡
+fn render_interface_picker(
+    interfaces: Vec<String>,
+    ctx: &MonitorCtx,
+    cx: &App,
+) -> impl IntoElement {
+    let p = &ctx.p;
+    let selected = ctx.state.selected_interface_index;
+    let name = interfaces.get(selected).cloned().unwrap_or_default();
+    let session_state = ctx.session_state.clone();
+    let tab_id = ctx.tab.id.clone();
+    // 透明底、悬停时显示浅底色
+    let style = ButtonCustomVariant::new(cx)
+        .color(gpui::transparent_black())
+        .foreground(p.text_muted)
+        .border(gpui::transparent_black())
+        .hover(p.hover_strong)
+        .active(p.hover_strong);
 
-    // 获取当前网速
-    let (rx_speed, tx_speed) = state.current_speed();
-    let rx_speed_str = MonitorState::format_speed(rx_speed);
-    let tx_speed_str = MonitorState::format_speed(tx_speed);
-
-    div()
-        .w_full()
-        .flex()
-        .justify_between()
+    Button::new("monitor-interface-picker")
+        .custom(style)
+        .xsmall()
+        .h(px(20.))
+        .px(px(6.))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap_1()
-                .child(div().text_xs().text_color(chart_line_color_rx).child("↓"))
+                .gap(px(4.))
                 .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted_color)
-                        .child(format!("RX: {}", rx_speed_str)),
-                ),
+                    ctx.fit
+                        .mono_label(&name, INTERFACE_NAME_MAX_WIDTH, 11.)
+                        .text_color(p.text_muted),
+                )
+                .child(icon_sized(icons::CHEVRON_DOWN, 10., p.text_faint)),
         )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(div().text_xs().text_color(chart_line_color_tx).child("↑"))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted_color)
-                        .child(format!("TX: {}", tx_speed_str)),
-                ),
-        )
+        .dropdown_menu_with_anchor(Corner::TopRight, move |menu, _, _| {
+            let mut menu = menu.min_w(px(140.));
+            for (index, name) in interfaces.iter().enumerate() {
+                let session_state = session_state.clone();
+                let tab_id = tab_id.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(SharedString::from(name.clone()))
+                        .checked(index == selected)
+                        .on_click(move |_, _, cx| {
+                            session_state.update(cx, |state, cx| {
+                                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                    tab.monitor_state.select_interface(index);
+                                }
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu
+        })
 }

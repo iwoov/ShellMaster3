@@ -137,22 +137,150 @@ pub fn icon_button_colored(
     tooltip: impl Into<SharedString>,
     p: &Palette,
 ) -> Stateful<Div> {
+    icon_button_base(
+        id,
+        icon,
+        IconButtonLook {
+            size: ICON_BUTTON_SIZE,
+            icon_size: 14.,
+            icon_color,
+            hover_icon_color,
+            rest_bg: None,
+            enabled: true,
+        },
+        tooltip,
+        p,
+    )
+}
+
+/// 指定边长和图标大小的图标按钮（标签上的关闭钮等小号按钮）
+pub fn icon_button_sized(
+    id: impl Into<ElementId>,
+    icon: &'static str,
+    size: Pixels,
+    icon_size: f32,
+    tooltip: impl Into<SharedString>,
+    p: &Palette,
+) -> Stateful<Div> {
+    icon_button_base(
+        id,
+        icon,
+        IconButtonLook {
+            size,
+            icon_size,
+            icon_color: p.text_muted,
+            hover_icon_color: p.text,
+            rest_bg: None,
+            enabled: true,
+        },
+        tooltip,
+        p,
+    )
+}
+
+/// 可禁用的图标按钮。禁用时变淡、没有悬停效果，调用方不要再绑定点击（提示文字照常显示）
+pub fn icon_button_enabled(
+    id: impl Into<ElementId>,
+    icon: &'static str,
+    tooltip: impl Into<SharedString>,
+    enabled: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    icon_button_base(
+        id,
+        icon,
+        IconButtonLook {
+            size: ICON_BUTTON_SIZE,
+            icon_size: 14.,
+            icon_color: p.text_muted,
+            hover_icon_color: p.text,
+            rest_bg: None,
+            enabled,
+        },
+        tooltip,
+        p,
+    )
+}
+
+/// 开关式图标按钮：打开时带选中底色、图标为主色（例如「显示隐藏文件」、侧栏图标栏）
+pub fn icon_toggle_button(
+    id: impl Into<ElementId>,
+    icon: &'static str,
+    active: bool,
+    tooltip: impl Into<SharedString>,
+    p: &Palette,
+) -> Stateful<Div> {
+    let (icon_color, hover_icon_color, rest_bg) = if active {
+        (p.primary, p.primary, Some(p.selected))
+    } else {
+        (p.text_muted, p.text, None)
+    };
+    icon_button_base(
+        id,
+        icon,
+        IconButtonLook {
+            size: ICON_BUTTON_SIZE,
+            icon_size: 14.,
+            icon_color,
+            hover_icon_color,
+            rest_bg,
+            enabled: true,
+        },
+        tooltip,
+        p,
+    )
+}
+
+/// 图标按钮的外观参数（见 [`icon_button_custom`]）
+pub struct IconButtonLook {
+    pub size: Pixels,
+    pub icon_size: f32,
+    pub icon_color: Hsla,
+    pub hover_icon_color: Hsla,
+    /// 常态底色（开关按钮打开时用），`None` 为透明
+    pub rest_bg: Option<Hsla>,
+    pub enabled: bool,
+}
+
+/// 完全自定义外观的图标按钮，其余图标按钮都基于它
+pub fn icon_button_custom(
+    id: impl Into<ElementId>,
+    icon: &'static str,
+    look: IconButtonLook,
+    tooltip: impl Into<SharedString>,
+    p: &Palette,
+) -> Stateful<Div> {
+    icon_button_base(id, icon, look, tooltip, p)
+}
+
+fn icon_button_base(
+    id: impl Into<ElementId>,
+    icon: &'static str,
+    look: IconButtonLook,
+    tooltip: impl Into<SharedString>,
+    p: &Palette,
+) -> Stateful<Div> {
     let hover_bg = p.hover_strong;
+    let hover_icon_color = look.hover_icon_color;
     div()
         .id(id)
         .group(ICON_BUTTON_GROUP)
         .flex_none()
-        .size(ICON_BUTTON_SIZE)
+        .size(look.size)
         .rounded(px(6.))
-        .cursor_pointer()
         .flex()
         .items_center()
         .justify_center()
-        .hover(move |s| s.bg(hover_bg))
+        .when_some(look.rest_bg, |button, bg| button.bg(bg))
+        .when(look.enabled, |button| {
+            button.cursor_pointer().hover(move |s| s.bg(hover_bg))
+        })
+        .when(!look.enabled, |button| button.opacity(0.4))
         .tooltip(text_tooltip(tooltip))
         .child(
-            icon_sized(icon, 14., icon_color)
-                .group_hover(ICON_BUTTON_GROUP, move |s| s.text_color(hover_icon_color)),
+            icon_sized(icon, look.icon_size, look.icon_color).when(look.enabled, |icon| {
+                icon.group_hover(ICON_BUTTON_GROUP, move |s| s.text_color(hover_icon_color))
+            }),
         )
 }
 

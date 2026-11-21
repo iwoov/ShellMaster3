@@ -33,29 +33,6 @@ impl Default for TransferStatus {
 }
 
 impl TransferStatus {
-    /// 获取状态的显示文本
-    pub fn display_text(&self) -> &'static str {
-        match self {
-            TransferStatus::Pending => "等待中",
-            TransferStatus::Downloading => "下载中",
-            TransferStatus::Uploading => "上传中",
-            TransferStatus::Paused => "已暂停",
-            TransferStatus::Completed => "完成",
-            TransferStatus::Failed => "失败",
-            TransferStatus::Cancelled => "已取消",
-        }
-    }
-
-    /// 是否是错误状态
-    pub fn is_error(&self) -> bool {
-        matches!(self, TransferStatus::Failed | TransferStatus::Cancelled)
-    }
-
-    /// 是否已完成
-    pub fn is_complete(&self) -> bool {
-        matches!(self, TransferStatus::Completed)
-    }
-
     /// 是否是活动状态（可以接收进度更新）
     pub fn is_active(&self) -> bool {
         matches!(
@@ -226,9 +203,13 @@ impl TransferItem {
         if self.status != TransferStatus::Paused {
             self.progress.speed_bytes_per_sec = speed;
 
-            // 如果是 Pending 状态，自动切换到 Downloading
+            // 收到第一次进度时从「等待中」切换到传输中（按方向区分上传 / 下载）
             if self.status == TransferStatus::Pending {
-                self.status = TransferStatus::Downloading;
+                self.status = if self.is_upload {
+                    TransferStatus::Uploading
+                } else {
+                    TransferStatus::Downloading
+                };
             }
         }
     }

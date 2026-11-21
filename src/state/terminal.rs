@@ -84,9 +84,7 @@ impl SessionState {
         );
 
         // 创建终端设置
-        let settings = crate::services::storage::load_settings()
-            .unwrap_or_default()
-            .terminal;
+        let settings = crate::services::storage::cached_settings().terminal.clone();
 
         // 重用现有 TerminalState（保留历史）或创建新的
         let is_new_terminal_state = existing_terminal.is_none();
@@ -487,9 +485,7 @@ impl SessionState {
 
         // 若字体/字号/行高设置发生变化，重新测量 cell metrics，避免用旧网格绘制新字体
         // 导致光标、选择、远端 PTY 行列数错位。
-        let settings = crate::services::storage::load_settings()
-            .unwrap_or_default()
-            .terminal;
+        let settings = crate::services::storage::cached_settings().terminal.clone();
         let (font_changed, settings_changed) = {
             let terminal_read = terminal.read(cx);
             (

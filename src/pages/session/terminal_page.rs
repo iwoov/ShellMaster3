@@ -7,12 +7,20 @@ use gpui::*;
 use gpui_component::input::{Input, InputState};
 use gpui_component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_component::scroll::ScrollableElement;
-use gpui_component::ActiveTheme;
 use tracing::trace;
 
 use alacritty_terminal::term::TermMode;
 
+use crate::components::common::button::{
+    icon_button_custom, icon_button_sized, icon_toggle_button, primary_button, IconButtonLook,
+    ICON_BUTTON_SIZE,
+};
+use crate::components::common::icon::icon_sized;
+use crate::components::common::input::text_area;
+use crate::components::common::panel::{panel_header, spinner, HEADER_CONTROL_HEIGHT};
 use crate::constants::icons;
+use crate::i18n;
+use crate::models::settings::Language;
 use crate::ssh::session::TerminalChannel;
 use crate::state::{SessionState, SessionStatus, SessionTab, TerminalPtyState};
 use crate::terminal::{
@@ -22,6 +30,7 @@ use crate::terminal::{
     TerminalCopy, TerminalInputHandler, TerminalPaste, TerminalSearch, TerminalSelectAll,
     TerminalState, MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT, MOUSE_WHEEL_DOWN, MOUSE_WHEEL_UP,
 };
+use crate::theme::Palette;
 
 /// 构建终端右键上下文菜单（复制/粘贴/全选/清除回滚）。
 fn build_terminal_context_menu(
@@ -164,11 +173,12 @@ pub fn render_terminal_panel(
     terminal_focus_handle: Option<FocusHandle>,
     cx: &App,
 ) -> impl IntoElement {
-    let border_color = cx.theme().border;
+    let p = crate::theme::palette(cx);
 
-    // 获取终端设置
-    let settings = crate::services::storage::load_settings().unwrap_or_default();
+    // 获取终端设置（内存中的已保存设置，渲染时不读盘）
+    let settings = crate::services::storage::cached_settings();
     let terminal_settings = settings.terminal.clone();
+    let lang = settings.theme.language.clone();
 
     // 获取当前激活的终端实例
     let active_terminal_id = tab.active_terminal_id.clone();
@@ -189,12 +199,16 @@ pub fn render_terminal_panel(
 
     // 创建终端显示区域的基础 div
     // 使用 key_context("Terminal") 建立终端专用键盘上下文，用于支持自定义快捷键
+    // 背景用终端配色：网格四周的留白和网格是同一个颜色
+    let terminal_bg = terminal_background(&terminal_settings);
     let mut terminal_display = div()
         .id("terminal-display")
         .key_context("Terminal")
         .flex_1()
+        .min_h(px(0.))
         .relative()
         .overflow_hidden()
+        .bg(terminal_bg)
         .cursor_text();
 
     // 监听终端显示区域尺寸变化，并同步本地/远端 PTY 尺寸
@@ -205,50 +219,52 @@ pub fn render_terminal_panel(
     let terminal_for_input = terminal_entity.clone();
     let channel_for_input = pty_channel.clone();
     let focus_for_input = terminal_focus_handle.clone();
-    terminal_display = terminal_display.child(
-        canvas(
-            move |bounds, window, cx| {
-                let width = f32::from(bounds.size.width);
-                let height = f32::from(bounds.size.height);
-                let origin_x = f32::from(bounds.origin.x);
-                let origin_y = f32::from(bounds.origin.y);
+    // 测量用的 canvas 放在留白以内的内层容器里（见下方 `grid_area`）：行列数、鼠标和输入法坐标都按内层计算
+    let grid_measure = canvas(
+        move |bounds, window, cx| {
+            let width = f32::from(bounds.size.width);
+            let height = f32::from(bounds.size.height);
+            let origin_x = f32::from(bounds.origin.x);
+            let origin_y = f32::from(bounds.origin.y);
 
-                // 更新尺寸；未启动/失败的 PTY 使用真实 canvas bounds 初始化。
-                session_state_for_resize.update(cx, |state, cx| {
-                    state.sync_or_initialize_terminal_size(&tab_id, width, height, window, cx);
+            // 更新尺寸；未启动/失败的 PTY 使用真实 canvas bounds 初始化。
+            session_state_for_resize.update(cx, |state, cx| {
+                state.sync_or_initialize_terminal_size(&tab_id, width, height, window, cx);
+            });
+
+            // 更新 bounds origin（用于鼠标坐标转换）
+            if let Some(terminal) = terminal_for_bounds.clone() {
+                terminal.update(cx, |t, _| {
+                    let old = t.bounds_origin();
+                    if (old.0 - origin_x).abs() > 1.0 || (old.1 - origin_y).abs() > 1.0 {
+                        tracing::debug!(
+                            "[Terminal] Bounds origin updated: ({:.1}, {:.1}) -> ({:.1}, {:.1})",
+                            old.0,
+                            old.1,
+                            origin_x,
+                            origin_y
+                        );
+                    }
+                    t.set_bounds_origin(origin_x, origin_y);
                 });
-
-                // 更新 bounds origin（用于鼠标坐标转换）
-                if let Some(terminal) = terminal_for_bounds.clone() {
-                    terminal.update(cx, |t, _| {
-                        let old = t.bounds_origin();
-                        if (old.0 - origin_x).abs() > 1.0 || (old.1 - origin_y).abs() > 1.0 {
-                            tracing::debug!(
-                                "[Terminal] Bounds origin updated: ({:.1}, {:.1}) -> ({:.1}, {:.1})",
-                                old.0, old.1, origin_x, origin_y
-                            );
-                        }
-                        t.set_bounds_origin(origin_x, origin_y);
-                    });
-                }
-            },
-            move |bounds, _, window, cx| {
-                if let (Some(focus), Some(terminal), Some(channel)) = (
-                    focus_for_input.as_ref(),
-                    terminal_for_input.clone(),
-                    channel_for_input.clone(),
-                ) {
-                    window.handle_input(
-                        focus,
-                        TerminalInputHandler::new(terminal, channel, bounds),
-                        cx,
-                    );
-                }
-            },
-        )
-        .absolute()
-        .size_full(),
-    );
+            }
+        },
+        move |bounds, _, window, cx| {
+            if let (Some(focus), Some(terminal), Some(channel)) = (
+                focus_for_input.as_ref(),
+                terminal_for_input.clone(),
+                channel_for_input.clone(),
+            ) {
+                window.handle_input(
+                    focus,
+                    TerminalInputHandler::new(terminal, channel, bounds),
+                    cx,
+                );
+            }
+        },
+    )
+    .absolute()
+    .size_full();
 
     // 如果有焦点句柄，添加事件监听
     if let Some(focus_handle) = terminal_focus_handle.clone() {
@@ -900,13 +916,16 @@ pub fn render_terminal_panel(
         SessionStatus::Reconnecting {
             attempt,
             max_attempts,
-        } => Some(render_reconnecting_overlay(*attempt, *max_attempts, cx).into_any_element()),
+        } => {
+            Some(render_reconnecting_overlay(*attempt, *max_attempts, &lang, &p).into_any_element())
+        }
         SessionStatus::Disconnected => Some(
             render_disconnected_overlay(
                 tab_id_for_reconnect.clone(),
                 tab.disconnect_reason.clone(),
                 session_state.clone(),
-                cx,
+                &lang,
+                &p,
             )
             .into_any_element(),
         ),
@@ -916,7 +935,8 @@ pub fn render_terminal_panel(
                     tab.id.clone(),
                     terminal_id_for_overlay.clone(),
                     session_state.clone(),
-                    cx,
+                    &lang,
+                    &p,
                 )
                 .into_any_element(),
             ),
@@ -926,7 +946,8 @@ pub fn render_terminal_panel(
                     tab.id.clone(),
                     terminal_id_for_overlay.clone(),
                     session_state.clone(),
-                    cx,
+                    &lang,
+                    &p,
                 )
                 .into_any_element(),
             ),
@@ -934,30 +955,37 @@ pub fn render_terminal_panel(
         },
     };
 
-    let content = match &terminal_entity {
-        Some(terminal) => {
-            render_terminal_content(terminal.clone(), &terminal_settings, cx).into_any_element()
-        }
-        // 还没有终端内容（如刚新建的终端）但需要显示状态：用终端背景占位
-        None if overlay.is_some() => div()
-            .size_full()
-            .bg(hex_to_hsla(&terminal_settings.background_color))
-            .into_any_element(),
-        None => render_loading_terminal(&terminal_settings, cx).into_any_element(),
-    };
+    // 网格区域：四周留白以内（左边距由设置里的「左侧内边距」在绘制时加上）
+    let mut grid_area = div()
+        .absolute()
+        .top(GRID_INSET_TOP)
+        .bottom(GRID_INSET_BOTTOM)
+        .left_0()
+        .right(GRID_INSET_RIGHT)
+        .child(grid_measure);
+    if let Some(terminal) = &terminal_entity {
+        grid_area = grid_area.child(render_terminal_content(
+            terminal.clone(),
+            &terminal_settings,
+            cx,
+        ));
+    }
+    terminal_display = terminal_display.child(grid_area);
 
-    terminal_display = terminal_display.child(match overlay {
-        Some(overlay) => {
-            render_terminal_with_overlay(content, &terminal_settings, overlay, cx).into_any_element()
-        }
-        None => content,
-    });
+    // 状态卡片盖在整个终端区域上；没有状态时，终端还没打开（含正在打开 PTY）就显示初始化提示
+    let initializing = terminal_entity.is_none() || pty_state == TerminalPtyState::Opening;
+    if let Some(overlay) = overlay {
+        terminal_display = terminal_display.child(render_overlay_layer(overlay, &p));
+    } else if initializing {
+        terminal_display =
+            terminal_display.child(render_initializing_layer(&terminal_settings, &lang));
+    }
 
     if let Some(scroll_handle) = scroll_handle {
         terminal_display = terminal_display.vertical_scrollbar(&scroll_handle);
     }
 
-    // 搜索栏：搜索打开时在终端右上角浮层显示
+    // 搜索栏：搜索打开时浮在终端右上角
     if session_state.read(cx).search_open {
         if let Some(search_input) = session_state.read(cx).search_input.clone() {
             let (cur, total) = terminal_entity
@@ -967,94 +995,21 @@ pub fn render_terminal_panel(
                     (s.search_current_number(), s.search_match_count())
                 })
                 .unwrap_or((0, 0));
-            let count_text = format!("{}/{}", cur, total);
-
-            let bar_bg = cx.theme().popover;
-            let bar_border = cx.theme().border;
-            let muted = cx.theme().muted_foreground;
-
-            let sess_prev = session_state.clone();
-            let sess_next = session_state.clone();
-            let sess_close = session_state.clone();
-
-            let icon_btn = |id: &'static str, icon: &'static str| {
-                div()
-                    .id(id)
-                    .size(px(18.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(3.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(muted.opacity(0.2)))
-                    .child(svg().path(icon).size(px(12.)).text_color(muted))
-            };
-
-            let search_bar = div()
-                .absolute()
-                .top(px(4.))
-                .right(px(16.))
-                .flex()
-                .items_center()
-                .gap_1()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(bar_border)
-                .bg(bar_bg)
-                // 阻止在搜索栏上的鼠标操作触发终端选择
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(svg().path(icons::SEARCH).size(px(12.)).text_color(muted))
-                .child(
-                    div()
-                        .w(px(150.))
-                        .child(Input::new(&search_input).appearance(false)),
-                )
-                .child(div().text_xs().text_color(muted).child(count_text))
-                .child(icon_btn("terminal-search-prev", icons::ARROW_UP).on_click(
-                    move |_, _window, cx| {
-                        sess_prev.update(cx, |state, cx| {
-                            if let Some(t) = state.active_terminal_entity() {
-                                t.update(cx, |t, cx| {
-                                    t.search_prev_match();
-                                    cx.notify();
-                                });
-                            }
-                            cx.notify();
-                        });
-                    },
-                ))
-                .child(
-                    icon_btn("terminal-search-next", icons::CHEVRON_DOWN).on_click(
-                        move |_, _window, cx| {
-                            sess_next.update(cx, |state, cx| {
-                                if let Some(t) = state.active_terminal_entity() {
-                                    t.update(cx, |t, cx| {
-                                        t.search_next_match();
-                                        cx.notify();
-                                    });
-                                }
-                                cx.notify();
-                            });
-                        },
-                    ),
-                )
-                .child(icon_btn("terminal-search-close", icons::X).on_click(
-                    move |_, window, cx| {
-                        sess_close.update(cx, |state, cx| {
-                            state.close_terminal_search(window, cx);
-                        });
-                    },
-                ));
-
-            terminal_display = terminal_display.child(search_bar);
+            let has_query = !search_input.read(cx).value().is_empty();
+            terminal_display = terminal_display.child(render_search_bar(
+                &search_input,
+                (cur, total),
+                has_query,
+                session_state.clone(),
+                &lang,
+                &p,
+            ));
         }
     }
 
     // 右键菜单始终注册；鼠标上报或直接粘贴成功时会停止事件传播。
     // 因而 Shift+右键仍可强制打开本地菜单。
-    let menu_lang = settings.theme.language.clone();
+    let menu_lang = lang.clone();
     let terminal_area: AnyElement = if terminal_entity.is_none() {
         terminal_display.into_any_element()
     } else {
@@ -1067,149 +1022,20 @@ pub fn render_terminal_panel(
             .into_any_element()
     };
 
-    // 创建终端顶部工具栏区域（15px 高度）
-    let tab_id_for_toolbar = tab.id.clone();
-    let terminals_for_toolbar = tab.terminals.clone();
-    let active_id_for_toolbar = tab.active_terminal_id.clone();
-    let session_state_for_toolbar = session_state.clone();
-
-    let primary_color = cx.theme().primary;
-    let text_color = cx.theme().foreground;
-    let muted_color = cx.theme().muted_foreground;
-
-    // 加载当前语言设置（用于动态翻译标签）
-    let lang = settings.theme.language.clone();
-    let terminal_label_prefix = crate::i18n::t(&lang, "session.terminal.tab_label");
-
-    let terminal_toolbar = div()
-        .id("terminal-toolbar")
-        .h(px(20.))
-        .w_full()
-        .flex_shrink_0()
-        .border_b_1()
-        .border_color(border_color)
-        .flex()
-        .items_center()
-        .gap_0()
-        // 终端标签列表
-        .children(terminals_for_toolbar.iter().map(|term_inst| {
-            let term_id = term_inst.id.clone();
-            // 使用稳定的本地编号作为标签，避免远端 OSC 标题使标签频繁变化。
-            let term_label = format!("{}{}", terminal_label_prefix, term_inst.index);
-            let is_active = active_id_for_toolbar.as_ref() == Some(&term_id);
-            let tab_id_for_click = tab_id_for_toolbar.clone();
-            let session_for_click = session_state_for_toolbar.clone();
-            let term_id_for_click = term_id.clone();
-
-            // 检查是否可以关闭（有多个终端时才可关闭）
-            let can_close = terminals_for_toolbar.len() > 1;
-            let term_id_for_close = term_id.clone();
-            let tab_id_for_close = tab_id_for_toolbar.clone();
-            let session_for_close = session_state_for_toolbar.clone();
-
-            div()
-                .id(SharedString::from(format!("terminal-tab-{}", term_id)))
-                .h_full()
-                .px_2()
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap_1()
-                .cursor_pointer()
-                .when(is_active, |s| s.bg(border_color))
-                .hover(|s| s.bg(border_color.opacity(0.5)))
-                // 点击切换终端
-                .on_click(move |_, _window, cx| {
-                    session_for_click.update(cx, |state, cx| {
-                        state.activate_terminal_instance(&tab_id_for_click, &term_id_for_click);
-                        cx.notify();
-                    });
-                })
-                // 标签文本
-                .child(
-                    div()
-                        .text_xs()
-                        .max_w(px(220.))
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .text_color(if is_active { text_color } else { muted_color })
-                        .child(term_label),
-                )
-                .when(can_close && is_active, move |s| {
-                    s.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "close-terminal-{}",
-                                term_id_for_close.clone()
-                            )))
-                            .size(px(12.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(2.))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Hsla::from(rgb(0xef4444)).opacity(0.3)))
-                            .on_click({
-                                let term_id = term_id_for_close.clone();
-                                let tab_id = tab_id_for_close.clone();
-                                let session = session_for_close.clone();
-                                move |_, _window, cx| {
-                                    session.update(cx, |state, cx| {
-                                        state.close_terminal_instance(&tab_id, &term_id, cx);
-                                        cx.notify();
-                                    });
-                                    cx.stop_propagation();
-                                }
-                            })
-                            .child(svg().path(icons::X).size(px(8.)).text_color(muted_color)),
-                    )
-                })
-        }))
-        // 添加按钮
-        .child({
-            let tab_id_for_add = tab_id_for_toolbar.clone();
-            let session_for_add = session_state_for_toolbar.clone();
-
-            div()
-                .id("add-terminal-btn")
-                .h_full()
-                .px_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .hover(|s| s.bg(primary_color.opacity(0.2)))
-                .on_click(move |_, _window, cx| {
-                    session_for_add.update(cx, |state, cx| {
-                        state.add_terminal_instance(&tab_id_for_add);
-                        cx.notify();
-                    });
-                })
-                .child(
-                    svg()
-                        .path(icons::PLUS)
-                        .size(px(10.))
-                        .text_color(muted_color),
-                )
-        });
+    let search_open = session_state.read(cx).search_open;
+    let terminal_tabs = render_terminal_tabs(tab, search_open, session_state.clone(), &lang, &p);
 
     div()
         .size_full()
         .flex()
         .flex_col()
-        // 终端顶部工具栏区域
-        .children(terminal_settings.show_tab_bar.then_some(terminal_toolbar))
+        // 终端标签条（设置里可关闭）
+        .children(terminal_settings.show_tab_bar.then_some(terminal_tabs))
         // 终端显示区域（占据剩余空间）
         .child(terminal_area)
-        // 命令输入区域（下方）
+        // 命令输入区域（下方，设置里可关闭）
         .children(terminal_settings.show_command_input.then(|| {
-            render_command_input(
-                border_color,
-                command_input,
-                pty_channel,
-                terminal_entity,
-                cx,
-            )
+            render_command_input(command_input, pty_channel, terminal_entity, &lang, &p, cx)
         }))
 }
 
@@ -1240,54 +1066,302 @@ fn render_terminal_content(
     )
 }
 
-/// 渲染加载中的终端
-fn render_loading_terminal(settings: &crate::models::settings::TerminalSettings, _cx: &App) -> Div {
-    let bg_color = hex_to_hsla(&settings.background_color);
-    let fg_color = hex_to_hsla(&settings.foreground_color);
+/// 终端网格四周的留白：上 6、下 4，右边留出滚动条的位置（左边距由设置里的「左侧内边距」决定）
+const GRID_INSET_TOP: Pixels = px(6.);
+const GRID_INSET_BOTTOM: Pixels = px(4.);
+const GRID_INSET_RIGHT: Pixels = px(12.);
+
+/// 终端标签的最大宽度（名称部分）
+const TERMINAL_TAB_LABEL_MAX: Pixels = px(160.);
+/// 终端标签内部用于联动悬停样式（显示关闭钮）的分组名
+const TERMINAL_TAB_GROUP: &str = "terminal-tab";
+
+/// 终端背景色（按设置里的不透明度）
+fn terminal_background(settings: &crate::models::settings::TerminalSettings) -> Hsla {
+    let opacity = (settings.background_opacity as f32 / 100.0).clamp(0.0, 1.0);
+    hex_to_hsla(&settings.background_color).opacity(opacity)
+}
+
+/// 终端标签条：各终端的标签、新建终端，右侧是搜索
+fn render_terminal_tabs(
+    tab: &SessionTab,
+    search_open: bool,
+    session_state: Entity<SessionState>,
+    lang: &Language,
+    p: &Palette,
+) -> impl IntoElement {
+    let label_prefix = i18n::t(lang, "session.terminal.tab_label");
+    let can_close = tab.terminals.len() > 1;
+
+    let tabs = tab.terminals.iter().map(|instance| {
+        let is_active = tab.active_terminal_id.as_ref() == Some(&instance.id);
+        // 使用稳定的本地编号作为标签，避免远端 OSC 标题使标签频繁变化。
+        let label = format!("{} {}", label_prefix, instance.index);
+        let (hover_bg, text) = (p.hover, if is_active { p.text } else { p.text_muted });
+
+        let activate = {
+            let session_state = session_state.clone();
+            let tab_id = tab.id.clone();
+            let terminal_id = instance.id.clone();
+            move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                session_state.update(cx, |state, cx| {
+                    state.activate_terminal_instance(&tab_id, &terminal_id);
+                    cx.notify();
+                });
+            }
+        };
+
+        div()
+            .id(SharedString::from(format!("terminal-tab-{}", instance.id)))
+            .group(TERMINAL_TAB_GROUP)
+            .flex_none()
+            .h(HEADER_CONTROL_HEIGHT)
+            .pl(px(10.))
+            .pr(px(if can_close { 4. } else { 10. }))
+            .rounded(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .cursor_pointer()
+            .when(is_active, |tab| tab.bg(p.selected))
+            .when(!is_active, |tab| tab.hover(move |s| s.bg(hover_bg)))
+            .on_click(activate)
+            .child(icon_sized(
+                icons::TERMINAL,
+                13.,
+                if is_active { p.primary } else { p.text_faint },
+            ))
+            .child(
+                div()
+                    .max_w(TERMINAL_TAB_LABEL_MAX)
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_size(px(12.))
+                    .font_weight(if is_active {
+                        FontWeight::MEDIUM
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_color(text)
+                    .child(label),
+            )
+            // 关闭按钮：有多个终端时才显示，当前标签一直显示，其余标签悬停时显示
+            .when(can_close, |row| {
+                let session_state = session_state.clone();
+                let tab_id = tab.id.clone();
+                let terminal_id = instance.id.clone();
+                row.child(
+                    icon_button_sized(
+                        SharedString::from(format!("close-terminal-{}", instance.id)),
+                        icons::X,
+                        px(18.),
+                        11.,
+                        i18n::t(lang, "terminal.tab.close"),
+                        p,
+                    )
+                    .rounded(px(5.))
+                    .when(!is_active, |button| {
+                        button
+                            .invisible()
+                            .group_hover(TERMINAL_TAB_GROUP, |s| s.visible())
+                    })
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        session_state.update(cx, |state, cx| {
+                            state.close_terminal_instance(&tab_id, &terminal_id, cx);
+                            cx.notify();
+                        });
+                    }),
+                )
+            })
+    });
+
+    let add_button = {
+        let session_state = session_state.clone();
+        let tab_id = tab.id.clone();
+        icon_button_sized(
+            "add-terminal-btn",
+            icons::PLUS,
+            px(26.),
+            13.,
+            i18n::t(lang, "terminal.tab.new"),
+            p,
+        )
+        .on_click(move |_, _, cx| {
+            session_state.update(cx, |state, cx| {
+                state.add_terminal_instance(&tab_id);
+                cx.notify();
+            });
+        })
+    };
+
+    let search_button = {
+        let session_state = session_state.clone();
+        icon_toggle_button(
+            "terminal-search-toggle",
+            icons::SEARCH,
+            search_open,
+            i18n::t(lang, "terminal.search.open"),
+            p,
+        )
+        .on_click(move |_, window, cx| {
+            session_state.update(cx, |state, cx| state.toggle_terminal_search(window, cx));
+        })
+    };
+
+    panel_header(p)
+        .id("terminal-toolbar")
+        .w_full()
+        .px(px(6.))
+        .gap(px(2.))
+        .bg(p.background)
+        .children(tabs)
+        .child(add_button)
+        .child(div().flex_1())
+        .child(search_button)
+}
+
+/// 搜索栏：浮在终端右上角的卡片
+fn render_search_bar(
+    search_input: &Entity<InputState>,
+    (current, total): (usize, usize),
+    has_query: bool,
+    session_state: Entity<SessionState>,
+    lang: &Language,
+    p: &Palette,
+) -> impl IntoElement {
+    // 有关键字但没有命中时，计数标红
+    let count_color = if has_query && total == 0 {
+        p.danger
+    } else {
+        p.text_faint
+    };
+    let step = |id: &'static str, icon: &'static str, tooltip: &'static str, forward: bool| {
+        let session_state = session_state.clone();
+        icon_button_sized(id, icon, px(24.), 13., i18n::t(lang, tooltip), p).on_click(
+            move |_, _, cx| {
+                session_state.update(cx, |state, cx| {
+                    if let Some(terminal) = state.active_terminal_entity() {
+                        terminal.update(cx, |t, cx| {
+                            if forward {
+                                t.search_next_match();
+                            } else {
+                                t.search_prev_match();
+                            }
+                            cx.notify();
+                        });
+                    }
+                    cx.notify();
+                });
+            },
+        )
+    };
 
     div()
-        .size_full()
-        .bg(bg_color)
+        .id("terminal-search-bar")
+        .absolute()
+        .top(px(8.))
+        .right(px(16.))
+        .h(px(36.))
+        .pl(px(10.))
+        .pr(px(4.))
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .rounded(px(8.))
+        .bg(p.surface)
+        .border_1()
+        .border_color(p.border)
+        .shadow_md()
+        .cursor_default()
+        // 阻止在搜索栏上的鼠标操作触发终端选择
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(icon_sized(icons::SEARCH, 13., p.text_faint))
+        .child(
+            div().w(px(180.)).child(
+                Input::new(search_input)
+                    .appearance(false)
+                    .text_size(px(13.)),
+            ),
+        )
+        .child(
+            div()
+                .flex_none()
+                .min_w(px(36.))
+                .text_size(px(12.))
+                .text_color(count_color)
+                .text_right()
+                .child(format!("{current}/{total}")),
+        )
+        .child(
+            div()
+                .flex_none()
+                .w(px(1.))
+                .h(px(16.))
+                .mx(px(2.))
+                .bg(p.border),
+        )
+        .child(step(
+            "terminal-search-prev",
+            icons::CHEVRON_UP,
+            "terminal.search.previous",
+            false,
+        ))
+        .child(step(
+            "terminal-search-next",
+            icons::CHEVRON_DOWN,
+            "terminal.search.next",
+            true,
+        ))
+        .child({
+            let session_state = session_state.clone();
+            icon_button_sized(
+                "terminal-search-close",
+                icons::X,
+                px(24.),
+                13.,
+                i18n::t(lang, "terminal.search.close"),
+                p,
+            )
+            .on_click(move |_, window, cx| {
+                session_state.update(cx, |state, cx| state.close_terminal_search(window, cx));
+            })
+        })
+}
+
+/// 状态卡片所在的层：盖住整个终端区域的遮罩，卡片居中
+fn render_overlay_layer(card: AnyElement, p: &Palette) -> Div {
+    div()
+        .absolute()
+        .inset_0()
+        .bg(p.overlay)
         .flex()
         .items_center()
         .justify_center()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap_2()
-                .child(svg().path(icons::LOADER).size(px(24.)).text_color(fg_color))
-                .child(
-                    div()
-                        .text_color(fg_color.opacity(0.6))
-                        .text_sm()
-                        .child("Initializing terminal..."),
-                ),
-        )
+        .p(px(16.))
+        .child(card)
 }
 
-/// 渲染终端内容 + 覆盖层
-fn render_terminal_with_overlay(
-    terminal_content: AnyElement,
-    _settings: &crate::models::settings::TerminalSettings,
-    overlay: impl IntoElement,
-    _cx: &App,
+/// 终端还没打开时的提示：终端配色上的加载图标和文字
+fn render_initializing_layer(
+    settings: &crate::models::settings::TerminalSettings,
+    lang: &Language,
 ) -> Div {
+    let fg = hex_to_hsla(&settings.foreground_color).opacity(0.6);
     div()
-        .size_full()
-        .relative()
-        // 终端内容层（底层，半透明）
-        .child(div().size_full().opacity(0.6).child(terminal_content))
-        // 覆盖层（顶层）
+        .absolute()
+        .inset_0()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(8.))
+        .child(spinner("terminal-initializing", 20., fg))
         .child(
             div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(overlay),
+                .text_size(px(13.))
+                .text_color(fg)
+                .child(i18n::t(lang, "session.terminal.placeholder")),
         )
 }
 
@@ -1299,84 +1373,99 @@ struct StatusAction {
     on_click: Box<dyn Fn(&mut App) + 'static>,
 }
 
-/// 叠加在终端历史之上的状态卡片
+/// 状态卡片左上的图形
+enum StatusIcon {
+    Icon(&'static str),
+    Spinner,
+}
+
+/// 叠加在终端历史之上的状态卡片：与弹窗同款的外框，状态色图标块、标题、说明和一个主按钮
 fn render_status_card(
-    icon: &'static str,
-    color: Hsla,
+    icon: StatusIcon,
+    tone: Hsla,
     title: &'static str,
     detail: Option<String>,
     action: Option<StatusAction>,
-    cx: &App,
+    p: &Palette,
 ) -> Div {
-    let white = Hsla::from(rgb(0xffffff));
-    let primary = cx.theme().primary;
-
     div()
+        .w(px(360.))
+        .max_w_full()
+        .p(px(20.))
+        .rounded(px(12.))
+        .bg(p.surface)
+        .border_1()
+        .border_color(p.border)
+        .shadow_lg()
+        .cursor_default()
         .flex()
         .flex_col()
         .items_center()
-        .gap_2()
-        .max_w(px(440.))
-        .px_6()
-        .py_5()
-        .rounded_lg()
-        .bg(Hsla::from(rgb(0x000000)).opacity(0.75))
-        .child(svg().path(icon).size(px(28.)).text_color(color))
+        .gap(px(8.))
         .child(
             div()
-                .text_color(color)
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(title),
-        )
-        .children(detail.filter(|detail| !detail.trim().is_empty()).map(|detail| {
-            div()
-                .text_color(white.opacity(0.6))
-                .text_xs()
-                .text_center()
-                .child(detail)
-        }))
-        .children(action.map(|action| {
-            let on_click = action.on_click;
-            div()
-                .id(action.id)
-                .mt_2()
-                .px_4()
-                .py_2()
-                .rounded_md()
-                .bg(primary)
-                .cursor_pointer()
-                .hover(|style| style.opacity(0.9))
+                .flex_none()
+                .size(px(40.))
+                .rounded(px(10.))
+                .bg(tone.opacity(0.14))
                 .flex()
                 .items_center()
-                .gap_2()
-                .child(svg().path(action.icon).size(px(14.)).text_color(white))
-                .child(div().text_color(white).text_sm().child(action.label))
-                .on_click(move |_, _, cx| on_click(cx))
+                .justify_center()
+                .child(match icon {
+                    StatusIcon::Icon(path) => icon_sized(path, 20., tone).into_any_element(),
+                    StatusIcon::Spinner => {
+                        spinner("terminal-status-spinner", 20., tone).into_any_element()
+                    }
+                }),
+        )
+        .child(
+            div()
+                .mt(px(4.))
+                .text_size(px(15.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(p.text)
+                .text_center()
+                .child(title),
+        )
+        .children(
+            detail
+                .filter(|detail| !detail.trim().is_empty())
+                .map(|detail| {
+                    div()
+                        .text_size(px(12.))
+                        .text_color(p.text_muted)
+                        .text_center()
+                        .child(detail)
+                }),
+        )
+        .children(action.map(|action| {
+            let on_click = action.on_click;
+            div().mt(px(8.)).child(
+                primary_button(action.id, action.icon, action.label, p)
+                    .on_click(move |_, _, cx| on_click(cx)),
+            )
         }))
-}
-
-fn current_language() -> crate::models::settings::Language {
-    crate::services::storage::load_settings()
-        .map(|s| s.theme.language)
-        .unwrap_or_default()
 }
 
 /// 自动重连中
-fn render_reconnecting_overlay(attempt: u32, max_attempts: u32, cx: &App) -> Div {
-    let lang = current_language();
+fn render_reconnecting_overlay(
+    attempt: u32,
+    max_attempts: u32,
+    lang: &Language,
+    p: &Palette,
+) -> Div {
     render_status_card(
-        icons::LOADER,
-        Hsla::from(rgb(0xf59e0b)),
-        crate::i18n::t(&lang, "terminal.reconnecting"),
+        StatusIcon::Spinner,
+        p.warning,
+        i18n::t(lang, "terminal.reconnecting"),
         Some(format!(
             "{} {}/{}",
-            crate::i18n::t(&lang, "terminal.reconnect_attempt"),
+            i18n::t(lang, "terminal.reconnect_attempt"),
             attempt,
             max_attempts
         )),
         None,
-        cx,
+        p,
     )
 }
 
@@ -1385,23 +1474,23 @@ fn render_disconnected_overlay(
     tab_id: String,
     reason: Option<String>,
     session_state: Entity<SessionState>,
-    cx: &App,
+    lang: &Language,
+    p: &Palette,
 ) -> Div {
-    let lang = current_language();
     render_status_card(
-        icons::UNPLUG,
-        Hsla::from(rgb(0xf59e0b)),
-        crate::i18n::t(&lang, "terminal.disconnected"),
+        StatusIcon::Icon(icons::UNPLUG),
+        p.warning,
+        i18n::t(lang, "terminal.disconnected"),
         reason,
         Some(StatusAction {
             id: "reconnect-btn",
-            label: crate::i18n::t(&lang, "terminal.reconnect"),
+            label: i18n::t(lang, "terminal.reconnect"),
             icon: icons::REFRESH,
             on_click: Box::new(move |cx| {
                 crate::ssh::start_manual_reconnection(tab_id.clone(), session_state.clone(), cx);
             }),
         }),
-        cx,
+        p,
     )
 }
 
@@ -1410,17 +1499,17 @@ fn render_shell_exited_overlay(
     tab_id: String,
     terminal_id: String,
     session_state: Entity<SessionState>,
-    cx: &App,
+    lang: &Language,
+    p: &Palette,
 ) -> Div {
-    let lang = current_language();
     render_status_card(
-        icons::TERMINAL,
-        Hsla::from(rgb(0xf59e0b)),
-        crate::i18n::t(&lang, "terminal.shell_exited"),
+        StatusIcon::Icon(icons::TERMINAL),
+        p.text_muted,
+        i18n::t(lang, "terminal.shell_exited"),
         None,
         Some(StatusAction {
             id: "restart-shell-btn",
-            label: crate::i18n::t(&lang, "terminal.restart_shell"),
+            label: i18n::t(lang, "terminal.restart_shell"),
             icon: icons::REFRESH,
             on_click: Box::new(move |cx| {
                 session_state.update(cx, |state, cx| {
@@ -1429,7 +1518,7 @@ fn render_shell_exited_overlay(
                 });
             }),
         }),
-        cx,
+        p,
     )
 }
 
@@ -1439,17 +1528,17 @@ fn render_open_failed_overlay(
     tab_id: String,
     terminal_id: String,
     session_state: Entity<SessionState>,
-    cx: &App,
+    lang: &Language,
+    p: &Palette,
 ) -> Div {
-    let lang = current_language();
     render_status_card(
-        icons::X,
-        Hsla::from(rgb(0xef4444)),
-        crate::i18n::t(&lang, "terminal.open_failed"),
+        StatusIcon::Icon(icons::X),
+        p.danger,
+        i18n::t(lang, "terminal.open_failed"),
         Some(message),
         Some(StatusAction {
             id: "retry-terminal-btn",
-            label: crate::i18n::t(&lang, "terminal.retry"),
+            label: i18n::t(lang, "terminal.retry"),
             icon: icons::REFRESH,
             on_click: Box::new(move |cx| {
                 session_state.update(cx, |state, cx| {
@@ -1458,92 +1547,95 @@ fn render_open_failed_overlay(
                 });
             }),
         }),
-        cx,
+        p,
     )
 }
 
-/// 渲染命令输入区域
+/// 把命令框里的内容发送到终端（追加回车），然后清空命令框
+fn send_command(
+    input: &Entity<InputState>,
+    channel: &Arc<TerminalChannel>,
+    terminal: Option<&Entity<TerminalState>>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let content = input.read(cx).value().to_string();
+    if content.is_empty() {
+        return;
+    }
+
+    let mut bytes = content.into_bytes();
+    bytes.push(0x0d); // CR (回车)
+
+    // 重置光标可见（有输入时）
+    if let Some(terminal) = terminal {
+        terminal.update(cx, |t, _| t.show_cursor());
+    }
+
+    if let Err(e) = channel.queue_write(bytes) {
+        tracing::error!("[Terminal] PTY write error: {:?}", e);
+    }
+
+    input.update(cx, |state, cx| {
+        state.set_value(String::new(), window, cx);
+    });
+}
+
+/// 渲染命令输入区域：带底色和边框的多行输入框（自动增高），右侧是发送按钮（输入为空时禁用）
 fn render_command_input(
-    border_color: Hsla,
     command_input: Option<Entity<InputState>>,
     pty_channel: Option<Arc<TerminalChannel>>,
     terminal: Option<Entity<TerminalState>>,
+    lang: &Language,
+    p: &Palette,
     cx: &App,
 ) -> impl IntoElement {
-    let primary = cx.theme().primary;
+    let can_send = pty_channel.is_some()
+        && command_input
+            .as_ref()
+            .is_some_and(|input| !input.read(cx).value().trim().is_empty());
 
-    // 克隆用于闭包
-    let input_for_click = command_input.clone();
-    let channel_for_click = pty_channel.clone();
-    let terminal_for_click = terminal.clone();
+    let send_button = icon_button_custom(
+        "send-command-btn",
+        icons::SEND,
+        IconButtonLook {
+            size: ICON_BUTTON_SIZE,
+            icon_size: 14.,
+            icon_color: p.primary,
+            hover_icon_color: p.primary,
+            rest_bg: None,
+            enabled: can_send,
+        },
+        i18n::t(lang, "terminal.send"),
+        p,
+    )
+    .when(can_send, |button| {
+        let input = command_input.clone();
+        let channel = pty_channel.clone();
+        let terminal = terminal.clone();
+        button.on_click(move |_, window, cx| {
+            if let (Some(input), Some(channel)) = (input.as_ref(), channel.as_ref()) {
+                send_command(input, channel, terminal.as_ref(), window, cx);
+            }
+        })
+    });
 
     div()
         .id("command-input-area")
         .flex_shrink_0()
+        .px(px(8.))
+        .py(px(6.))
+        .bg(p.background)
         .border_t_1()
-        .border_color(border_color)
-        .p_1()
+        .border_color(p.border)
+        .flex()
+        .items_end()
+        .gap(px(6.))
         .child(
-            // 输入框容器
             div()
-                .w_full()
-                .flex()
-                .items_end()
-                .gap_1()
-                // 输入框
-                .child(
-                    div().flex_1().children(
-                        command_input
-                            .as_ref()
-                            .map(|input| Input::new(input).appearance(false)),
-                    ),
-                )
-                // 发送按钮
-                .child(
-                    div()
-                        .id("send-command-btn")
-                        .size(px(24.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(primary.opacity(0.1)))
-                        .on_click(move |_, window, cx| {
-                            // 获取输入框和 PTY channel
-                            let Some(input) = input_for_click.clone() else {
-                                return;
-                            };
-                            let Some(channel) = channel_for_click.clone() else {
-                                return;
-                            };
-
-                            // 读取输入内容
-                            let content = input.read(cx).value().to_string();
-                            if content.is_empty() {
-                                return;
-                            }
-
-                            // 将内容转换为字节并追加回车符
-                            let mut bytes = content.into_bytes();
-                            bytes.push(0x0d); // CR (回车)
-
-                            // 重置光标可见（有输入时）
-                            if let Some(terminal) = terminal_for_click.clone() {
-                                terminal.update(cx, |t, _| {
-                                    t.show_cursor();
-                                });
-                            }
-
-                            if let Err(e) = channel.queue_write(bytes) {
-                                tracing::error!("[Terminal] PTY write error: {:?}", e);
-                            }
-
-                            // 清空输入框
-                            input.update(cx, |state, cx| {
-                                state.set_value(String::new(), window, cx);
-                            });
-                        })
-                        .child(svg().path(icons::SEND).size(px(14.)).text_color(primary)),
-                ),
+                .flex_1()
+                .min_w_0()
+                .children(command_input.as_ref().map(|input| text_area(input))),
         )
+        .child(div().flex_none().pb(px(1.)).child(send_button))
 }

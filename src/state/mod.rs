@@ -155,6 +155,10 @@ pub struct SessionState {
     pub show_home: bool,
     /// 右侧 Sidebar 是否折叠
     pub sidebar_collapsed: bool,
+    /// 会话视图左列（监控、SFTP 目录树）的宽度，所有标签共用；实际宽度还要按窗口宽度调整，见 `pages::session::fit_columns`
+    pub left_column_width: gpui::Pixels,
+    /// 右侧侧栏的宽度，所有标签共用
+    pub sidebar_width: gpui::Pixels,
     /// 当前激活的侧边栏面板
     pub active_sidebar_panel: SidebarPanel,
     /// 快捷命令树展开的组 ID 集合
@@ -195,6 +199,10 @@ pub struct SessionState {
     pub file_watch_receiver: Option<std::sync::mpsc::Receiver<FileWatchEvent>>,
     /// AI 对话输入框（按 tab_id 存储）
     pub ai_chat_inputs: HashMap<String, Entity<InputState>>,
+    /// 刚复制过的条目（例如监控里的地址、快捷命令），图标短暂显示为对勾
+    pub copied_key: Option<String>,
+    /// 每次复制递增，旧的定时器到期时不会清掉新的复制反馈
+    pub copy_feedback_token: u64,
 }
 
 impl Default for SessionState {
@@ -204,6 +212,8 @@ impl Default for SessionState {
             active_tab_id: None,
             show_home: true,
             sidebar_collapsed: false,
+            left_column_width: crate::pages::session::columns::LEFT_COLUMN_DEFAULT,
+            sidebar_width: crate::pages::session::columns::SIDEBAR_DEFAULT,
             active_sidebar_panel: SidebarPanel::Snippets,
             snippets_expanded: HashSet::new(),
             snippets_config: None,
@@ -224,6 +234,8 @@ impl Default for SessionState {
             file_watcher: None,
             file_watch_receiver: None,
             ai_chat_inputs: HashMap::new(),
+            copied_key: None,
+            copy_feedback_token: 0,
         }
     }
 }

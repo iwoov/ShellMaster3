@@ -1,37 +1,40 @@
-// SFTP 面板组件 - 包含导航工具栏、文件夹树和文件列表
+// SFTP 面板：左列目录树（与上方监控同宽、同底色），右列文件列表，各自带 36px 表头
+//
+// ┌──────────────────┬───────────────────────────────────────────────────┐
+// │ 远程文件  ⌂ ⟳ 👁   │ ← → ↑ [ / › var › www › app          ]  ⊕ ⇧ ⇩ │
+// ├──────────────────┼───────────────────────────────────────────────────┤
+// │ ▾ var            │ 名称                大小   修改时间   权限   所有者 │
+// │   ▾ www          │ …                                                 │
+// └──────────────────┴───────────────────────────────────────────────────┘
 
 use gpui::*;
-use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::ActiveTheme;
 
-use crate::models::sftp::FileType;
-
+use crate::components::common::text::TextFitter;
 use crate::components::sftp::{
-    render_folder_tree, render_sftp_toolbar, FileListView, FolderTreeEvent, PathBarState,
-    SftpToolbarEvent,
+    render_folder_tree, render_sftp_list_header, render_sftp_tree_header, FileListView,
+    FolderTreeEvent, PathBarState, SftpToolbarEvent,
 };
-use crate::models::sftp::SftpState;
+use crate::models::settings::Language;
+use crate::models::sftp::{FileType, SftpState};
 use crate::state::SessionState;
 
-/// 渲染 SFTP 面板（使用 Table 组件）
-/// 布局结构：
-/// ┌─────────────────────────────────────────────────────────────────┐
-/// │ [←][→][↑][🏠] │     /home/user/path/to/folder      │ [🔄][📁][👁] │
-/// ├─────────────────┬───────────────────────────────────────────────┤
-/// │                 │                                               │
-/// │    文件夹树      │              文件列表                         │
-/// │                 │                                               │
-/// └─────────────────┴───────────────────────────────────────────────┘
+/// 渲染 SFTP 面板。`tree_width` 是左列宽度（含右边线）
+#[allow(clippy::too_many_arguments)]
 pub fn render_sftp_panel(
     sftp_state: Option<&SftpState>,
     file_list_view: Option<Entity<FileListView>>,
     path_bar_state: Option<Entity<PathBarState>>,
     session_state: Entity<SessionState>,
     tab_id: String,
+    tree_width: Pixels,
+    lang: &Language,
+    fit: &TextFitter,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    // === 创建事件处理闭包 ===
+    let p = crate::theme::palette(cx);
+
+    // === 工具栏事件 ===
     let session_for_toolbar = session_state.clone();
     let tab_id_for_toolbar = tab_id.clone();
     let file_list_for_toolbar = file_list_view.clone();
@@ -48,7 +51,7 @@ pub fn render_sftp_panel(
                 state.sftp_open_new_folder_dialog(&tab_id_for_toolbar, cx);
             }
             SftpToolbarEvent::Upload => {
-                // 获取当前SFTP路径
+                // 上传按钮选择的是文件夹（与原来的行为一致）
                 if let Some(current_path) = state
                     .tabs
                     .iter()
@@ -56,23 +59,20 @@ pub fn render_sftp_panel(
                     .and_then(|t| t.sftp_state.as_ref())
                     .map(|s| s.current_path.clone())
                 {
-                    // 打开文件夹选择器进行上传
                     state.sftp_upload_folder_with_picker(&tab_id_for_toolbar, current_path, cx);
                 }
             }
             SftpToolbarEvent::Download => {
-                // 获取选中的文件或文件夹
+                // 下载选中的文件或文件夹（没有选中时按钮是禁用的）
                 if let Some(ref file_list) = file_list_for_toolbar {
                     if let Some(file) = file_list.read(cx).get_selected_file(cx) {
                         if file.file_type == FileType::Directory {
-                            // 下载文件夹 - 调用带文件选择器的方法
                             state.sftp_download_folder_with_picker(
                                 &tab_id_for_toolbar,
                                 file.path.clone(),
                                 cx,
                             );
                         } else {
-                            // 下载单个文件
                             state.sftp_download_file(
                                 &tab_id_for_toolbar,
                                 file.path.clone(),
@@ -87,9 +87,9 @@ pub fn render_sftp_panel(
         });
     };
 
+    // === 目录树事件 ===
     let session_for_tree = session_state.clone();
     let tab_id_for_tree = tab_id.clone();
-
     let on_folder_tree_event = move |event: FolderTreeEvent, cx: &mut App| {
         session_for_tree.update(cx, |state, cx| match event {
             FolderTreeEvent::ToggleExpand(path) => {
@@ -99,70 +99,70 @@ pub fn render_sftp_panel(
         });
     };
 
-    // === 顶部工具栏 ===
-    let toolbar: AnyElement = if let Some(path_bar) = path_bar_state {
-        render_sftp_toolbar(sftp_state, path_bar, on_toolbar_event, cx).into_any_element()
-    } else {
-        // 回退：显示空占位
-        let bg_color = crate::theme::sidebar_color(cx);
-        let border_color = cx.theme().border;
-        div()
-            .w_full()
-            .h(px(32.))
-            .flex_shrink_0()
-            .bg(bg_color)
-            .border_b_1()
-            .border_color(border_color)
-            .into_any_element()
-    };
+    let has_selection = file_list_view
+        .as_ref()
+        .is_some_and(|view| view.read(cx).get_selected_file(cx).is_some());
 
-    // === 左侧内容区：文件夹树 ===
-    let folder_tree = render_folder_tree(&tab_id, sftp_state, on_folder_tree_event, window, cx);
-
-    // === 右侧内容区：文件列表（使用 Table Entity） ===
-    let file_list: AnyElement = if let Some(view) = file_list_view {
-        // 直接使用已同步的 FileListView（数据同步在 page.rs 中完成）
-        view.into_any_element()
-    } else {
-        // 回退：显示提示信息
-        let bg_color = crate::theme::sidebar_color(cx);
-        let muted_foreground = cx.theme().muted_foreground;
-        div()
-            .size_full()
-            .bg(bg_color)
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted_foreground)
-                    .child("Loading..."),
-            )
-            .into_any_element()
-    };
-
-    // === 下方内容区：使用水平可调整大小布局分隔文件夹树和文件列表 ===
-    let content_area = h_resizable("sftp-panel-h")
-        .child(
-            resizable_panel()
-                .size(px(229.)) // 文件夹树初始宽度，与 Monitor 面板对齐
-                .child(folder_tree),
-        )
-        .child(resizable_panel().child(file_list));
-
-    // === 整体布局：工具栏 + 内容区 ===
-    div()
-        .size_full()
+    // === 左列：表头 + 目录树 ===
+    let tree_column = div()
+        .flex_none()
+        .w(tree_width)
+        .h_full()
+        .bg(p.sidebar)
+        .border_r_1()
+        .border_color(p.border)
         .flex()
         .flex_col()
-        .child(toolbar)
-        // 用 div 包装 content_area 以应用 flex_1 和 min_h，确保滚动正常工作
+        .child(render_sftp_tree_header(
+            sftp_state,
+            on_toolbar_event.clone(),
+            lang,
+            &p,
+        ))
+        .child(render_folder_tree(
+            &tab_id,
+            sftp_state,
+            tree_width,
+            lang,
+            fit,
+            on_folder_tree_event,
+            window,
+            cx,
+        ));
+
+    // === 右列：表头 + 文件列表 ===
+    let file_list: AnyElement = match file_list_view {
+        Some(view) => view.into_any_element(),
+        // 视图在会话页每帧确保创建，这里只是兜底
+        None => div().size_full().bg(p.background).into_any_element(),
+    };
+    let list_column = div()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .bg(p.background)
+        .flex()
+        .flex_col()
+        .child(render_sftp_list_header(
+            sftp_state,
+            path_bar_state,
+            has_selection,
+            on_toolbar_event,
+            lang,
+            &p,
+        ))
         .child(
             div()
                 .flex_1()
                 .min_h(px(0.))
                 .overflow_hidden()
-                .child(content_area),
-        )
+                .child(file_list),
+        );
+
+    div()
+        .size_full()
+        .flex()
+        .flex_row()
+        .child(tree_column)
+        .child(list_column)
 }

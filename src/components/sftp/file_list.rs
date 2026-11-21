@@ -6,15 +6,22 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_component::table::{Column, ColumnSort, Table, TableDelegate, TableEvent, TableState};
-use gpui_component::ActiveTheme;
+use gpui_component::{ActiveTheme, Sizable};
 
+use crate::components::common::button::text_button;
+use crate::components::common::button::ButtonKind;
+use crate::components::common::format::format_bytes;
+use crate::components::common::panel::{panel_state, spinner, StateIcon};
+use crate::components::common::text::TextFitter;
 use crate::constants::icons;
 use crate::i18n::t;
 use crate::models::settings::Language;
 use crate::models::sftp::{FileEntry, FileType, SftpState};
+use crate::theme::Palette;
 
 /// SFTP 文件列表右键菜单事件
 #[derive(Clone, Debug)]
@@ -58,12 +65,18 @@ pub enum FileListContextMenuEvent {
 /// 图标尺寸
 const ICON_SIZE: f32 = 16.0;
 
-/// 列索引常量
+/// 列索引常量：名称、大小、修改时间在前，权限和所有者放在最后（窄窗口里先被挤出视野）
 const COL_NAME: usize = 0;
-const COL_PERMISSIONS: usize = 1;
-const COL_OWNER: usize = 2;
-const COL_SIZE: usize = 3;
-const COL_MODIFIED: usize = 4;
+const COL_SIZE: usize = 1;
+const COL_MODIFIED: usize = 2;
+const COL_PERMISSIONS: usize = 3;
+const COL_OWNER: usize = 4;
+/// 名称列的初始宽度
+const NAME_COLUMN_WIDTH: Pixels = px(300.);
+/// 单元格左右内边距（`Table::small()`）
+const CELL_PADDING_X: f32 = 6.;
+/// 名称前图标与文字的间距
+const NAME_GAP: f32 = 8.;
 
 /// 行拖放回调类型
 pub type RowDropCallback =
@@ -93,6 +106,8 @@ pub struct FileListDelegate {
     pub rename_input: Option<Entity<gpui_component::input::InputState>>,
     /// 行拖放回调（当文件拖放到文件夹行上时调用）
     pub on_row_drop: Option<RowDropCallback>,
+    /// 名称列当前宽度（拖动列宽后由视图更新），用于按实际宽度截断文件名
+    pub name_column_width: Pixels,
 }
 
 impl FileListDelegate {
@@ -111,6 +126,7 @@ impl FileListDelegate {
             editing_path: None,
             rename_input: None,
             on_row_drop: None,
+            name_column_width: NAME_COLUMN_WIDTH,
         };
         delegate.sync_column_sort_state();
         delegate
@@ -120,20 +136,20 @@ impl FileListDelegate {
     fn create_columns(lang: &Language) -> Vec<Column> {
         vec![
             Column::new("name", t(lang, "sftp.header.name"))
-                .width(px(300.))
+                .width(NAME_COLUMN_WIDTH)
                 .sortable(),
-            Column::new("permissions", t(lang, "sftp.header.permissions"))
-                .width(px(90.))
-                .resizable(true),
-            Column::new("owner", t(lang, "sftp.header.owner"))
-                .width(px(100.))
-                .resizable(true),
             Column::new("size", t(lang, "sftp.header.size"))
-                .width(px(70.))
+                .width(px(90.))
                 .sortable(),
             Column::new("modified", t(lang, "sftp.header.modified"))
-                .width(px(135.))
+                .width(px(140.))
                 .sortable(),
+            Column::new("permissions", t(lang, "sftp.header.permissions"))
+                .width(px(110.))
+                .resizable(true),
+            Column::new("owner", t(lang, "sftp.header.owner"))
+                .width(px(120.))
+                .resizable(true),
         ]
     }
 
@@ -311,20 +327,34 @@ fn hash_row_id(value: &str) -> u64 {
     hasher.finish()
 }
 
-/// 获取文件类型图标
+/// 获取文件类型图标（扩展名不区分大小写）
 fn get_file_icon(entry: &FileEntry) -> &'static str {
     match entry.file_type {
         FileType::Directory => icons::FOLDER,
         FileType::Symlink => icons::LINK,
-        FileType::File => match entry.extension() {
-            Some("txt" | "md" | "log") => icons::FILE_TEXT,
-            Some("rs" | "js" | "ts" | "py" | "go" | "c" | "cpp" | "h") => icons::FILE_CODE,
-            Some("json" | "yaml" | "yml" | "toml" | "xml") => icons::FILE_JSON,
-            Some("jpg" | "jpeg" | "png" | "gif" | "svg" | "webp") => icons::IMAGE,
-            Some("zip" | "tar" | "gz" | "7z" | "rar") => icons::ARCHIVE,
-            _ => icons::FILE,
-        },
+        FileType::File => {
+            let extension = entry.extension().map(str::to_ascii_lowercase);
+            match extension.as_deref() {
+                Some("txt" | "md" | "log") => icons::FILE_TEXT,
+                Some("rs" | "js" | "ts" | "py" | "go" | "c" | "cpp" | "h" | "sh") => {
+                    icons::FILE_CODE
+                }
+                Some("json" | "yaml" | "yml" | "toml" | "xml") => icons::FILE_JSON,
+                Some("jpg" | "jpeg" | "png" | "gif" | "svg" | "webp") => icons::IMAGE,
+                Some("zip" | "tar" | "gz" | "tgz" | "7z" | "rar" | "xz" | "bz2") => icons::ARCHIVE,
+                _ => icons::FILE,
+            }
+        }
         FileType::Other => icons::FILE,
+    }
+}
+
+/// 文件图标的颜色：文件夹用主色，符号链接稍亮，其余文件用弱色
+fn file_icon_color(entry: &FileEntry, p: &Palette) -> Hsla {
+    match entry.file_type {
+        FileType::Directory => p.primary,
+        FileType::Symlink => p.text_muted,
+        _ => p.text_faint,
     }
 }
 
@@ -341,11 +371,21 @@ fn format_modified_time(entry: &FileEntry) -> String {
             // 使用 chrono 进行正确的日期时间转换，并转为本地时区
             match Local.timestamp_opt(secs, 0) {
                 chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
-                _ => "-".to_string(),
+                _ => "—".to_string(),
             }
         }
-        None => "-".to_string(),
+        None => "—".to_string(),
     }
+}
+
+/// 单元格的外框：占满高度、竖直居中
+fn cell() -> Div {
+    div()
+        .h_full()
+        .w_full()
+        .flex()
+        .items_center()
+        .overflow_hidden()
 }
 
 impl TableDelegate for FileListDelegate {
@@ -378,13 +418,14 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let p = crate::theme::palette(cx);
         let name = self.columns[col_ix].name.clone();
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .text_xs()
-            .text_color(cx.theme().muted_foreground)
+        cell()
+            .when(col_ix == COL_SIZE, |cell| cell.justify_end())
+            .whitespace_nowrap()
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(p.text_muted)
             .child(name)
     }
 
@@ -392,7 +433,7 @@ impl TableDelegate for FileListDelegate {
         &mut self,
         row_ix: usize,
         col_ix: usize,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let Some(entry_ix) = self.row_order.get(row_ix).copied() else {
@@ -402,115 +443,97 @@ impl TableDelegate for FileListDelegate {
             return div().into_any_element();
         };
 
-        let foreground = cx.theme().foreground;
-        let muted = cx.theme().muted_foreground;
+        let p = crate::theme::palette(cx);
+        let mono = cx.theme().mono_font_family.clone();
 
         match col_ix {
             COL_NAME => {
                 let icon = get_file_icon(entry);
-                let icon_color = if entry.is_dir() {
-                    cx.theme().link
-                } else {
-                    muted
-                };
+                let icon_color = file_icon_color(entry, &p);
 
-                // 检查是否正在编辑此文件
-                let is_editing = self.editing_path.as_ref() == Some(&entry.path);
-
-                if is_editing {
-                    // 内联编辑模式 - 显示输入框
+                // 正在内联重命名：输入框代替文件名
+                if self.editing_path.as_ref() == Some(&entry.path) {
                     if let Some(input_state) = &self.rename_input {
-                        use gpui_component::input::Input;
-                        use gpui_component::Sizable;
-
-                        let border_color = cx.theme().primary;
-                        let bg = cx.theme().background;
-
-                        return div()
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .overflow_hidden()
-                            .child(svg().path(icon).size(px(ICON_SIZE)).text_color(icon_color))
+                        let field = crate::components::common::input::text_field(input_state);
+                        return cell()
+                            .gap(px(NAME_GAP))
+                            .child(
+                                svg()
+                                    .path(icon)
+                                    .size(px(ICON_SIZE))
+                                    .flex_none()
+                                    .text_color(icon_color),
+                            )
                             .child(
                                 div()
                                     .flex_1()
-                                    .h(px(22.))
-                                    .px_1()
-                                    .bg(bg)
-                                    .border_1()
-                                    .border_color(border_color)
-                                    .rounded(px(4.))
-                                    .child(
-                                        Input::new(input_state)
-                                            .appearance(false) // 无边框样式
-                                            .cleanable(false)
-                                            .xsmall()
-                                            .w_full(),
-                                    ),
+                                    .min_w_0()
+                                    .child(gpui::Styled::h(field, px(24.)).rounded(px(6.))),
                             )
                             .into_any_element();
                     }
                 }
 
-                // 正常显示模式
-                div()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .overflow_hidden()
-                    .child(svg().path(icon).size(px(ICON_SIZE)).text_color(icon_color))
+                let name_width = (self.name_column_width
+                    - px(CELL_PADDING_X * 2. + ICON_SIZE + NAME_GAP))
+                .max(px(24.));
+                let fit = TextFitter::new(window, cx);
+                cell()
+                    .gap(px(NAME_GAP))
                     .child(
-                        div()
-                            .flex_1()
-                            .text_xs()
-                            .text_color(foreground)
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(entry.name.clone()),
+                        svg()
+                            .path(icon)
+                            .size(px(ICON_SIZE))
+                            .flex_none()
+                            .text_color(icon_color),
+                    )
+                    .child(
+                        fit.label_with_tooltip(
+                            SharedString::from(format!("sftp-name-{}", entry.path)),
+                            &entry.name,
+                            name_width,
+                            13.,
+                            FontWeight::NORMAL,
+                        )
+                        .flex_none()
+                        .text_color(p.text),
                     )
                     .into_any_element()
             }
-
-            COL_PERMISSIONS => div()
-                .h_full()
-                .flex()
-                .items_center()
-                .text_xs()
-                .text_color(muted)
-                .font_family("monospace")
+            COL_SIZE => cell()
+                .justify_end()
+                .whitespace_nowrap()
+                .font_family(mono)
+                .text_size(px(12.))
+                .text_color(if entry.is_dir() {
+                    p.text_faint
+                } else {
+                    p.text_muted
+                })
+                .child(if entry.is_dir() {
+                    "—".to_string()
+                } else {
+                    format_bytes(entry.size)
+                })
+                .into_any_element(),
+            COL_MODIFIED => cell()
+                .whitespace_nowrap()
+                .text_size(px(12.))
+                .text_color(p.text_muted)
+                .child(format_modified_time(entry))
+                .into_any_element(),
+            COL_PERMISSIONS => cell()
+                .whitespace_nowrap()
+                .font_family(mono)
+                .text_size(px(12.))
+                .text_color(p.text_faint)
                 .child(entry.format_permissions())
                 .into_any_element(),
-            COL_OWNER => {
-                let owner = self.format_owner(entry.uid, entry.gid);
-                div()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .text_xs()
-                    .text_color(muted)
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .child(owner)
-                    .into_any_element()
-            }
-            COL_SIZE => div()
-                .h_full()
-                .flex()
-                .items_center()
-                .text_xs()
-                .text_color(muted)
-                .child(entry.format_size())
-                .into_any_element(),
-            COL_MODIFIED => div()
-                .h_full()
-                .flex()
-                .items_center()
-                .text_xs()
-                .text_color(muted)
-                .child(format_modified_time(entry))
+            COL_OWNER => cell()
+                .whitespace_nowrap()
+                .text_size(px(12.))
+                .text_color(p.text_faint)
+                .child(self.format_owner(entry.uid, entry.gid))
                 .into_any_element(),
             _ => div().into_any_element(),
         }
@@ -540,8 +563,8 @@ impl TableDelegate for FileListDelegate {
         if is_dir {
             base_div
                 .drag_over::<ExternalPaths>(|this, _, _, cx| {
-                    // 文件夹行高亮 - 使用明显的背景色
-                    this.bg(cx.theme().info.opacity(0.3))
+                    // 文件夹行高亮：主色淡底
+                    this.bg(crate::theme::palette(cx).primary.opacity(0.14))
                 })
                 .on_drop(move |external_paths: &ExternalPaths, _window, _cx| {
                     if let Some(ref callback) = on_row_drop {
@@ -562,10 +585,17 @@ impl TableDelegate for FileListDelegate {
     fn render_empty(
         &mut self,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        // 空文件夹不显示任何内容
-        div()
+        let p = crate::theme::palette(cx);
+        panel_state(
+            "sftp-empty-folder",
+            StateIcon::Icon(icons::FOLDER_OPEN),
+            p.text_faint,
+            t(&self.lang, "sftp.empty_folder"),
+            None,
+            &p,
+        )
     }
 
     fn loading(&self, _cx: &App) -> bool {
@@ -581,6 +611,8 @@ pub struct FileListView {
     loading: bool,
     /// 是否已连接
     connected: bool,
+    /// 读取当前目录失败时的错误信息
+    error: Option<String>,
     /// 语言设置
     lang: Language,
     /// 记录列宽（用于语言切换时保留）
@@ -604,9 +636,10 @@ pub struct FileListView {
 impl FileListView {
     /// 创建新的文件列表视图
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let lang = crate::services::storage::load_settings()
-            .map(|s| s.theme.language)
-            .unwrap_or_default();
+        let lang = crate::services::storage::cached_settings()
+            .theme
+            .language
+            .clone();
 
         // 创建共享事件队列
         let pending_row_drops: std::sync::Arc<
@@ -637,6 +670,12 @@ impl FileListView {
             |this, _state, event: &TableEvent, _window, cx| {
                 if let TableEvent::ColumnWidthsChanged(widths) = event {
                     this.column_widths = widths.clone();
+                    // 名称按实际列宽截断
+                    if let Some(width) = widths.get(COL_NAME).copied() {
+                        this.table_state.update(cx, |table, _| {
+                            table.delegate_mut().name_column_width = width;
+                        });
+                    }
                 }
                 cx.emit(event.clone());
             },
@@ -647,6 +686,7 @@ impl FileListView {
             table_state,
             loading: false,
             connected: false,
+            error: None,
             lang,
             column_widths: Vec::new(),
             last_file_list_revision: 0,
@@ -663,9 +703,10 @@ impl FileListView {
     pub fn sync_from_sftp_state(&mut self, sftp_state: Option<&SftpState>, cx: &mut Context<Self>) {
         let mut needs_notify = false;
 
-        let lang = crate::services::storage::load_settings()
-            .map(|s| s.theme.language)
-            .unwrap_or_default();
+        let lang = crate::services::storage::cached_settings()
+            .theme
+            .language
+            .clone();
         if lang != self.lang {
             self.lang = lang.clone();
             let widths = if self.column_widths.is_empty() {
@@ -693,6 +734,10 @@ impl FileListView {
                 }
                 if self.loading != state.loading {
                     self.loading = state.loading;
+                    needs_notify = true;
+                }
+                if self.error != state.error {
+                    self.error = state.error.clone();
                     needs_notify = true;
                 }
 
@@ -728,9 +773,10 @@ impl FileListView {
                 }
             }
             None => {
-                if self.connected || self.loading {
+                if self.connected || self.loading || self.error.is_some() {
                     self.connected = false;
                     self.loading = false;
+                    self.error = None;
                     needs_notify = true;
                 }
                 self.last_file_list_revision = 0;
@@ -845,63 +891,106 @@ impl Render for FileListView {
             }
         }
 
-        let bg_color = crate::theme::sidebar_color(cx);
-        let muted_foreground = cx.theme().muted_foreground;
+        let p = crate::theme::palette(cx);
         let lang = self.lang.clone();
-
-        if !self.connected {
-            // 未连接状态
-            return div()
-                .size_full()
-                .bg(bg_color)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(muted_foreground)
-                        .child(t(&self.lang, "sftp.not_connected")),
-                )
-                .into_any_element();
-        }
-
-        if self.loading {
-            // 加载中状态
-            return div()
-                .size_full()
-                .bg(bg_color)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(muted_foreground)
-                        .child(t(&self.lang, "sftp.loading")),
-                )
-                .into_any_element();
-        }
-
         let has_items = !self.table_state.read(cx).delegate().is_empty();
+
+        // 未连接 / 首次加载 / 读取失败：整块显示状态
+        if !self.connected {
+            return div()
+                .size_full()
+                .bg(p.background)
+                .child(panel_state(
+                    "sftp-list-not-connected",
+                    StateIcon::Spinner,
+                    p.text_faint,
+                    t(&lang, "sftp.connecting"),
+                    None,
+                    &p,
+                ))
+                .into_any_element();
+        }
+        if let Some(error) = self.error.clone().filter(|_| !has_items && !self.loading) {
+            let this = cx.entity().clone();
+            return div()
+                .size_full()
+                .bg(p.background)
+                .child(
+                    panel_state(
+                        "sftp-list-error",
+                        StateIcon::Icon(icons::X),
+                        p.danger,
+                        t(&lang, "sftp.load_failed"),
+                        Some(error.into()),
+                        &p,
+                    )
+                    .child(
+                        div().mt(px(8.)).child(
+                            text_button(
+                                "sftp-list-retry",
+                                ButtonKind::Secondary,
+                                t(&lang, "sftp.retry"),
+                                &p,
+                            )
+                            .on_click(move |_, _, cx| {
+                                this.update(cx, |_, cx| {
+                                    cx.emit(FileListContextMenuEvent::Refresh);
+                                });
+                            }),
+                        ),
+                    ),
+                )
+                .into_any_element();
+        }
+        if self.loading && !has_items {
+            return div()
+                .size_full()
+                .bg(p.background)
+                .child(panel_state(
+                    "sftp-list-loading",
+                    StateIcon::Spinner,
+                    p.text_faint,
+                    t(&lang, "sftp.loading"),
+                    None,
+                    &p,
+                ))
+                .into_any_element();
+        }
 
         // 获取自身 Entity 用于在上下文菜单中发出事件
         let this = cx.entity().clone();
+        let drop_border = p.primary;
 
-        // 正常状态 - 显示 Table，包装在带上下文菜单的容器中
-        let table = Table::new(&self.table_state).stripe(true).bordered(false);
+        // 正常状态：表格。加载其他目录时保留旧内容并变淡，路径框里有加载图标，不再整块闪掉
+        let table = Table::new(&self.table_state)
+            .small()
+            .stripe(false)
+            .bordered(false);
 
         div()
             .id("sftp-file-list-container")
             .size_full()
             .relative()
+            .bg(p.background)
+            // 常态就有 1px 透明边框，拖入时只变色，不挤动内容
+            .border_1()
+            .border_color(gpui::transparent_black())
             .child(table)
+            .when(self.loading, |list| {
+                list.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(p.background.opacity(0.45))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(spinner("sftp-list-reloading", 18., p.text_faint)),
+                )
+            })
             // 拖放上传支持
-            .drag_over::<ExternalPaths>(|this, _, _, cx| {
-                // 拖动悬停时显示视觉反馈 - 使用明显的背景色和边框
-                this.bg(cx.theme().drop_target)
-                    .border_2()
-                    .border_color(cx.theme().primary)
+            .drag_over::<ExternalPaths>(move |this, _, _, cx| {
+                this.bg(cx.theme().drop_target).border_color(drop_border)
             })
             .on_drop(
                 cx.listener(move |view, external_paths: &ExternalPaths, _window, cx| {
@@ -924,21 +1013,10 @@ impl Render for FileListView {
                 // 注意：这里使用"选中"而不是"悬停"，类似于 Windows 资源管理器的行为
                 match &selected_entry {
                     Some(entry) if entry.is_dir() => {
-                        // 文件夹右键菜单
                         build_folder_context_menu(menu, entry, &lang, this.clone())
                     }
-                    Some(entry) => {
-                        // 文件右键菜单
-                        build_file_context_menu(menu, entry, &lang, this.clone())
-                    }
-                    None if has_items => {
-                        // 有文件但没选中 - 空白区域菜单
-                        build_empty_area_context_menu(menu, &lang, this.clone())
-                    }
-                    None => {
-                        // 完全空的文件夹
-                        build_empty_area_context_menu(menu, &lang, this.clone())
-                    }
+                    Some(entry) => build_file_context_menu(menu, entry, &lang, this.clone()),
+                    None => build_empty_area_context_menu(menu, &lang, this.clone()),
                 }
             })
             .into_any_element()
@@ -995,7 +1073,7 @@ fn build_file_context_menu(
     )
     .item({
         let path = path_for_edit.clone();
-        menu_item_element(icons::EDIT, &edit_label).on_click(move |_, _, cx| {
+        menu_item_element(icons::FILE_CODE, &edit_label).on_click(move |_, _, cx| {
             e2.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::EditFile(path.clone()));
             });
@@ -1029,7 +1107,7 @@ fn build_file_context_menu(
     })
     .item({
         let path = path_for_delete.clone();
-        menu_item_element(icons::TRASH, &delete_label).on_click(move |_, _, cx| {
+        menu_item_danger(icons::TRASH, &delete_label).on_click(move |_, _, cx| {
             e4.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::Delete(path.clone()));
             });
@@ -1126,7 +1204,7 @@ fn build_folder_context_menu(
     })
     .item({
         let path = path_for_delete.clone();
-        menu_item_element(icons::TRASH, &delete_label).on_click(move |_, _, cx| {
+        menu_item_danger(icons::TRASH, &delete_label).on_click(move |_, _, cx| {
             e4.update(cx, |_, cx| {
                 cx.emit(FileListContextMenuEvent::Delete(path.clone()));
             });
@@ -1220,19 +1298,38 @@ fn build_empty_area_context_menu(
 
 /// 创建带图标的菜单项元素
 fn menu_item_element(icon: &str, label: &str) -> PopupMenuItem {
+    menu_item_with(icon, label, false)
+}
+
+/// 危险操作（删除）的菜单项：图标和文字用危险色
+fn menu_item_danger(icon: &str, label: &str) -> PopupMenuItem {
+    menu_item_with(icon, label, true)
+}
+
+fn menu_item_with(icon: &str, label: &str, danger: bool) -> PopupMenuItem {
     let icon = icon.to_string();
     let label = label.to_string();
     PopupMenuItem::element(move |_window, cx| {
-        let muted = cx.theme().muted_foreground;
+        let p = crate::theme::palette(cx);
+        let (icon_color, text_color) = if danger {
+            (p.danger, p.danger)
+        } else {
+            (p.text_muted, p.text)
+        };
         div()
             .flex()
             .items_center()
-            .gap_2()
-            .child(svg().path(icon.clone()).size(px(14.)).text_color(muted))
+            .gap(px(8.))
+            .child(
+                svg()
+                    .path(icon.clone())
+                    .size(px(14.))
+                    .text_color(icon_color),
+            )
             .child(
                 div()
-                    .text_xs()
-                    .text_color(cx.theme().foreground)
+                    .text_size(px(13.))
+                    .text_color(text_color)
                     .child(label.clone()),
             )
     })

@@ -30,11 +30,17 @@ pub fn init(cx: &mut App) {
     dark_config.colors.accent = Some("#1A2D49".into());
     dark_config.colors.accent_foreground = Some("#DCE9FF".into());
     dark_config.colors.list_hover = Some("#172536".into());
-    dark_config.colors.table = Some("#111923".into());
-    dark_config.colors.table_head = Some("#0E151F".into());
-    dark_config.colors.table_even = Some("#121B26".into());
-    dark_config.colors.table_hover = Some("#172536".into());
-    dark_config.colors.table_row_border = Some("#243140".into());
+    dark_config.colors.list_active = Some("#172230".into());
+    dark_config.colors.list_active_border = Some("#00000000".into());
+    // 表格（SFTP 文件列表）：与内容区同底色，悬停 / 选中取主页色板，选中行不画边框，行间只留很淡的分隔线
+    dark_config.colors.table = Some("#0B1017".into());
+    dark_config.colors.table_head = Some("#0B1017".into());
+    dark_config.colors.table_even = Some("#0B1017".into());
+    dark_config.colors.table_hover = Some("#131C28".into());
+    dark_config.colors.table_active = Some("#4C8DFF29".into());
+    dark_config.colors.table_active_border = Some("#00000000".into());
+    dark_config.colors.table_row_border = Some("#151E29".into());
+    dark_config.colors.drop_target = Some("#4C8DFF14".into());
     dark_config.colors.input = Some("#314155".into());
     dark_config.colors.border = Some("#243140".into());
     dark_config.colors.title_bar_border = Some("#243140".into());
@@ -74,8 +80,16 @@ pub fn init(cx: &mut App) {
     light_config.colors.input = Some("#C9D5E3".into());
     light_config.colors.title_bar_border = Some("#D9E2EC".into());
     light_config.colors.list_hover = Some("#EDF3FA".into());
+    light_config.colors.list_active = Some("#E8EEF6".into());
+    light_config.colors.list_active_border = Some("#00000000".into());
+    light_config.colors.table = Some("#F4F7FA".into());
     light_config.colors.table_head = Some("#F4F7FA".into());
-    light_config.colors.table_row_border = Some("#D9E2EC".into());
+    light_config.colors.table_even = Some("#F4F7FA".into());
+    light_config.colors.table_hover = Some("#E9EFF6".into());
+    light_config.colors.table_active = Some("#2867D824".into());
+    light_config.colors.table_active_border = Some("#00000000".into());
+    light_config.colors.table_row_border = Some("#E4EAF1".into());
+    light_config.colors.drop_target = Some("#2867D814".into());
 
     light_config.colors.primary = Some("#2867D8".into());
     light_config.colors.primary_hover = Some("#1E56BA".into());

@@ -2,8 +2,10 @@
 
 pub mod button;
 pub mod dialog;
+pub mod format;
 pub mod icon;
 pub mod input;
+pub mod panel;
 pub mod server_dialog;
 pub mod settings_dialog;
 pub mod snippets_dialog;

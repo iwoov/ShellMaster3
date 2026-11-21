@@ -754,9 +754,12 @@ impl SessionState {
         let tab_id_owned = tab_id.to_string();
         let path_clone = path.clone();
 
+        // 只有加载的是列表正在显示的目录时才进入加载态：目录树展开其他目录时，文件列表保持不变
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
             if let Some(ref mut sftp_state) = tab.sftp_state {
-                sftp_state.set_loading(true);
+                if sftp_state.current_path == path {
+                    sftp_state.set_loading(true);
+                }
             }
         }
         cx.notify();
@@ -803,7 +806,10 @@ impl SessionState {
                             if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
                             {
                                 if let Some(ref mut sftp_state) = tab.sftp_state {
-                                    sftp_state.set_loading(false);
+                                    let is_current = sftp_state.current_path == path_for_update;
+                                    if is_current {
+                                        sftp_state.set_loading(false);
+                                    }
 
                                     match result {
                                         Ok(entries) => {
@@ -817,7 +823,8 @@ impl SessionState {
                                                 entries.clone(),
                                             );
 
-                                            if sftp_state.current_path == path_for_update {
+                                            if is_current {
+                                                sftp_state.clear_error();
                                                 sftp_state.update_file_list(entries);
                                             }
                                         }
@@ -826,7 +833,12 @@ impl SessionState {
                                                 "[SFTP] Failed to load directory {}: {}",
                                                 path_for_update, e
                                             );
-                                            sftp_state.set_error(e);
+                                            // 列表显示的目录读取失败：清空旧内容，列表显示错误和重试，
+                                            // 不再出现「路径是新目录、内容还是旧目录」
+                                            if is_current {
+                                                sftp_state.update_file_list(Vec::new());
+                                                sftp_state.set_error(e);
+                                            }
                                         }
                                     }
                                 }

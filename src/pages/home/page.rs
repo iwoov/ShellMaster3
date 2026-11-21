@@ -389,6 +389,8 @@ impl HomePage {
             .language
             .clone();
         let state = session_state.read(cx);
+        // 会话视图各栏的实际宽度：标题栏品牌区和会话布局共用
+        let columns = state.session_columns(window.viewport_size().width);
 
         // 获取当前活动标签
         let active_tab = state.active_tab().cloned();
@@ -470,19 +472,21 @@ impl HomePage {
                             v.sync_from_sftp_state(sftp_state, cx);
                         });
 
-                        // 提取当前路径（避免借用冲突）
+                        // 提取当前路径和加载状态（避免借用冲突）
                         let current_path = sftp_state.map(|s| s.current_path.clone());
+                        let loading = sftp_state.is_some_and(|s| s.loading);
 
                         // 确保 PathBarState 创建并同步路径
                         let entity = cx.entity().clone();
                         let path_bar =
                             state.ensure_sftp_path_bar_state(&tab_id_for_sftp, entity, window, cx);
-                        // 同步当前路径到 PathBarState
-                        if let Some(path) = current_path {
-                            path_bar.update(cx, |pb, cx| {
+                        // 同步当前路径和加载状态到 PathBarState
+                        path_bar.update(cx, |pb, cx| {
+                            if let Some(path) = current_path {
                                 pb.set_path(&path, window, cx);
-                            });
-                        }
+                            }
+                            pb.set_loading(loading, cx);
+                        });
                     });
 
                     // 确保 SFTP 新建文件夹对话框输入框已创建
@@ -507,42 +511,13 @@ impl HomePage {
                         }
                     }
 
-                    let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
-                    render_session_layout(
-                        &tab,
-                        sidebar_collapsed,
-                        session_state.clone(),
-                        &lang,
-                        window,
-                        cx,
-                    )
-                    .into_any_element()
+                    render_session_layout(&tab, columns, session_state.clone(), &lang, window, cx)
+                        .into_any_element()
                 }
-                SessionStatus::Disconnected => {
-                    // 断开状态继续显示终端布局，终端区域会显示断开提示
-                    let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
-                    render_session_layout(
-                        &tab,
-                        sidebar_collapsed,
-                        session_state.clone(),
-                        &lang,
-                        window,
-                        cx,
-                    )
-                    .into_any_element()
-                }
-                SessionStatus::Reconnecting { .. } => {
-                    // 重连状态继续显示终端布局，终端区域会显示重连进度
-                    let sidebar_collapsed = session_state.read(cx).sidebar_collapsed;
-                    render_session_layout(
-                        &tab,
-                        sidebar_collapsed,
-                        session_state.clone(),
-                        &lang,
-                        window,
-                        cx,
-                    )
-                    .into_any_element()
+                // 断开、重连中继续显示会话布局，终端区域会显示断开提示或重连进度
+                SessionStatus::Disconnected | SessionStatus::Reconnecting { .. } => {
+                    render_session_layout(&tab, columns, session_state.clone(), &lang, window, cx)
+                        .into_any_element()
                 }
                 SessionStatus::Error(_) => {
                     // 错误状态使用连接页面显示
@@ -571,8 +546,8 @@ impl HomePage {
                 div()
                     .w_full()
                     .flex()
-                    // Home 按钮区域
-                    .child(render_home_button(session_state.clone(), cx))
+                    // Home 按钮区域（与左列同宽）
+                    .child(render_home_button(columns.left, session_state.clone(), cx))
                     // 会话标题栏（带标签页）
                     .child(render_session_titlebar(
                         session_state,

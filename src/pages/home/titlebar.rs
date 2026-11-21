@@ -1,13 +1,17 @@
 // 窗口顶部条：品牌区、会话标签页和窗口控制按钮
 
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::ActiveTheme;
 
-use super::widgets::{TextFitter, SIDEBAR_WIDTH, TOPBAR_HEIGHT};
+use super::widgets::{TextFitter, TOPBAR_HEIGHT};
+use crate::components::common::button::icon_button_sized;
 use crate::components::common::icon::render_icon;
+use crate::components::common::panel::{spinner, status_dot};
 use crate::components::common::window_controls::render_windows_controls;
 use crate::constants::icons;
 use crate::state::{SessionState, SessionStatus};
+use crate::theme::Palette;
 
 /// 品牌区左侧的留白。
 /// macOS 的红绿灯在左上角，需要给它让出位置；其他平台贴左放置。
@@ -39,12 +43,20 @@ fn render_brand_label(cx: &App) -> Div {
 }
 
 /// 渲染会话视图左上角的品牌区，点击返回主页。
-pub fn render_home_button(session_state: Entity<SessionState>, cx: &App) -> impl IntoElement {
+///
+/// 宽度与会话视图的左列（监控、SFTP 目录树）一致，右边线和下面的分栏线对齐；品牌标识右侧的空白可以拖动窗口。
+pub fn render_home_button(
+    width: Pixels,
+    session_state: Entity<SessionState>,
+    cx: &App,
+) -> impl IntoElement {
+    let p = crate::theme::palette(cx);
     let bg = crate::theme::titlebar_color(cx);
     let border = cx.theme().title_bar_border;
+    let hover_bg = p.hover;
 
     div()
-        .w(SIDEBAR_WIDTH)
+        .w(width)
         .h(TOPBAR_HEIGHT)
         .bg(bg)
         .border_b_1()
@@ -54,17 +66,25 @@ pub fn render_home_button(session_state: Entity<SessionState>, cx: &App) -> impl
         .flex_shrink_0()
         .items_center()
         .pl(brand_left_padding())
-        .pr_2()
         .child(
             render_brand_label(cx)
                 .id("home-btn")
+                .flex_none()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgba(0x80808024)))
+                .hover(move |s| s.bg(hover_bg))
                 .on_click(move |_, _, cx| {
-                    session_state.update(cx, |state, _| {
+                    session_state.update(cx, |state, cx| {
                         state.show_home = true;
+                        cx.notify();
                     });
                 }),
+        )
+        .child(
+            div()
+                .id("session-brand-drag-area")
+                .flex_1()
+                .h_full()
+                .window_control_area(WindowControlArea::Drag),
         )
 }
 
@@ -87,6 +107,11 @@ pub fn render_sidebar_brand(cx: &App) -> impl IntoElement {
 
 /// 标签名的最大宽度
 const TAB_LABEL_MAX_WIDTH: Pixels = px(150.);
+/// 标签的高度和圆角（与主页按钮一致）
+const TAB_HEIGHT: Pixels = px(30.);
+const TAB_RADIUS: Pixels = px(7.);
+/// 标签内部用于联动悬停样式（显示关闭钮）的分组名
+const TAB_GROUP: &str = "session-tab";
 
 /// 标签页的两种外观
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -97,6 +122,35 @@ enum TabStyle {
     Home,
 }
 
+/// 标签左侧的状态指示：连接中 / 重连中是转动的加载图标，其余是小圆点
+fn render_tab_status(tab_id: &str, status: &SessionStatus, p: &Palette) -> AnyElement {
+    let indicator = match status {
+        SessionStatus::Connecting => spinner(
+            SharedString::from(format!("tab-spinner-{tab_id}")),
+            12.,
+            p.primary,
+        )
+        .into_any_element(),
+        SessionStatus::Reconnecting { .. } => spinner(
+            SharedString::from(format!("tab-spinner-{tab_id}")),
+            12.,
+            p.warning,
+        )
+        .into_any_element(),
+        SessionStatus::Connected => status_dot(p.success, 7.).into_any_element(),
+        SessionStatus::Disconnected => status_dot(p.warning, 7.).into_any_element(),
+        SessionStatus::Error(_) => status_dot(p.danger, 7.).into_any_element(),
+    };
+    div()
+        .flex_none()
+        .size(px(14.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(indicator)
+        .into_any_element()
+}
+
 /// 渲染会话标签页列表
 fn render_tabs(
     session_state: &Entity<SessionState>,
@@ -104,115 +158,94 @@ fn render_tabs(
     fit: &TextFitter,
     cx: &App,
 ) -> Div {
-    let bar_bg = crate::theme::titlebar_color(cx);
     let p = crate::theme::palette(cx);
-    let primary = cx.theme().primary;
-    let foreground = cx.theme().foreground;
-    let muted_foreground = cx.theme().muted_foreground;
-    let secondary = cx.theme().secondary;
-    let secondary_hover = cx.theme().secondary_hover;
+    let lang = crate::services::storage::cached_settings()
+        .theme
+        .language
+        .clone();
+    let close_tooltip = crate::i18n::t(&lang, "session.tab.close");
 
+    // 直接借用标签，不要克隆：SessionTab 里有监控历史、SFTP 目录缓存和 AI 对话，整体克隆会在每帧深拷贝一遍
     let state = session_state.read(cx);
-    let tabs = state.tabs.clone();
-    let active_tab_id = state.active_tab_id.clone();
+    let active_tab_id = state.active_tab_id.as_ref();
 
     div()
         .flex()
         .items_center()
-        .gap_1()
-        .children(tabs.into_iter().map(|tab| {
-            let is_active = style == TabStyle::Session && active_tab_id.as_ref() == Some(&tab.id);
+        .gap(px(4.))
+        .children(state.tabs.iter().map(|tab| {
+            let is_active = style == TabStyle::Session && active_tab_id == Some(&tab.id);
             let tab_id_for_click = tab.id.clone();
             let tab_id_for_close = tab.id.clone();
             let session_state_for_click = session_state.clone();
             let session_state_for_close = session_state.clone();
 
-            // 标签状态图标
-            let status_icon = match &tab.status {
-                SessionStatus::Connecting => Some((icons::LOADER, primary)),
-                SessionStatus::Connected => Some((icons::CHECK, primary)),
-                SessionStatus::Error(_) => Some((icons::X, Hsla::from(rgb(0xef4444)))),
-                // 已断开：拔出的插头（与“重连中”的加载图标区分开）
-                SessionStatus::Disconnected => Some((icons::UNPLUG, Hsla::from(rgb(0xf59e0b)))),
-                // 重连中：橙色加载图标
-                SessionStatus::Reconnecting { .. } => {
-                    Some((icons::LOADER, Hsla::from(rgb(0xf59e0b))))
-                }
-            };
-
             let (rest_bg, hover_bg) = match style {
-                TabStyle::Session if is_active => (secondary, secondary),
-                TabStyle::Session => (bar_bg, secondary_hover),
-                TabStyle::Home => (p.hover, p.hover_strong),
+                TabStyle::Session if is_active => (Some(p.selected), p.selected),
+                TabStyle::Session => (None, p.hover),
+                TabStyle::Home => (Some(p.hover), p.hover_strong),
             };
 
             div()
                 .id(SharedString::from(format!("tab-{}", tab.id)))
-                .h(px(32.))
-                .px_3()
-                .rounded_md()
+                .group(TAB_GROUP)
+                .flex_none()
+                .h(TAB_HEIGHT)
+                .pl(px(10.))
+                .pr(px(5.))
+                .rounded(TAB_RADIUS)
                 .cursor_pointer()
-                .bg(rest_bg)
+                .when_some(rest_bg, |tab, bg| tab.bg(bg))
                 .hover(move |s| s.bg(hover_bg))
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap(px(7.))
                 .on_click(move |_, _, cx| {
-                    session_state_for_click.update(cx, |state, _| {
+                    session_state_for_click.update(cx, |state, cx| {
                         state.activate_tab(&tab_id_for_click);
                         state.show_home = false;
+                        cx.notify();
                     });
                 })
-                // 状态图标
-                .children(status_icon.map(|(icon, color)| {
-                    div()
-                        .w_4()
-                        .h_4()
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(render_icon(icon, color))
-                }))
-                // 标签名：最宽 150px，放不下时末尾显示省略号
+                .child(render_tab_status(&tab.id, &tab.status, &p))
+                // 标签名：最宽 150px，放不下时末尾显示省略号，悬停显示全名
                 .child(
-                    fit.label(
+                    fit.label_with_tooltip(
+                        SharedString::from(format!("tab-label-{}", tab.id)),
                         &tab.server_label,
                         TAB_LABEL_MAX_WIDTH,
-                        14.,
-                        FontWeight::NORMAL,
+                        13.,
+                        if is_active {
+                            FontWeight::MEDIUM
+                        } else {
+                            FontWeight::NORMAL
+                        },
                     )
                     .flex_none()
-                    .text_color(if is_active {
-                        foreground
-                    } else {
-                        muted_foreground
-                    }),
+                    .text_color(if is_active { p.text } else { p.text_muted }),
                 )
-                // 关闭按钮
+                // 关闭按钮：会话视图里当前标签一直显示，其余标签悬停时显示；主页上的标签一直显示
                 .child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "tab-close-{}",
-                            tab_id_for_close
-                        )))
-                        .w_4()
-                        .h_4()
-                        .flex_shrink_0()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(secondary_hover))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            cx.stop_propagation();
-                            // close_tab 会一并关闭 SSH 连接（含仍在进行中的连接）
-                            session_state_for_close.update(cx, |state, _| {
-                                state.close_tab(&tab_id_for_close);
-                            });
-                        })
-                        .child(render_icon(icons::X, muted_foreground)),
+                    icon_button_sized(
+                        SharedString::from(format!("tab-close-{}", tab_id_for_close)),
+                        icons::X,
+                        px(18.),
+                        12.,
+                        close_tooltip,
+                        &p,
+                    )
+                    .rounded(px(5.))
+                    .when(style == TabStyle::Session && !is_active, |button| {
+                        button.invisible().group_hover(TAB_GROUP, |s| s.visible())
+                    })
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        cx.stop_propagation();
+                        // close_tab 会一并关闭 SSH 连接（含仍在进行中的连接）
+                        session_state_for_close.update(cx, |state, cx| {
+                            state.close_tab(&tab_id_for_close);
+                            cx.notify();
+                        });
+                    }),
                 )
         }))
 }

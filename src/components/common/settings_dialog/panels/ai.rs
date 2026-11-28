@@ -5,7 +5,7 @@ use gpui_kit::*;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
 use crate::components::common::button::{button, icon_button_colored, text_tooltip, ButtonKind};
-use crate::components::common::icon::{icon_sized, render_colored_icon, render_letter_avatar};
+use crate::components::common::icon::{icon_sized, render_letter_avatar, render_provider_icon};
 use crate::components::common::input::{select_trigger, text_area, text_field};
 use crate::constants::icons;
 use crate::i18n;
@@ -269,6 +269,7 @@ fn provider_tab(
     icon: AnyElement,
     label: SharedString,
     selected: bool,
+    verified: bool,
     is_default: bool,
     default_label: &'static str,
     p: &Palette,
@@ -304,6 +305,9 @@ fn provider_tab(
                 .when(selected, |label| label.font_weight(FontWeight::MEDIUM))
                 .child(label),
         )
+        .when(verified, |tab| {
+            tab.child(div().flex_none().size(px(6.)).rounded_full().bg(p.success))
+        })
         .when(is_default, |tab| {
             tab.child(status_tag(default_label.into(), p.primary))
         })
@@ -326,28 +330,37 @@ fn status_tag(text: SharedString, color: Hsla) -> Div {
         .child(text)
 }
 
-fn render_provider_tabs(
-    active: ProviderRef,
-    state: Entity<SettingsDialogState>,
+fn provider_group_label(text: &'static str, p: &Palette) -> Div {
+    div()
+        .text_size(px(11.5))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(p.text_muted)
+        .px(px(2.))
+        .child(text)
+}
+
+fn render_builtin_group_row(
+    ids: &[AiProviderId],
+    active: &ProviderRef,
+    default_provider: AiProviderId,
+    default_label: &'static str,
+    state: &Entity<SettingsDialogState>,
     p: &Palette,
     cx: &App,
-) -> impl IntoElement {
+) -> Div {
     let read = state.read(cx);
-    let default_provider = read.settings.ai.default_provider;
-    let lang = read.settings.theme.language.clone();
-    let default_label = i18n::t(&lang, "settings.ai.default");
-
     let mut row = div().flex().items_center().flex_wrap().gap(px(6.));
-
-    // 内置供应商
-    for id in AiProviderId::ALL {
+    for &id in ids {
+        let r = ProviderRef::Builtin(id);
+        let verified = matches!(read.ai_test_statuses.get(&r), Some(AiTestStatus::Pass));
         let state_for_click = state.clone();
         row = row.child(
             provider_tab(
                 SharedString::from(format!("ai-tab-{}", id.key())),
-                render_colored_icon(id.icon_path(), 16.).into_any_element(),
+                render_provider_icon(id, 16., p.text),
                 id.label().into(),
-                active == ProviderRef::Builtin(id),
+                *active == r,
+                verified,
                 id == default_provider,
                 default_label,
                 p,
@@ -360,8 +373,69 @@ fn render_provider_tabs(
             }),
         );
     }
+    row
+}
 
-    // 自定义供应商
+fn render_provider_tabs(
+    active: ProviderRef,
+    state: Entity<SettingsDialogState>,
+    p: &Palette,
+    cx: &App,
+) -> impl IntoElement {
+    let read = state.read(cx);
+    let default_provider = read.settings.ai.default_provider;
+    let lang = read.settings.theme.language.clone();
+    let default_label = i18n::t(&lang, "settings.ai.default");
+
+    // 1. Coding 订阅分组
+    let subscription_section = div()
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .child(provider_group_label(
+            i18n::t(&lang, "settings.ai.group.subscription"),
+            p,
+        ))
+        .child(render_builtin_group_row(
+            &AiProviderId::SUBSCRIPTIONS,
+            &active,
+            default_provider,
+            default_label,
+            &state,
+            p,
+            cx,
+        ));
+
+    // 2. 官方与聚合 API 分组
+    let api_section = div()
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .child(provider_group_label(
+            i18n::t(&lang, "settings.ai.group.api"),
+            p,
+        ))
+        .child(render_builtin_group_row(
+            &AiProviderId::APIS,
+            &active,
+            default_provider,
+            default_label,
+            &state,
+            p,
+            cx,
+        ));
+
+    // 3. 本地模型与自定义分组
+    let mut local_and_custom_row = render_builtin_group_row(
+        &AiProviderId::LOCALS,
+        &active,
+        default_provider,
+        default_label,
+        &state,
+        p,
+        cx,
+    );
+
     let customs: Vec<(String, String)> = read
         .settings
         .ai
@@ -375,14 +449,17 @@ fn render_provider_tabs(
         } else {
             truncate(&name, PROVIDER_NAME_MAX_CHARS).into()
         };
+        let r = ProviderRef::Custom(cid.clone());
+        let verified = matches!(read.ai_test_statuses.get(&r), Some(AiTestStatus::Pass));
         let state_for_click = state.clone();
         let cid_for_click = cid.clone();
-        row = row.child(
+        local_and_custom_row = local_and_custom_row.child(
             provider_tab(
                 SharedString::from(format!("ai-tab-custom-{}", cid)),
                 render_letter_avatar(ProviderRef::avatar_char(&name), 16.).into_any_element(),
                 display,
-                active == ProviderRef::Custom(cid.clone()),
+                active == r,
+                verified,
                 false,
                 default_label,
                 p,
@@ -397,13 +474,13 @@ fn render_provider_tabs(
         );
     }
 
-    // 添加自定义供应商
     let state_for_add = state.clone();
-    row.child(
+    local_and_custom_row = local_and_custom_row.child(
         provider_tab(
             "ai-tab-add".into(),
             icon_sized(icons::PLUS, 14., p.text_muted).into_any_element(),
             i18n::t(&lang, "settings.ai.custom_add").into(),
+            false,
             false,
             false,
             default_label,
@@ -417,7 +494,25 @@ fn render_provider_tabs(
                 cx.notify();
             });
         }),
-    )
+    );
+
+    let local_custom_section = div()
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .child(provider_group_label(
+            i18n::t(&lang, "settings.ai.group.local_custom"),
+            p,
+        ))
+        .child(local_and_custom_row);
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .child(subscription_section)
+        .child(api_section)
+        .child(local_custom_section)
 }
 
 fn render_provider_card(
@@ -431,7 +526,9 @@ fn render_provider_card(
     let inputs = read.ai_inputs.get(&r);
     let api_key_input = inputs.and_then(|i| i.api_key.clone());
     let base_url_input = inputs.and_then(|i| i.base_url.clone());
-    let model_input = inputs.and_then(|i| i.model.clone());
+    let new_model_input = inputs.and_then(|i| i.new_model_input.clone());
+    let selected_models = read.current_ai_models(&r);
+    let candidate_models = read.candidate_ai_models(&r);
     let name_input = inputs.and_then(|i| i.name.clone());
     let status = read
         .ai_test_statuses
@@ -439,13 +536,26 @@ fn render_provider_card(
         .cloned()
         .unwrap_or(AiTestStatus::Untested);
     let is_testing = matches!(status, AiTestStatus::Testing);
+    let is_fetching = read.ai_fetching_models.contains(&r);
+    let fetch_notice = read.ai_fetch_notices.get(&r).cloned();
+
+    let current_format = read
+        .ai_inputs
+        .get(&r)
+        .and_then(|i| i.format)
+        .unwrap_or_else(|| match &r {
+            ProviderRef::Builtin(id) => read.settings.ai.get(*id).effective_format(*id),
+            ProviderRef::Custom(_) => ApiFormat::default(),
+        });
+    let current_base_url = base_url_input
+        .as_ref()
+        .map(|i| i.read(cx).value().trim().trim_end_matches('/').to_string())
+        .unwrap_or_default();
+    let requires_key = SettingsDialogState::ai_requires_api_key(&r, &current_base_url);
 
     // 头部：图标 + 名称 + 测试状态；右侧是设为默认（内置）或删除（自定义）
     let (icon, title): (AnyElement, SharedString) = match &r {
-        ProviderRef::Builtin(id) => (
-            render_colored_icon(id.icon_path(), 20.).into_any_element(),
-            id.label().into(),
-        ),
+        ProviderRef::Builtin(id) => (render_provider_icon(*id, 20., p.text), id.label().into()),
         ProviderRef::Custom(cid) => {
             let name = read
                 .settings
@@ -547,7 +657,7 @@ fn render_provider_card(
 
     let mut card = render_card(cx).child(header);
 
-    // 自定义：名称 + 协议格式
+    // 自定义供应商：名称
     if matches!(r, ProviderRef::Custom(_)) {
         if let Some(input) = name_input.as_ref() {
             card = card.child(render_row(
@@ -557,11 +667,14 @@ fn render_provider_card(
                 cx,
             ));
         }
-        let current_format = read
-            .ai_inputs
-            .get(&r)
-            .and_then(|i| i.format)
-            .unwrap_or_default();
+    }
+
+    // 协议格式下拉（自定义供应商，或支持多协议切换的内置供应商如 OpenAI / 智谱 / 百炼 / Kimi / MiniMax / 火山方舟）
+    let show_format_row = match &r {
+        ProviderRef::Custom(_) => true,
+        ProviderRef::Builtin(id) => id.supports_format_override(),
+    };
+    if show_format_row {
         card = card.child(render_format_row(
             r.clone(),
             current_format,
@@ -571,7 +684,7 @@ fn render_provider_card(
         ));
     }
 
-    card.children(api_key_input.as_ref().map(|input| {
+    card = card.children(api_key_input.as_ref().map(|input| {
         render_row(
             i18n::t(&lang, "settings.ai.api_key"),
             None,
@@ -580,38 +693,107 @@ fn render_provider_card(
                 .child(text_field(input).mask_toggle()),
             cx,
         )
-    }))
-    .children(base_url_input.as_ref().map(|input| {
+    }));
+    if !requires_key {
+        card = card.child(render_hint(i18n::t(&lang, "settings.ai.local_key_hint"), cx));
+    }
+
+    card = card.children(base_url_input.as_ref().map(|input| {
         render_row(
             i18n::t(&lang, "settings.ai.base_url"),
             None,
             div().w(WIDE_FIELD_WIDTH).child(text_field(input)),
             cx,
         )
-    }))
-    .children(model_input.as_ref().map(|input| {
-        render_block_row(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .child(
+    }));
+
+    // 快捷端点预设（按量 API / 国际站 / Coding Plan 订阅等）
+    if let ProviderRef::Builtin(id) = &r {
+        let presets = id.endpoint_presets();
+        if !presets.is_empty() {
+            let mut chips = div().flex().items_center().flex_wrap().gap(px(6.));
+            for (idx, preset) in presets.iter().enumerate() {
+                let is_active =
+                    current_base_url == preset.base_url && current_format == preset.format;
+                let preset = *preset;
+                let state_for_preset = state.clone();
+                let r_for_preset = r.clone();
+                let base_input_for_preset = base_url_input.clone();
+                let hover_bg = p.hover;
+                chips = chips.child(
                     div()
-                        .text_size(px(13.))
-                        .text_color(p.text)
-                        .child(i18n::t(&lang, "settings.ai.models")),
-                )
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(p.text_muted)
-                        .child(i18n::t(&lang, "settings.ai.models_hint")),
-                )
-                .child(div().mt(px(2.)).child(text_area(input))),
-            cx,
-        )
-    }))
-    .child(render_block_row(
+                        .id(SharedString::from(format!(
+                            "ai-preset-{}-{}",
+                            id.key(),
+                            idx
+                        )))
+                        .px(px(8.))
+                        .py(px(4.))
+                        .rounded(px(6.))
+                        .border_1()
+                        .cursor_pointer()
+                        .text_size(px(11.5))
+                        .when(is_active, |el| {
+                            el.bg(p.primary.opacity(0.14))
+                                .border_color(p.primary.opacity(0.55))
+                                .text_color(p.primary)
+                                .font_weight(FontWeight::MEDIUM)
+                        })
+                        .when(!is_active, |el| {
+                            el.bg(p.surface)
+                                .border_color(p.border)
+                                .text_color(p.text_muted)
+                                .hover(move |s| s.bg(hover_bg))
+                        })
+                        .child(preset.label(&lang))
+                        .on_click(move |_, window, cx| {
+                            if let Some(input) = base_input_for_preset.as_ref() {
+                                input.update(cx, |s, cx| {
+                                    s.set_value(preset.base_url.to_string(), window, cx);
+                                });
+                            }
+                            let r_clone = r_for_preset.clone();
+                            state_for_preset.update(cx, |s, cx| {
+                                s.ai_inputs.entry(r_clone).or_default().format =
+                                    Some(preset.format);
+                                s.mark_changed();
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            card = card.child(render_block_row(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(p.text_muted)
+                            .child(i18n::t(&lang, "settings.ai.endpoint_presets")),
+                    )
+                    .child(chips),
+                cx,
+            ));
+        }
+    }
+
+    // 模型列表：已添加模型标签（点击设为默认 / × 移除）+ 下拉选择添加 + 手动输入添加
+    card = card.child(render_models_section(
+        &r,
+        selected_models,
+        candidate_models,
+        new_model_input,
+        is_fetching,
+        fetch_notice,
+        state.clone(),
+        &lang,
+        p,
+        cx,
+    ));
+
+    card.child(render_block_row(
         div().flex().justify_end().child({
             let test = button(
                 SharedString::from(format!("ai-test-{:?}", r)),
@@ -635,6 +817,284 @@ fn render_provider_card(
         }),
         cx,
     ))
+}
+
+/// 模型管理区块：顶部拉取按钮 + 已选模型标签（点选默认 / 删除）+ 下拉选择添加 + 手动输入添加
+#[allow(clippy::too_many_arguments)]
+fn render_models_section(
+    r: &ProviderRef,
+    selected_models: Vec<String>,
+    candidate_models: Vec<String>,
+    new_model_input: Option<Entity<gpui_kit::component::input::InputState>>,
+    is_fetching: bool,
+    fetch_notice: Option<(bool, String)>,
+    state: Entity<SettingsDialogState>,
+    lang: &Language,
+    p: &Palette,
+    cx: &App,
+) -> impl IntoElement {
+    let default_tag = i18n::t(lang, "settings.ai.default");
+    let set_default_tip = i18n::t(lang, "settings.ai.model_set_default_tip");
+    let hover_bg = p.hover;
+
+    // 1. 已选模型标签区
+    let chips_el: AnyElement = if selected_models.is_empty() {
+        div()
+            .px(px(10.))
+            .py(px(8.))
+            .rounded(px(7.))
+            .border_1()
+            .border_color(p.border)
+            .bg(p.surface)
+            .text_size(px(12.))
+            .text_color(p.text_faint)
+            .child(i18n::t(lang, "settings.ai.models_empty"))
+            .into_any_element()
+    } else {
+        let mut chips = div().flex().items_center().flex_wrap().gap(px(6.));
+        for (idx, model_name) in selected_models.iter().enumerate() {
+            let is_default = idx == 0;
+            let model_for_default = model_name.clone();
+            let model_for_remove = model_name.clone();
+            let state_for_default = state.clone();
+            let state_for_remove = state.clone();
+            let r_for_default = r.clone();
+            let r_for_remove = r.clone();
+
+            let mut chip = div()
+                .flex_none()
+                .h(px(28.))
+                .pl(px(9.))
+                .pr(px(5.))
+                .rounded(px(7.))
+                .border_1()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .when(is_default, |el| {
+                    el.bg(p.primary.opacity(0.1))
+                        .border_color(p.primary.opacity(0.45))
+                })
+                .when(!is_default, |el| {
+                    el.bg(p.surface).border_color(p.border)
+                });
+
+            let label_btn = div()
+                .id(SharedString::from(format!(
+                    "ai-model-chip-{:?}-{}",
+                    r, idx
+                )))
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .when(!is_default, |el| {
+                    el.cursor_pointer()
+                        .tooltip(text_tooltip(set_default_tip))
+                        .on_click(move |_, _, cx| {
+                            let r = r_for_default.clone();
+                            let m = model_for_default.clone();
+                            state_for_default.update(cx, |s, cx| {
+                                s.set_default_ai_model(&r, &m);
+                                cx.notify();
+                            });
+                        })
+                })
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(if is_default { p.text } else { p.text_muted })
+                        .when(is_default, |el| el.font_weight(FontWeight::MEDIUM))
+                        .child(model_name.clone()),
+                )
+                .when(is_default, |el| {
+                    el.child(status_tag(default_tag.into(), p.primary))
+                });
+
+            let remove_btn = div()
+                .id(SharedString::from(format!(
+                    "ai-model-del-{:?}-{}",
+                    r, idx
+                )))
+                .size(px(18.))
+                .rounded(px(4.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
+                .child(icon_sized(icons::X, 11., p.text_muted))
+                .on_click(move |_, _, cx| {
+                    let r = r_for_remove.clone();
+                    let m = model_for_remove.clone();
+                    state_for_remove.update(cx, |s, cx| {
+                        s.remove_ai_model(&r, &m);
+                        cx.notify();
+                    });
+                });
+
+            chip = chip.child(label_btn).child(remove_btn);
+            chips = chips.child(chip);
+        }
+        chips.into_any_element()
+    };
+
+    // 2. 下拉选择添加 + 手动输入添加
+    let picker_placeholder = if candidate_models.is_empty() {
+        i18n::t(lang, "settings.ai.model_picker_empty")
+    } else {
+        i18n::t(lang, "settings.ai.model_picker_placeholder")
+    };
+    let candidate_count = candidate_models.len();
+    let dropdown_el: AnyElement = if candidate_count > 0 {
+        let r_for_menu = r.clone();
+        let state_for_menu = state.clone();
+        select_trigger(
+            SharedString::from(format!("ai-model-picker-{:?}", r)),
+            picker_placeholder,
+            px(210.),
+            cx,
+        )
+        .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, _, _| {
+            let mut menu = menu.min_w(px(240.)).max_h(px(260.)).scrollable(true);
+            for model in &candidate_models {
+                let model_clone = model.clone();
+                let r_click = r_for_menu.clone();
+                let state_click = state_for_menu.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(SharedString::from(model.clone())).on_click(
+                        move |_, _, cx| {
+                            let r = r_click.clone();
+                            let m = model_clone.clone();
+                            state_click.update(cx, |s, cx| {
+                                s.add_ai_model(&r, m);
+                                cx.notify();
+                            });
+                        },
+                    ),
+                );
+            }
+            menu
+        })
+        .into_any_element()
+    } else {
+        div()
+            .h(px(30.))
+            .w(px(210.))
+            .px(px(10.))
+            .rounded(px(7.))
+            .border_1()
+            .border_color(p.border)
+            .bg(p.surface)
+            .flex()
+            .items_center()
+            .text_size(px(12.))
+            .text_color(p.text_faint)
+            .child(picker_placeholder)
+            .into_any_element()
+    };
+
+    let manual_add_el: Option<AnyElement> = new_model_input.map(|input| {
+        let input_for_add = input.clone();
+        let state_for_add = state.clone();
+        let r_for_add = r.clone();
+        div()
+            .flex_1()
+            .min_w(px(180.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(div().flex_1().min_w_0().child(text_field(&input)))
+            .child(
+                button(
+                    SharedString::from(format!("ai-model-add-{:?}", r)),
+                    ButtonKind::Secondary,
+                    Some(icons::PLUS),
+                    i18n::t(lang, "settings.ai.model_add_btn"),
+                    true,
+                    p,
+                )
+                .on_click(move |_, window, cx| {
+                    let val = input_for_add.read(cx).value().trim().to_string();
+                    if !val.is_empty() {
+                        let r = r_for_add.clone();
+                        state_for_add.update(cx, |s, cx| {
+                            s.add_ai_model(&r, val);
+                            cx.notify();
+                        });
+                        input_for_add.update(cx, |s, cx| {
+                            s.set_value(String::new(), window, cx);
+                        });
+                    }
+                }),
+            )
+            .into_any_element()
+    });
+
+    render_block_row(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(p.text)
+                            .child(i18n::t(lang, "settings.ai.models")),
+                    )
+                    .child({
+                        let fetch_btn = button(
+                            SharedString::from(format!("ai-fetch-models-{:?}", r)),
+                            ButtonKind::Secondary,
+                            Some(icons::REFRESH),
+                            if is_fetching {
+                                i18n::t(lang, "settings.ai.fetching_models")
+                            } else {
+                                i18n::t(lang, "settings.ai.fetch_models")
+                            },
+                            !is_fetching,
+                            p,
+                        );
+                        if is_fetching {
+                            fetch_btn
+                        } else {
+                            let state = state.clone();
+                            let r = r.clone();
+                            fetch_btn.on_click(move |_, _, cx| {
+                                run_fetch_models(r.clone(), state.clone(), cx);
+                            })
+                        }
+                    }),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(p.text_muted)
+                    .child(i18n::t(lang, "settings.ai.models_hint")),
+            )
+            .children(fetch_notice.map(|(ok, msg)| {
+                div()
+                    .text_size(px(11.5))
+                    .text_color(if ok { p.success } else { p.danger })
+                    .child(msg)
+            }))
+            .child(chips_el)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .flex_wrap()
+                    .gap(px(8.))
+                    .child(dropdown_el)
+                    .children(manual_add_el),
+            ),
+        cx,
+    )
 }
 
 /// 协议格式下拉行
@@ -728,13 +1188,119 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+fn resolve_test_base_url(r: &ProviderRef, base_url: &str) -> String {
+    if base_url.trim().is_empty() {
+        match r {
+            ProviderRef::Builtin(id) => id.default_base_url().to_string(),
+            ProviderRef::Custom(_) => String::new(),
+        }
+    } else {
+        base_url.trim().to_string()
+    }
+}
+
+fn run_fetch_models(r: ProviderRef, state: Entity<SettingsDialogState>, cx: &mut App) {
+    let values = {
+        let app: &App = cx;
+        state.read(app).collect_ai_inputs(&r, app)
+    };
+    let test_base = resolve_test_base_url(&r, &values.base_url);
+    let requires_key = SettingsDialogState::ai_requires_api_key(&r, &test_base);
+    if requires_key && values.api_key.trim().is_empty() {
+        let r2 = r.clone();
+        state.update(cx, |s, cx| {
+            let msg = i18n::t(&s.settings.theme.language, "settings.ai.empty_key").to_string();
+            s.ai_fetch_notices.insert(r2, (false, msg));
+            cx.notify();
+        });
+        return;
+    }
+
+    let r_mark = r.clone();
+    state.update(cx, |s, cx| {
+        s.ai_fetching_models.insert(r_mark.clone());
+        s.ai_fetch_notices.remove(&r_mark);
+        cx.notify();
+    });
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let format = values.format;
+    let api_key = values.api_key.clone();
+    let runtime = crate::ssh::manager::SshManager::global().runtime();
+    runtime.spawn(async move {
+        let result =
+            crate::services::ai::fetch_models(format, &api_key, &test_base, requires_key).await;
+        let _ = tx.send(result);
+    });
+
+    cx.spawn({
+        let state = state.clone();
+        async move |async_cx| {
+            let result = rx.await;
+            let _ = async_cx.update(|cx| {
+                state.update(cx, |s, cx| {
+                    s.ai_fetching_models.remove(&r);
+                    let lang = s.settings.theme.language.clone();
+                    match result {
+                        Ok(Ok(models)) if !models.is_empty() => {
+                            let count = models.len();
+                            s.ai_remote_models.insert(r.clone(), models.clone());
+                            // 若当前尚未配置模型（或仅有占位模型 local-model），自动添入首个发现的模型
+                            let current = s.current_ai_models(&r);
+                            if current.is_empty()
+                                || (current.len() == 1 && current[0] == "local-model")
+                            {
+                                s.ai_inputs.entry(r.clone()).or_default().models =
+                                    Some(vec![models[0].clone()]);
+                                s.mark_changed();
+                            }
+                            s.ai_fetch_notices.insert(
+                                r.clone(),
+                                (
+                                    true,
+                                    format!(
+                                        "{} ({})",
+                                        i18n::t(&lang, "settings.ai.fetch_models_ok"),
+                                        count
+                                    ),
+                                ),
+                            );
+                        }
+                        Ok(Ok(_)) => {
+                            s.ai_fetch_notices.insert(
+                                r.clone(),
+                                (
+                                    false,
+                                    i18n::t(&lang, "settings.ai.fetch_models_empty").to_string(),
+                                ),
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            s.ai_fetch_notices.insert(r.clone(), (false, e.to_string()));
+                        }
+                        Err(_) => {
+                            s.ai_fetch_notices
+                                .insert(r.clone(), (false, "internal channel error".into()));
+                        }
+                    }
+                    cx.notify();
+                });
+            });
+            Some(())
+        }
+    })
+    .detach();
+}
+
 fn run_test(r: ProviderRef, state: Entity<SettingsDialogState>, cx: &mut App) {
     // 1. 从当前输入收集测试配置
     let values = {
         let app: &App = cx;
         state.read(app).collect_ai_inputs(&r, app)
     };
-    if values.api_key.trim().is_empty() {
+    let test_base = resolve_test_base_url(&r, &values.base_url);
+    let requires_key = SettingsDialogState::ai_requires_api_key(&r, &test_base);
+    if requires_key && values.api_key.trim().is_empty() {
         let r2 = r.clone();
         state.update(cx, |s, cx| {
             s.ai_test_statuses.insert(
@@ -748,14 +1314,12 @@ fn run_test(r: ProviderRef, state: Entity<SettingsDialogState>, cx: &mut App) {
         return;
     }
 
-    // 测试用 base_url：内置为空时填默认
-    let test_base = if values.base_url.trim().is_empty() {
-        match &r {
-            ProviderRef::Builtin(id) => id.default_base_url().to_string(),
-            ProviderRef::Custom(_) => String::new(),
-        }
+    let probe_model = if !values.model.trim().is_empty() {
+        values.model.clone()
+    } else if let ProviderRef::Builtin(id) = &r {
+        id.default_model().to_string()
     } else {
-        values.base_url.clone()
+        String::new()
     };
 
     // 2. 标记测试中
@@ -771,7 +1335,14 @@ fn run_test(r: ProviderRef, state: Entity<SettingsDialogState>, cx: &mut App) {
     let api_key = values.api_key.clone();
     let runtime = crate::ssh::manager::SshManager::global().runtime();
     runtime.spawn(async move {
-        let result = crate::services::ai::test_connection(format, &api_key, &test_base).await;
+        let result = crate::services::ai::test_connection(
+            format,
+            &api_key,
+            &test_base,
+            &probe_model,
+            requires_key,
+        )
+        .await;
         let _ = tx.send(result);
     });
 
@@ -782,17 +1353,31 @@ fn run_test(r: ProviderRef, state: Entity<SettingsDialogState>, cx: &mut App) {
             let _ = async_cx.update(|cx| {
                 state.update(cx, |s, cx| {
                     let new_status = match result {
-                        Ok(Ok(())) => {
+                        Ok(Ok(discovered_models)) => {
+                            let mut snapshot_model = values.model.clone();
+                            if !discovered_models.is_empty() {
+                                s.ai_remote_models
+                                    .insert(r.clone(), discovered_models.clone());
+                                let should_autofill = values.models.is_empty()
+                                    || (values.models.len() == 1
+                                        && values.models[0] == "local-model");
+                                if should_autofill {
+                                    snapshot_model = discovered_models[0].clone();
+                                    s.ai_inputs.entry(r.clone()).or_default().models =
+                                        Some(vec![discovered_models[0].clone()]);
+                                }
+                            }
                             s.ai_tested_snapshots.insert(
                                 r.clone(),
                                 (
                                     values.api_key.clone(),
                                     values.base_url.clone(),
-                                    values.model.clone(),
+                                    snapshot_model,
                                     values.format.label().to_string(),
                                 ),
                             );
                             s.ai_save_error = None;
+                            s.mark_changed();
                             AiTestStatus::Pass
                         }
                         Ok(Err(e)) => AiTestStatus::Fail(e.to_string()),

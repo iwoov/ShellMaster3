@@ -12,9 +12,16 @@ use crate::models::{AgentReasoningEffort, ApiFormat};
 
 /// 根据用户配置的供应商与模型，构建统一动态分发模型。
 pub fn build_model(provider: &ResolvedProvider) -> Result<DynModel<Completion>, String> {
-    if provider.api_key.trim().is_empty() {
+    let trimmed_key = provider.api_key.trim();
+    if provider.requires_api_key && trimmed_key.is_empty() {
         return Err("API key 为空".to_string());
     }
+    let effective_key = if trimmed_key.is_empty() {
+        // 本地 OpenAI 兼容服务（如 Ollama / LM Studio）不校验密钥，提供占位符满足 SDK 非空要求
+        "local-no-key".to_string()
+    } else {
+        trimmed_key.to_string()
+    };
     let model = provider.model.trim();
     if model.is_empty() {
         return Err("未指定模型名称".to_string());
@@ -23,28 +30,28 @@ pub fn build_model(provider: &ResolvedProvider) -> Result<DynModel<Completion>, 
 
     let dyn_model: DynModel<Completion> = match provider.format {
         ApiFormat::OpenAiChat => {
-            let mut cfg = OpenAIConfig::new(provider.api_key.clone());
+            let mut cfg = OpenAIConfig::new(effective_key);
             if !base.is_empty() {
                 cfg = cfg.with_base_url(base);
             }
             cfg.client().chat(model).into()
         }
         ApiFormat::OpenAiResponses => {
-            let mut cfg = OpenAIConfig::new(provider.api_key.clone());
+            let mut cfg = OpenAIConfig::new(effective_key);
             if !base.is_empty() {
                 cfg = cfg.with_base_url(base);
             }
             cfg.client().responses(model).into()
         }
         ApiFormat::Anthropic => {
-            let mut cfg = AnthropicConfig::new(provider.api_key.clone());
+            let mut cfg = AnthropicConfig::new(effective_key);
             if !base.is_empty() {
                 cfg = cfg.with_base_url(base);
             }
             cfg.client().completion(model).into()
         }
         ApiFormat::Gemini => {
-            let mut cfg = GeminiConfig::new(provider.api_key.clone());
+            let mut cfg = GeminiConfig::new(effective_key);
             if !base.is_empty() {
                 // rig-core 的 Gemini wire 会自行拼接 `/v1beta/models/{model}:...`，
                 // 因此如果用户填写的 base_url 已包含 `/v1beta` 或 `/v1`，需剥离避免重复路径。
@@ -133,7 +140,23 @@ mod tests {
             models: vec![model.to_string()],
             format,
             verified: true,
+            requires_api_key: true,
         }
+    }
+
+    #[test]
+    fn local_provider_builds_without_api_key() {
+        let local = ResolvedProvider {
+            name: "Ollama".to_string(),
+            api_key: String::new(),
+            base_url: "http://localhost:11434/v1".to_string(),
+            model: "qwen2.5-coder:7b".to_string(),
+            models: vec!["qwen2.5-coder:7b".to_string()],
+            format: ApiFormat::OpenAiChat,
+            verified: true,
+            requires_api_key: false,
+        };
+        assert!(build_model(&local).is_ok());
     }
 
     #[test]

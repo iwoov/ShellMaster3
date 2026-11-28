@@ -65,46 +65,205 @@ impl AppSettings {
 
 // ======================== AI 设置 ========================
 
+/// 供应商端点预设（用于在标准按量 API、国际站、Coding Plan 订阅端点之间一键切换）
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EndpointPreset {
+    pub label_zh: &'static str,
+    pub label_en: &'static str,
+    pub base_url: &'static str,
+    pub format: ApiFormat,
+}
+
+impl EndpointPreset {
+    pub fn label(&self, lang: &Language) -> &'static str {
+        match lang {
+            Language::Chinese => self.label_zh,
+            Language::English => self.label_en,
+        }
+    }
+}
+
+/// 判断 Base URL 是否指向本机地址（本地模型服务如 Ollama / LM Studio 无需 API Key）
+pub fn is_local_base_url(base_url: &str) -> bool {
+    let lower = base_url.trim().to_ascii_lowercase();
+    lower.starts_with("http://localhost")
+        || lower.starts_with("https://localhost")
+        || lower.starts_with("http://127.0.0.1")
+        || lower.starts_with("https://127.0.0.1")
+        || lower.starts_with("http://[::1]")
+        || lower.starts_with("https://[::1]")
+        || lower.starts_with("http://0.0.0.0")
+}
+
+/// 内置 AI 供应商分组：区分「Coding 订阅」「云端 API」「本地模型」
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AiProviderGroup {
+    Subscription,
+    Api,
+    Local,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum AiProviderId {
+    // 订阅（Coding Plan）
+    ZhipuCoding,
+    QwenCoding,
+    KimiCoding,
+    MiniMaxCoding,
+    VolcengineCoding,
+    // 云端 API（国际 / 国内 / 聚合）
     OpenAi,
-    Gemini,
     Claude,
+    Gemini,
     DeepSeek,
+    Zhipu,
+    Qwen,
+    Kimi,
+    MiniMax,
+    Volcengine,
+    SiliconFlow,
+    OpenRouter,
+    Xai,
+    Groq,
+    // 本地模型
+    Ollama,
+    LmStudio,
 }
 
 impl AiProviderId {
-    pub const ALL: [AiProviderId; 4] = [
-        AiProviderId::OpenAi,
-        AiProviderId::Gemini,
-        AiProviderId::Claude,
-        AiProviderId::DeepSeek,
+    pub const SUBSCRIPTIONS: [AiProviderId; 5] = [
+        AiProviderId::ZhipuCoding,
+        AiProviderId::QwenCoding,
+        AiProviderId::KimiCoding,
+        AiProviderId::MiniMaxCoding,
+        AiProviderId::VolcengineCoding,
     ];
+
+    pub const APIS: [AiProviderId; 13] = [
+        AiProviderId::OpenAi,
+        AiProviderId::Claude,
+        AiProviderId::Gemini,
+        AiProviderId::DeepSeek,
+        AiProviderId::Zhipu,
+        AiProviderId::Qwen,
+        AiProviderId::Kimi,
+        AiProviderId::MiniMax,
+        AiProviderId::Volcengine,
+        AiProviderId::SiliconFlow,
+        AiProviderId::OpenRouter,
+        AiProviderId::Xai,
+        AiProviderId::Groq,
+    ];
+
+    pub const LOCALS: [AiProviderId; 2] = [AiProviderId::Ollama, AiProviderId::LmStudio];
+
+    pub const ALL: [AiProviderId; 20] = [
+        AiProviderId::ZhipuCoding,
+        AiProviderId::QwenCoding,
+        AiProviderId::KimiCoding,
+        AiProviderId::MiniMaxCoding,
+        AiProviderId::VolcengineCoding,
+        AiProviderId::OpenAi,
+        AiProviderId::Claude,
+        AiProviderId::Gemini,
+        AiProviderId::DeepSeek,
+        AiProviderId::Zhipu,
+        AiProviderId::Qwen,
+        AiProviderId::Kimi,
+        AiProviderId::MiniMax,
+        AiProviderId::Volcengine,
+        AiProviderId::SiliconFlow,
+        AiProviderId::OpenRouter,
+        AiProviderId::Xai,
+        AiProviderId::Groq,
+        AiProviderId::Ollama,
+        AiProviderId::LmStudio,
+    ];
+
+    pub fn group(&self) -> AiProviderGroup {
+        match self {
+            AiProviderId::ZhipuCoding
+            | AiProviderId::QwenCoding
+            | AiProviderId::KimiCoding
+            | AiProviderId::MiniMaxCoding
+            | AiProviderId::VolcengineCoding => AiProviderGroup::Subscription,
+            AiProviderId::Ollama | AiProviderId::LmStudio => AiProviderGroup::Local,
+            _ => AiProviderGroup::Api,
+        }
+    }
 
     pub fn label(&self) -> &'static str {
         match self {
+            AiProviderId::ZhipuCoding => "智谱 Coding Plan",
+            AiProviderId::QwenCoding => "百炼 Coding Plan",
+            AiProviderId::KimiCoding => "Kimi Coding",
+            AiProviderId::MiniMaxCoding => "MiniMax Coding",
+            AiProviderId::VolcengineCoding => "方舟 Coding Plan",
             AiProviderId::OpenAi => "OpenAI",
-            AiProviderId::Gemini => "Gemini",
             AiProviderId::Claude => "Claude",
+            AiProviderId::Gemini => "Gemini",
             AiProviderId::DeepSeek => "DeepSeek",
+            AiProviderId::Zhipu => "智谱 GLM",
+            AiProviderId::Qwen => "阿里云百炼 / Qwen",
+            AiProviderId::Kimi => "Kimi (Moonshot)",
+            AiProviderId::MiniMax => "MiniMax",
+            AiProviderId::Volcengine => "火山方舟 / 豆包",
+            AiProviderId::SiliconFlow => "硅基流动",
+            AiProviderId::OpenRouter => "OpenRouter",
+            AiProviderId::Xai => "xAI (Grok)",
+            AiProviderId::Groq => "Groq",
+            AiProviderId::Ollama => "Ollama",
+            AiProviderId::LmStudio => "LM Studio",
         }
     }
 
     pub fn key(&self) -> &'static str {
         match self {
+            AiProviderId::ZhipuCoding => "zhipu_coding",
+            AiProviderId::QwenCoding => "qwen_coding",
+            AiProviderId::KimiCoding => "kimi_coding",
+            AiProviderId::MiniMaxCoding => "minimax_coding",
+            AiProviderId::VolcengineCoding => "volcengine_coding",
             AiProviderId::OpenAi => "openai",
-            AiProviderId::Gemini => "gemini",
             AiProviderId::Claude => "claude",
+            AiProviderId::Gemini => "gemini",
             AiProviderId::DeepSeek => "deepseek",
+            AiProviderId::Zhipu => "zhipu",
+            AiProviderId::Qwen => "qwen",
+            AiProviderId::Kimi => "kimi",
+            AiProviderId::MiniMax => "minimax",
+            AiProviderId::Volcengine => "volcengine",
+            AiProviderId::SiliconFlow => "siliconflow",
+            AiProviderId::OpenRouter => "openrouter",
+            AiProviderId::Xai => "xai",
+            AiProviderId::Groq => "groq",
+            AiProviderId::Ollama => "ollama",
+            AiProviderId::LmStudio => "lmstudio",
         }
     }
 
     pub fn default_base_url(&self) -> &'static str {
         match self {
+            AiProviderId::ZhipuCoding => "https://open.bigmodel.cn/api/coding/paas/v4",
+            AiProviderId::QwenCoding => "https://coding.dashscope.aliyuncs.com/v1",
+            AiProviderId::KimiCoding => "https://api.kimi.com/coding/v1",
+            AiProviderId::MiniMaxCoding => "https://api.minimaxi.com/v1",
+            AiProviderId::VolcengineCoding => "https://ark.cn-beijing.volces.com/api/coding/v3",
             AiProviderId::OpenAi => "https://api.openai.com/v1",
-            AiProviderId::Gemini => "https://generativelanguage.googleapis.com/v1beta",
             AiProviderId::Claude => "https://api.anthropic.com/v1",
+            AiProviderId::Gemini => "https://generativelanguage.googleapis.com/v1beta",
             AiProviderId::DeepSeek => "https://api.deepseek.com/v1",
+            AiProviderId::Zhipu => "https://open.bigmodel.cn/api/paas/v4",
+            AiProviderId::Qwen => "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            AiProviderId::Kimi => "https://api.moonshot.cn/v1",
+            AiProviderId::MiniMax => "https://api.minimaxi.com/v1",
+            AiProviderId::Volcengine => "https://ark.cn-beijing.volces.com/api/v3",
+            AiProviderId::SiliconFlow => "https://api.siliconflow.cn/v1",
+            AiProviderId::OpenRouter => "https://openrouter.ai/api/v1",
+            AiProviderId::Xai => "https://api.x.ai/v1",
+            AiProviderId::Groq => "https://api.groq.com/openai/v1",
+            AiProviderId::Ollama => "http://localhost:11434/v1",
+            AiProviderId::LmStudio => "http://localhost:1234/v1",
         }
     }
 
@@ -115,33 +274,257 @@ impl AiProviderId {
     /// 各供应商预置的常见模型列表（首项作为默认模型）
     pub fn default_models(&self) -> &'static [&'static str] {
         match self {
-            AiProviderId::OpenAi => &["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
-            AiProviderId::Gemini => &["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"],
+            AiProviderId::ZhipuCoding => &["glm-4.7", "glm-4.5", "glm-4.5-air"],
+            AiProviderId::QwenCoding => &["qwen3-coder-plus", "qwen3-max", "qwen-plus"],
+            AiProviderId::KimiCoding => &["kimi-for-coding", "kimi-k2.5", "kimi-k2-0905-preview"],
+            AiProviderId::MiniMaxCoding => {
+                &["MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2.5-highspeed"]
+            }
+            AiProviderId::VolcengineCoding => {
+                &["doubao-seed-code", "deepseek-v3-250324", "doubao-seed-1-6-250615"]
+            }
+            AiProviderId::OpenAi => &["gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "o4-mini"],
             AiProviderId::Claude => &[
-                "claude-3-5-haiku-latest",
-                "claude-3-5-sonnet-latest",
-                "claude-3-7-sonnet-latest",
+                "claude-sonnet-4-5",
+                "claude-haiku-4-5",
+                "claude-opus-4-1",
             ],
+            AiProviderId::Gemini => &["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
             AiProviderId::DeepSeek => &["deepseek-chat", "deepseek-reasoner"],
+            AiProviderId::Zhipu => &["glm-4.5-air", "glm-4.7", "glm-4.5"],
+            AiProviderId::Qwen => &["qwen3-coder-plus", "qwen-plus", "qwen-max", "qwen-turbo"],
+            AiProviderId::Kimi => &["kimi-k2-0905-preview", "kimi-k2.5", "moonshot-v1-auto"],
+            AiProviderId::MiniMax => &["MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2.5-highspeed"],
+            AiProviderId::Volcengine => &[
+                "doubao-seed-1-6-250615",
+                "doubao-1-5-pro-32k-250115",
+                "deepseek-v3-250324",
+            ],
+            AiProviderId::SiliconFlow => &[
+                "deepseek-ai/DeepSeek-V3",
+                "deepseek-ai/DeepSeek-R1",
+                "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+            ],
+            AiProviderId::OpenRouter => &[
+                "anthropic/claude-sonnet-4.5",
+                "openai/gpt-4.1-mini",
+                "google/gemini-2.5-flash",
+                "deepseek/deepseek-chat-v3-0324",
+            ],
+            AiProviderId::Xai => &["grok-3-mini", "grok-3", "grok-code-fast-1"],
+            AiProviderId::Groq => &[
+                "llama-3.3-70b-versatile",
+                "qwen/qwen3-32b",
+                "openai/gpt-oss-120b",
+            ],
+            AiProviderId::Ollama => &["qwen2.5-coder:7b", "qwen3:8b", "llama3.1:8b"],
+            AiProviderId::LmStudio => &["local-model"],
         }
     }
 
+    /// 官方品牌 SVG 图标路径
     pub fn icon_path(&self) -> &'static str {
+        use crate::constants::icons;
         match self {
-            AiProviderId::OpenAi => crate::constants::icons::AI_OPENAI,
-            AiProviderId::Gemini => crate::constants::icons::AI_GEMINI,
-            AiProviderId::Claude => crate::constants::icons::AI_CLAUDE,
-            AiProviderId::DeepSeek => crate::constants::icons::AI_DEEPSEEK,
+            AiProviderId::OpenAi => icons::AI_OPENAI,
+            AiProviderId::Gemini => icons::AI_GEMINI,
+            AiProviderId::Claude => icons::AI_CLAUDE,
+            AiProviderId::DeepSeek => icons::AI_DEEPSEEK,
+            AiProviderId::Zhipu | AiProviderId::ZhipuCoding => icons::AI_ZHIPU,
+            AiProviderId::Qwen | AiProviderId::QwenCoding => icons::AI_QWEN,
+            AiProviderId::Kimi | AiProviderId::KimiCoding => icons::AI_KIMI,
+            AiProviderId::MiniMax | AiProviderId::MiniMaxCoding => icons::AI_MINIMAX,
+            AiProviderId::Volcengine | AiProviderId::VolcengineCoding => icons::AI_VOLCENGINE,
+            AiProviderId::SiliconFlow => icons::AI_SILICONFLOW,
+            AiProviderId::OpenRouter => icons::AI_OPENROUTER,
+            AiProviderId::Xai => icons::AI_XAI,
+            AiProviderId::Groq => icons::AI_GROQ,
+            AiProviderId::Ollama => icons::AI_OLLAMA,
+            AiProviderId::LmStudio => icons::AI_LMSTUDIO,
         }
     }
 
-    /// 内置供应商对应的 API 协议格式
+    /// 是否为单色矢量图标（深浅主题自动跟随前景色着色，避免深色模式变黑看不清）
+    pub fn is_monochrome_icon(&self) -> bool {
+        matches!(
+            self,
+            AiProviderId::OpenAi
+                | AiProviderId::OpenRouter
+                | AiProviderId::Xai
+                | AiProviderId::Ollama
+        )
+    }
+
+    /// 是否必须提供 API Key（本地模型如 Ollama / LM Studio 允许留空）
+    pub fn requires_api_key(&self) -> bool {
+        !matches!(self, AiProviderId::Ollama | AiProviderId::LmStudio)
+    }
+
+    /// 内置供应商默认的 API 协议格式
     pub fn api_format(&self) -> ApiFormat {
         match self {
-            AiProviderId::OpenAi | AiProviderId::DeepSeek => ApiFormat::OpenAiChat,
             AiProviderId::Claude => ApiFormat::Anthropic,
             AiProviderId::Gemini => ApiFormat::Gemini,
+            _ => ApiFormat::OpenAiChat,
         }
+    }
+
+    /// 快捷端点预设（协议切换或国内外站切换）
+    pub fn endpoint_presets(&self) -> &'static [EndpointPreset] {
+        match self {
+            AiProviderId::ZhipuCoding => &[
+                EndpointPreset {
+                    label_zh: "OpenAI 协议",
+                    label_en: "OpenAI Format",
+                    base_url: "https://open.bigmodel.cn/api/coding/paas/v4",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "Anthropic 协议",
+                    label_en: "Anthropic Format",
+                    base_url: "https://open.bigmodel.cn/api/anthropic",
+                    format: ApiFormat::Anthropic,
+                },
+            ],
+            AiProviderId::QwenCoding => &[
+                EndpointPreset {
+                    label_zh: "OpenAI 协议",
+                    label_en: "OpenAI Format",
+                    base_url: "https://coding.dashscope.aliyuncs.com/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "Anthropic 协议",
+                    label_en: "Anthropic Format",
+                    base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+                    format: ApiFormat::Anthropic,
+                },
+            ],
+            AiProviderId::KimiCoding => &[
+                EndpointPreset {
+                    label_zh: "OpenAI 协议",
+                    label_en: "OpenAI Format",
+                    base_url: "https://api.kimi.com/coding/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "Anthropic 协议",
+                    label_en: "Anthropic Format",
+                    base_url: "https://api.kimi.com/coding",
+                    format: ApiFormat::Anthropic,
+                },
+            ],
+            AiProviderId::MiniMaxCoding => &[
+                EndpointPreset {
+                    label_zh: "国内 (OpenAI)",
+                    label_en: "China (OpenAI)",
+                    base_url: "https://api.minimaxi.com/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "国内 (Anthropic)",
+                    label_en: "China (Anthropic)",
+                    base_url: "https://api.minimaxi.com/anthropic",
+                    format: ApiFormat::Anthropic,
+                },
+                EndpointPreset {
+                    label_zh: "国际站 (OpenAI)",
+                    label_en: "Global (OpenAI)",
+                    base_url: "https://api.minimax.io/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "国际站 (Anthropic)",
+                    label_en: "Global (Anthropic)",
+                    base_url: "https://api.minimax.io/anthropic",
+                    format: ApiFormat::Anthropic,
+                },
+            ],
+            AiProviderId::VolcengineCoding => &[
+                EndpointPreset {
+                    label_zh: "OpenAI 协议",
+                    label_en: "OpenAI Format",
+                    base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "Anthropic 协议",
+                    label_en: "Anthropic Format",
+                    base_url: "https://ark.cn-beijing.volces.com/api/coding",
+                    format: ApiFormat::Anthropic,
+                },
+            ],
+            AiProviderId::OpenAi => &[
+                EndpointPreset {
+                    label_zh: "Chat API",
+                    label_en: "Chat API",
+                    base_url: "https://api.openai.com/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "Responses API",
+                    label_en: "Responses API",
+                    base_url: "https://api.openai.com/v1",
+                    format: ApiFormat::OpenAiResponses,
+                },
+            ],
+            AiProviderId::Qwen => &[
+                EndpointPreset {
+                    label_zh: "国内站",
+                    label_en: "China",
+                    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "国际站",
+                    label_en: "International",
+                    base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+            ],
+            AiProviderId::Kimi => &[
+                EndpointPreset {
+                    label_zh: "国内站",
+                    label_en: "China",
+                    base_url: "https://api.moonshot.cn/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "国际站",
+                    label_en: "International",
+                    base_url: "https://api.moonshot.ai/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+            ],
+            AiProviderId::MiniMax => &[
+                EndpointPreset {
+                    label_zh: "国内站 (OpenAI)",
+                    label_en: "China (OpenAI)",
+                    base_url: "https://api.minimaxi.com/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+                EndpointPreset {
+                    label_zh: "国内站 (Anthropic)",
+                    label_en: "China (Anthropic)",
+                    base_url: "https://api.minimaxi.com/anthropic",
+                    format: ApiFormat::Anthropic,
+                },
+                EndpointPreset {
+                    label_zh: "国际站 (OpenAI)",
+                    label_en: "Global (OpenAI)",
+                    base_url: "https://api.minimax.io/v1",
+                    format: ApiFormat::OpenAiChat,
+                },
+            ],
+            _ => &[],
+        }
+    }
+
+    /// 该内置供应商是否提供多种协议格式切换（如同时支持 OpenAI 与 Anthropic 协议）
+    pub fn supports_format_override(&self) -> bool {
+        let presets = self.endpoint_presets();
+        let default_fmt = self.api_format();
+        presets.iter().any(|p| p.format != default_fmt)
     }
 }
 
@@ -188,6 +571,9 @@ pub struct AiProviderConfig {
     pub api_key: String,
     #[serde(default)]
     pub base_url: String,
+    /// 可选协议格式覆盖（如 Coding Plan 切换为 Anthropic / OpenAI Responses 协议）
+    #[serde(default)]
+    pub format: Option<ApiFormat>,
     /// 当前/默认使用的模型（= models 列表第一项）
     #[serde(default)]
     pub model: String,
@@ -205,10 +591,16 @@ impl AiProviderConfig {
         Self {
             api_key: String::new(),
             base_url: id.default_base_url().to_string(),
+            format: None,
             model: id.default_model().to_string(),
             models,
             verified: false,
         }
+    }
+
+    /// 实际生效的协议格式（未覆盖时使用供应商默认值）
+    pub fn effective_format(&self, id: AiProviderId) -> ApiFormat {
+        self.format.unwrap_or_else(|| id.api_format())
     }
 
     /// 返回可选模型列表：models 非空则用之，否则回退到单个 model
@@ -316,7 +708,9 @@ impl AiSettings {
             .filter(|id| {
                 self.providers
                     .get(id.key())
-                    .map(|c| c.verified && !c.api_key.is_empty())
+                    .map(|c| {
+                        c.verified && (!id.requires_api_key() || !c.api_key.trim().is_empty())
+                    })
                     .unwrap_or(false)
             })
             .collect()
@@ -335,7 +729,7 @@ impl AiSettings {
             .map(ProviderRef::Builtin)
             .collect();
         for c in &self.custom_providers {
-            if c.verified && !c.api_key.is_empty() {
+            if c.verified && (is_local_base_url(&c.base_url) || !c.api_key.trim().is_empty()) {
                 refs.push(ProviderRef::Custom(c.id.clone()));
             }
         }
@@ -352,6 +746,7 @@ impl AiSettings {
                 } else {
                     cfg.base_url.clone()
                 };
+                let format = cfg.effective_format(*id);
                 let models = cfg.model_list();
                 let model = if cfg.model.trim().is_empty() {
                     models
@@ -362,13 +757,14 @@ impl AiSettings {
                     cfg.model.clone()
                 };
                 Some(ResolvedProvider {
-                    format: id.api_format(),
+                    format,
                     name: id.label().to_string(),
                     api_key: cfg.api_key,
                     base_url,
                     model,
                     models,
                     verified: cfg.verified,
+                    requires_api_key: id.requires_api_key(),
                 })
             }
             ProviderRef::Custom(id) => {
@@ -379,14 +775,17 @@ impl AiSettings {
                 } else {
                     c.model.clone()
                 };
+                let base_url = c.base_url.trim_end_matches('/').to_string();
+                let requires_api_key = !is_local_base_url(&base_url);
                 Some(ResolvedProvider {
                     format: c.format,
                     name: c.name.clone(),
                     api_key: c.api_key.clone(),
-                    base_url: c.base_url.trim_end_matches('/').to_string(),
+                    base_url,
                     model,
                     models,
                     verified: c.verified,
+                    requires_api_key,
                 })
             }
         }
@@ -468,6 +867,7 @@ pub struct ResolvedProvider {
     pub model: String,
     pub models: Vec<String>,
     pub verified: bool,
+    pub requires_api_key: bool,
 }
 
 // ======================== 主题设置 ========================
@@ -1072,5 +1472,56 @@ mod tests {
         let settings: SystemSettings = serde_json::from_value(value).unwrap();
         assert!(settings.check_updates);
         assert!(!settings.auto_update);
+    }
+
+    #[test]
+    fn ai_providers_support_coding_plan_presets_and_keyless_local_models() {
+        let mut ai = AiSettings::default();
+        assert_eq!(AiProviderId::ALL.len(), 20);
+        assert_eq!(
+            AiProviderId::SUBSCRIPTIONS.len()
+                + AiProviderId::APIS.len()
+                + AiProviderId::LOCALS.len(),
+            AiProviderId::ALL.len()
+        );
+        assert_eq!(AiProviderId::ZhipuCoding.group(), AiProviderGroup::Subscription);
+        assert_eq!(AiProviderId::OpenAi.group(), AiProviderGroup::Api);
+        assert_eq!(AiProviderId::Ollama.group(), AiProviderGroup::Local);
+        assert!(!AiProviderId::Ollama.requires_api_key());
+        assert!(!AiProviderId::LmStudio.requires_api_key());
+        assert!(AiProviderId::ZhipuCoding.requires_api_key());
+        assert!(AiProviderId::ZhipuCoding.supports_format_override());
+        assert!(AiProviderId::QwenCoding.supports_format_override());
+        assert!(AiProviderId::KimiCoding.supports_format_override());
+        assert!(AiProviderId::MiniMaxCoding.supports_format_override());
+        assert!(AiProviderId::VolcengineCoding.supports_format_override());
+
+        // Ollama 无需 API Key，只要 verified=true 即可进入可用供应商列表
+        let mut ollama_cfg = ai.get(AiProviderId::Ollama);
+        ollama_cfg.verified = true;
+        ai.set(AiProviderId::Ollama, ollama_cfg);
+        assert!(ai.verified_providers().contains(&AiProviderId::Ollama));
+
+        let resolved_ollama = ai.resolve(&ProviderRef::Builtin(AiProviderId::Ollama)).unwrap();
+        assert!(!resolved_ollama.requires_api_key);
+        assert_eq!(resolved_ollama.base_url, "http://localhost:11434/v1");
+
+        // 智谱 Coding Plan 切换到 Anthropic 协议后，resolve 应返回覆盖后的协议
+        let mut zhipu_cfg = ai.get(AiProviderId::ZhipuCoding);
+        zhipu_cfg.api_key = "test-key".into();
+        zhipu_cfg.base_url = "https://open.bigmodel.cn/api/anthropic".into();
+        zhipu_cfg.format = Some(ApiFormat::Anthropic);
+        zhipu_cfg.verified = true;
+        ai.set(AiProviderId::ZhipuCoding, zhipu_cfg);
+
+        let resolved_zhipu = ai
+            .resolve(&ProviderRef::Builtin(AiProviderId::ZhipuCoding))
+            .unwrap();
+        assert_eq!(resolved_zhipu.format, ApiFormat::Anthropic);
+        assert!(resolved_zhipu.requires_api_key);
+
+        assert!(is_local_base_url("http://localhost:11434/v1"));
+        assert!(is_local_base_url("http://127.0.0.1:1234/v1"));
+        assert!(!is_local_base_url("https://api.openai.com/v1"));
     }
 }

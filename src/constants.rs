@@ -59,6 +59,17 @@ pub mod icons {
     pub const AI_GEMINI: &str = "icons/gemini.svg";
     pub const AI_CLAUDE: &str = "icons/claude.svg";
     pub const AI_DEEPSEEK: &str = "icons/deepseek.svg";
+    pub const AI_ZHIPU: &str = "icons/zhipu.svg";
+    pub const AI_QWEN: &str = "icons/qwen.svg";
+    pub const AI_KIMI: &str = "icons/kimi.svg";
+    pub const AI_MINIMAX: &str = "icons/minimax.svg";
+    pub const AI_VOLCENGINE: &str = "icons/volcengine.svg";
+    pub const AI_SILICONFLOW: &str = "icons/siliconflow.svg";
+    pub const AI_OPENROUTER: &str = "icons/openrouter.svg";
+    pub const AI_XAI: &str = "icons/xai.svg";
+    pub const AI_GROQ: &str = "icons/groq.svg";
+    pub const AI_OLLAMA: &str = "icons/ollama.svg";
+    pub const AI_LMSTUDIO: &str = "icons/lmstudio.svg";
     // Monitor 图标
     pub const INFO: &str = "icons/info.svg";
     // SFTP 图标

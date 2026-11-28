@@ -48,10 +48,13 @@ pub enum AiTestStatus {
 pub struct AiProviderInputs {
     pub api_key: Option<Entity<InputState>>,
     pub base_url: Option<Entity<InputState>>,
-    pub model: Option<Entity<TextareaState>>,
+    /// 已添加的模型列表（首项为默认模型）
+    pub models: Option<Vec<String>>,
+    /// 手动输入添加模型的单行输入框
+    pub new_model_input: Option<Entity<InputState>>,
     /// 自定义供应商：名称输入
     pub name: Option<Entity<InputState>>,
-    /// 自定义供应商：协议格式（下拉选择）
+    /// 协议格式（下拉选择）
     pub format: Option<ApiFormat>,
 }
 
@@ -210,6 +213,12 @@ pub struct SettingsDialogState {
     // ============ AI 设置 ============
     pub ai_inputs: HashMap<ProviderRef, AiProviderInputs>,
     pub ai_test_statuses: HashMap<ProviderRef, AiTestStatus>,
+    /// 正在从远端 `/models` 拉取模型列表的供应商集合
+    pub ai_fetching_models: std::collections::HashSet<ProviderRef>,
+    /// 从远端 `/models` 拉取到的候选模型池（供下拉选择添加）
+    pub ai_remote_models: HashMap<ProviderRef, Vec<String>>,
+    /// 最近一次拉取模型列表的状态提示 (is_ok, message)
+    pub ai_fetch_notices: HashMap<ProviderRef, (bool, String)>,
     /// 已通过测试时的输入快照 (api_key, base_url, model, format_tag)，用于检测用户在通过后是否又改了
     pub ai_tested_snapshots: HashMap<ProviderRef, (String, String, String, String)>,
     /// 保存校验失败时的错误信息（如某供应商有 key 但未通过测试）
@@ -295,6 +304,9 @@ impl Default for SettingsDialogState {
             // AI
             ai_inputs: HashMap::new(),
             ai_test_statuses: HashMap::new(),
+            ai_fetching_models: std::collections::HashSet::new(),
+            ai_remote_models: HashMap::new(),
+            ai_fetch_notices: HashMap::new(),
             ai_tested_snapshots: HashMap::new(),
             ai_save_error: None,
             ai_active_provider: ProviderRef::Builtin(AiProviderId::OpenAi),
@@ -335,10 +347,14 @@ impl SettingsDialogState {
         // 根据持久化的 verified 标志，预填 AI 测试状态
         self.ai_test_statuses.clear();
         self.ai_tested_snapshots.clear();
+        self.ai_fetching_models.clear();
+        self.ai_remote_models.clear();
+        self.ai_fetch_notices.clear();
         for id in AiProviderId::ALL {
             let r = ProviderRef::Builtin(id);
             let cfg = self.settings.ai.get(id);
-            if cfg.verified && !cfg.api_key.is_empty() {
+            let has_credential = !id.requires_api_key() || !cfg.api_key.trim().is_empty();
+            if cfg.verified && has_credential {
                 self.ai_test_statuses.insert(r.clone(), AiTestStatus::Pass);
                 self.ai_tested_snapshots.insert(
                     r,
@@ -346,7 +362,7 @@ impl SettingsDialogState {
                         cfg.api_key.clone(),
                         cfg.base_url.clone(),
                         cfg.model.clone(),
-                        id.api_format().label().to_string(),
+                        cfg.effective_format(id).label().to_string(),
                     ),
                 );
             } else {
@@ -355,7 +371,9 @@ impl SettingsDialogState {
         }
         for c in &self.settings.ai.custom_providers {
             let r = ProviderRef::Custom(c.id.clone());
-            if c.verified && !c.api_key.is_empty() {
+            let has_credential = crate::models::settings::is_local_base_url(&c.base_url)
+                || !c.api_key.trim().is_empty();
+            if c.verified && has_credential {
                 self.ai_test_statuses.insert(r.clone(), AiTestStatus::Pass);
                 self.ai_tested_snapshots.insert(
                     r,
@@ -797,92 +815,149 @@ impl SettingsDialogState {
 
         // AI 设置（内置供应商）
         for id in AiProviderId::ALL {
-            let entry = self.ai_inputs.entry(ProviderRef::Builtin(id)).or_default();
+            let r = ProviderRef::Builtin(id);
             let cfg = self.settings.ai.get(id);
-            if entry.api_key.is_none() {
-                let value = cfg.api_key.clone();
-                entry.api_key = Some(cx.new(|cx| {
-                    let mut state = InputState::new(window, cx)
-                        .placeholder("API Key")
-                        .masked(true);
-                    state.set_value(value, window, cx);
-                    state
-                }));
+            let lang = self.settings.theme.language.clone();
+            let needs_model_input = self
+                .ai_inputs
+                .get(&r)
+                .map(|e| e.new_model_input.is_none())
+                .unwrap_or(true);
+            {
+                let entry = self.ai_inputs.entry(r.clone()).or_default();
+                if entry.format.is_none() {
+                    entry.format = Some(cfg.effective_format(id));
+                }
+                if entry.api_key.is_none() {
+                    let value = cfg.api_key.clone();
+                    let placeholder = if id.requires_api_key() {
+                        "API Key"
+                    } else {
+                        i18n::t(&lang, "settings.ai.api_key_optional")
+                    };
+                    entry.api_key = Some(cx.new(|cx| {
+                        let mut state = InputState::new(window, cx)
+                            .placeholder(placeholder)
+                            .masked(true);
+                        state.set_value(value, window, cx);
+                        state
+                    }));
+                }
+                if entry.base_url.is_none() {
+                    let value = cfg.base_url.clone();
+                    let placeholder = id.default_base_url();
+                    entry.base_url = Some(cx.new(|cx| {
+                        let mut state = InputState::new(window, cx).placeholder(placeholder);
+                        state.set_value(value, window, cx);
+                        state
+                    }));
+                }
+                if entry.models.is_none() {
+                    entry.models = Some(cfg.model_list());
+                }
             }
-            if entry.base_url.is_none() {
-                let value = cfg.base_url.clone();
-                let placeholder = id.default_base_url();
-                entry.base_url = Some(cx.new(|cx| {
-                    let mut state = InputState::new(window, cx).placeholder(placeholder);
-                    state.set_value(value, window, cx);
-                    state
-                }));
-            }
-            if entry.model.is_none() {
-                let cfg_models = cfg.model_list();
-                let value = if cfg_models.is_empty() {
-                    cfg.model.clone()
-                } else {
-                    cfg_models.join("\n")
-                };
-                let placeholder = id.default_model();
-                entry.model = Some(cx.new(|cx| {
-                    let mut state = TextareaState::new(window, cx)
-                        .placeholder(placeholder)
-                        .auto_grow(2, 8);
-                    state.set_value(value, window, cx);
-                    state
-                }));
+            if needs_model_input {
+                let placeholder = i18n::t(&lang, "settings.ai.model_input_placeholder");
+                let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+                let r_for_enter = r.clone();
+                let input_for_enter = input.clone();
+                cx.subscribe_in(
+                    &input,
+                    window,
+                    move |this, _, event: &gpui_kit::component::input::InputEvent, window, cx| {
+                        if matches!(
+                            event,
+                            gpui_kit::component::input::InputEvent::PressEnter { .. }
+                        ) {
+                            let val = input_for_enter.read(cx).value().trim().to_string();
+                            if !val.is_empty() {
+                                this.add_ai_model(&r_for_enter, val);
+                                input_for_enter.update(cx, |s, cx| {
+                                    s.set_value(String::new(), window, cx);
+                                });
+                                cx.notify();
+                            }
+                        }
+                    },
+                )
+                .detach();
+                self.ai_inputs.entry(r).or_default().new_model_input = Some(input);
             }
         }
 
         // AI 设置（自定义供应商）
         let custom_list = self.settings.ai.custom_providers.clone();
         for c in &custom_list {
-            let entry = self
+            let r = ProviderRef::Custom(c.id.clone());
+            let lang = self.settings.theme.language.clone();
+            let needs_model_input = self
                 .ai_inputs
-                .entry(ProviderRef::Custom(c.id.clone()))
-                .or_default();
-            if entry.format.is_none() {
-                entry.format = Some(c.format);
+                .get(&r)
+                .map(|e| e.new_model_input.is_none())
+                .unwrap_or(true);
+            {
+                let entry = self.ai_inputs.entry(r.clone()).or_default();
+                if entry.format.is_none() {
+                    entry.format = Some(c.format);
+                }
+                if entry.name.is_none() {
+                    let value = c.name.clone();
+                    entry.name = Some(cx.new(|cx| {
+                        let mut state = InputState::new(window, cx)
+                            .placeholder(i18n::t(&lang, "settings.ai.name_placeholder"));
+                        state.set_value(value, window, cx);
+                        state
+                    }));
+                }
+                if entry.api_key.is_none() {
+                    let value = c.api_key.clone();
+                    entry.api_key = Some(cx.new(|cx| {
+                        let mut state = InputState::new(window, cx)
+                            .placeholder("API Key")
+                            .masked(true);
+                        state.set_value(value, window, cx);
+                        state
+                    }));
+                }
+                if entry.base_url.is_none() {
+                    let value = c.base_url.clone();
+                    entry.base_url = Some(cx.new(|cx| {
+                        let mut state =
+                            InputState::new(window, cx).placeholder("https://api.example.com/v1");
+                        state.set_value(value, window, cx);
+                        state
+                    }));
+                }
+                if entry.models.is_none() {
+                    entry.models = Some(c.model_list());
+                }
             }
-            if entry.name.is_none() {
-                let value = c.name.clone();
-                entry.name = Some(cx.new(|cx| {
-                    let mut state = InputState::new(window, cx).placeholder(i18n::t(&self.settings.theme.language, "settings.ai.name_placeholder"));
-                    state.set_value(value, window, cx);
-                    state
-                }));
-            }
-            if entry.api_key.is_none() {
-                let value = c.api_key.clone();
-                entry.api_key = Some(cx.new(|cx| {
-                    let mut state = InputState::new(window, cx)
-                        .placeholder("API Key")
-                        .masked(true);
-                    state.set_value(value, window, cx);
-                    state
-                }));
-            }
-            if entry.base_url.is_none() {
-                let value = c.base_url.clone();
-                entry.base_url = Some(cx.new(|cx| {
-                    let mut state =
-                        InputState::new(window, cx).placeholder("https://api.example.com/v1");
-                    state.set_value(value, window, cx);
-                    state
-                }));
-            }
-            if entry.model.is_none() {
-                let models = c.model_list();
-                let value = models.join("\n");
-                entry.model = Some(cx.new(|cx| {
-                    let mut state = TextareaState::new(window, cx)
-                        .placeholder("gpt-4o-mini")
-                        .auto_grow(2, 8);
-                    state.set_value(value, window, cx);
-                    state
-                }));
+            if needs_model_input {
+                let placeholder = i18n::t(&lang, "settings.ai.model_input_placeholder");
+                let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+                let r_for_enter = r.clone();
+                let input_for_enter = input.clone();
+                cx.subscribe_in(
+                    &input,
+                    window,
+                    move |this, _, event: &gpui_kit::component::input::InputEvent, window, cx| {
+                        if matches!(
+                            event,
+                            gpui_kit::component::input::InputEvent::PressEnter { .. }
+                        ) {
+                            let val = input_for_enter.read(cx).value().trim().to_string();
+                            if !val.is_empty() {
+                                this.add_ai_model(&r_for_enter, val);
+                                input_for_enter.update(cx, |s, cx| {
+                                    s.set_value(String::new(), window, cx);
+                                });
+                                cx.notify();
+                            }
+                        }
+                    },
+                )
+                .detach();
+                self.ai_inputs.entry(r).or_default().new_model_input = Some(input);
             }
         }
 
@@ -947,7 +1022,7 @@ impl SettingsDialogState {
                 let cfg = self.settings.ai.get(*id);
                 (
                     id.label().to_string(),
-                    id.api_format(),
+                    cfg.effective_format(*id),
                     cfg.api_key.clone(),
                     cfg.base_url.clone(),
                     cfg.model_list(),
@@ -978,23 +1053,9 @@ impl SettingsDialogState {
             .and_then(|i| i.base_url.as_ref())
             .map(|s| s.read(cx).value().to_string())
             .unwrap_or(def_url);
-        // 模型框为多行文本：每行一个模型，过滤空行并去重；首行为默认模型
-        let models_text = inputs
-            .and_then(|i| i.model.as_ref())
-            .map(|s| s.read(cx).value().to_string());
-        let models: Vec<String> = match models_text {
-            Some(text) => {
-                let mut out: Vec<String> = Vec::new();
-                for line in text.lines() {
-                    let m = line.trim();
-                    if !m.is_empty() && !out.iter().any(|e| e == m) {
-                        out.push(m.to_string());
-                    }
-                }
-                out
-            }
-            None => def_models,
-        };
+        let models: Vec<String> = inputs
+            .and_then(|i| i.models.clone())
+            .unwrap_or(def_models);
         let model = models.first().cloned().unwrap_or_default();
         AiInputValues {
             name,
@@ -1228,11 +1289,13 @@ impl SettingsDialogState {
             let r = ProviderRef::Builtin(id);
             let v = self.collect_ai_inputs(&r, cx);
             let verified = self.ai_ref_verified(&r, &v);
+            let format = (v.format != id.api_format()).then_some(v.format);
             self.settings.ai.set(
                 id,
                 crate::models::settings::AiProviderConfig {
                     api_key: v.api_key,
                     base_url: v.base_url,
+                    format,
                     model: v.model,
                     models: v.models,
                     verified,
@@ -1266,6 +1329,14 @@ impl SettingsDialogState {
         self.settings.ai.custom_providers = rebuilt;
     }
 
+    /// 判断该供应商是否要求非空 API Key
+    pub fn ai_requires_api_key(r: &ProviderRef, base_url: &str) -> bool {
+        match r {
+            ProviderRef::Builtin(id) => id.requires_api_key(),
+            ProviderRef::Custom(_) => !crate::models::settings::is_local_base_url(base_url),
+        }
+    }
+
     /// 根据测试状态与快照判定某供应商是否 verified
     fn ai_ref_verified(&self, r: &ProviderRef, v: &AiInputValues) -> bool {
         let pass = matches!(self.ai_test_statuses.get(r), Some(AiTestStatus::Pass));
@@ -1276,7 +1347,9 @@ impl SettingsDialogState {
                 *k == v.api_key && *b == v.base_url && *m == v.model && *f == v.format.label()
             })
             .unwrap_or(false);
-        !v.api_key.is_empty() && pass && matches_snapshot
+        let has_credential =
+            !Self::ai_requires_api_key(r, &v.base_url) || !v.api_key.trim().is_empty();
+        has_credential && pass && matches_snapshot
     }
 
     /// 检查 AI 设置是否可以保存：每个填了 api_key 的供应商都必须通过测试且未被修改
@@ -1324,6 +1397,95 @@ impl SettingsDialogState {
         ProviderRef::Custom(id)
     }
 
+    /// 向指定供应商添加一个模型（自动去重）
+    pub fn add_ai_model(&mut self, r: &ProviderRef, model: String) {
+        let trimmed = model.trim().to_string();
+        if trimmed.is_empty() {
+            return;
+        }
+        let default_list = match r {
+            ProviderRef::Builtin(id) => self.settings.ai.get(*id).model_list(),
+            ProviderRef::Custom(cid) => self
+                .settings
+                .ai
+                .custom_get(cid)
+                .map(|c| c.model_list())
+                .unwrap_or_default(),
+        };
+        let entry = self.ai_inputs.entry(r.clone()).or_default();
+        let list = entry.models.get_or_insert(default_list);
+        if !list.iter().any(|m| m == &trimmed) {
+            list.push(trimmed);
+            self.mark_changed();
+        }
+    }
+
+    /// 从指定供应商移除一个模型
+    pub fn remove_ai_model(&mut self, r: &ProviderRef, model: &str) {
+        if let Some(list) = self.ai_inputs.get_mut(r).and_then(|e| e.models.as_mut()) {
+            let before = list.len();
+            list.retain(|m| m != model);
+            if list.len() != before {
+                self.mark_changed();
+            }
+        }
+    }
+
+    /// 将指定模型提升为该供应商的默认模型（列表首项）
+    pub fn set_default_ai_model(&mut self, r: &ProviderRef, model: &str) {
+        if let Some(list) = self.ai_inputs.get_mut(r).and_then(|e| e.models.as_mut()) {
+            if let Some(pos) = list.iter().position(|m| m == model) {
+                if pos > 0 {
+                    let item = list.remove(pos);
+                    list.insert(0, item);
+                    self.mark_changed();
+                }
+            }
+        }
+    }
+
+    /// 获取某供应商当前已添加的模型列表
+    pub fn current_ai_models(&self, r: &ProviderRef) -> Vec<String> {
+        if let Some(list) = self.ai_inputs.get(r).and_then(|e| e.models.clone()) {
+            return list;
+        }
+        match r {
+            ProviderRef::Builtin(id) => self.settings.ai.get(*id).model_list(),
+            ProviderRef::Custom(cid) => self
+                .settings
+                .ai
+                .custom_get(cid)
+                .map(|c| c.model_list())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// 获取某供应商可供下拉选择添加的候选模型（合并远端拉取模型与内置预置模型，排除已添加项）
+    pub fn candidate_ai_models(&self, r: &ProviderRef) -> Vec<String> {
+        let selected = self.current_ai_models(r);
+        let mut out: Vec<String> = Vec::new();
+        let mut push_unique = |m: &str| {
+            let m = m.trim();
+            if !m.is_empty()
+                && !selected.iter().any(|s| s == m)
+                && !out.iter().any(|e| e == m)
+            {
+                out.push(m.to_string());
+            }
+        };
+        if let Some(remote) = self.ai_remote_models.get(r) {
+            for m in remote {
+                push_unique(m);
+            }
+        }
+        if let ProviderRef::Builtin(id) = r {
+            for &m in id.default_models() {
+                push_unique(m);
+            }
+        }
+        out
+    }
+
     /// 删除指定自定义供应商
     pub fn remove_custom_provider(&mut self, id: &str) {
         self.settings.ai.custom_providers.retain(|c| c.id != id);
@@ -1331,6 +1493,9 @@ impl SettingsDialogState {
         self.ai_inputs.remove(&r);
         self.ai_test_statuses.remove(&r);
         self.ai_tested_snapshots.remove(&r);
+        self.ai_fetching_models.remove(&r);
+        self.ai_remote_models.remove(&r);
+        self.ai_fetch_notices.remove(&r);
     }
 }
 

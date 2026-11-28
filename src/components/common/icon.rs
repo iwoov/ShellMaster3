@@ -59,7 +59,7 @@ pub fn server_icon(
 
 /// 渲染 SVG/PNG 图标，保留原始颜色（用于品牌图标等）
 pub fn render_colored_icon(path: &'static str, size: f32) -> impl IntoElement {
-    img(path).w(px(size)).h(px(size))
+    img(path).w(px(size)).h(px(size)).flex_shrink_0()
 }
 
 /// 根据已采集的 OS 名称或连接配置文本识别 Linux 发行版图标。
@@ -95,6 +95,22 @@ pub fn distribution_icon(
         Some(icons::DISTRO_OPENSUSE)
     } else {
         None
+    }
+}
+
+/// 渲染内置 AI 供应商官方品牌 SVG 图标：
+/// - 单色图标（OpenAI / OpenRouter / xAI / Ollama）用 `svg()` 按主题前景色着色，确保深浅主题均清晰可见；
+/// - 彩色品牌图标用 `img()` 完整保留原始渐变与品牌色。
+pub fn render_provider_icon(
+    id: crate::models::settings::AiProviderId,
+    size: f32,
+    monochrome_color: Hsla,
+) -> AnyElement {
+    let path = id.icon_path();
+    if id.is_monochrome_icon() {
+        icon_sized(path, size, monochrome_color).into_any_element()
+    } else {
+        render_colored_icon(path, size).into_any_element()
     }
 }
 

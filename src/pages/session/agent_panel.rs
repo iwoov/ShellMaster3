@@ -55,11 +55,9 @@ pub fn render_agent_panel(
             i18n::t(lang, "ai_chat.new_thread").into()
         };
         let provider_icon: AnyElement = match (&active_ref, &active_resolved) {
-            (Some(ProviderRef::Builtin(id)), _) => img(id.icon_path())
-                .w(px(15.))
-                .h(px(15.))
-                .flex_shrink_0()
-                .into_any_element(),
+            (Some(ProviderRef::Builtin(id)), _) => {
+                crate::components::common::icon::render_provider_icon(*id, 15., p.text)
+            }
             (Some(ProviderRef::Custom(_)), Some(provider)) => {
                 render_letter_avatar(ProviderRef::avatar_char(&provider.name), 15.)
                     .into_any_element()
@@ -448,14 +446,10 @@ pub fn render_agent_panel(
         let provider_dropdown = {
             let tab_id_for_pick = tab_id.clone();
             let session_for_pick = session_state.clone();
-            let menu_items: Vec<(ProviderRef, String, Option<&'static str>)> = verified_refs
+            let menu_items: Vec<(ProviderRef, String)> = verified_refs
                 .iter()
                 .map(|provider_ref| match provider_ref {
-                    ProviderRef::Builtin(id) => (
-                        provider_ref.clone(),
-                        id.label().to_string(),
-                        Some(id.icon_path()),
-                    ),
+                    ProviderRef::Builtin(id) => (provider_ref.clone(), id.label().to_string()),
                     ProviderRef::Custom(_) => (
                         provider_ref.clone(),
                         settings
@@ -463,7 +457,6 @@ pub fn render_agent_panel(
                             .resolve(provider_ref)
                             .map(|provider| provider.name)
                             .unwrap_or_default(),
-                        None,
                     ),
                 })
                 .collect();
@@ -472,13 +465,9 @@ pub fn render_agent_panel(
                 .map(|provider| SharedString::from(provider.name.clone()))
                 .unwrap_or_else(|| i18n::t(lang, "ai_chat.no_provider_short").into());
             let trigger_icon: Option<AnyElement> = match (&active_ref, &active_resolved) {
-                (Some(ProviderRef::Builtin(id)), _) => Some(
-                    img(id.icon_path())
-                        .w(px(14.))
-                        .h(px(14.))
-                        .flex_shrink_0()
-                        .into_any_element(),
-                ),
+                (Some(ProviderRef::Builtin(id)), _) => {
+                    Some(crate::components::common::icon::render_provider_icon(*id, 14., p.text))
+                }
                 (Some(ProviderRef::Custom(_)), Some(provider)) => Some(
                     render_letter_avatar(ProviderRef::avatar_char(&provider.name), 14.)
                         .into_any_element(),
@@ -509,19 +498,24 @@ pub fn render_agent_panel(
                 )
                 .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
                     let mut menu = menu.min_w(px(180.));
-                    for (provider_ref, name, builtin_icon) in &menu_items {
+                    for (provider_ref, name) in &menu_items {
                         let provider_ref = provider_ref.clone();
                         let label: SharedString = SharedString::from(name.clone());
-                        let builtin_icon = *builtin_icon;
+                        let builtin_id = match &provider_ref {
+                            ProviderRef::Builtin(id) => Some(*id),
+                            ProviderRef::Custom(_) => None,
+                        };
                         let avatar_char = ProviderRef::avatar_char(name);
                         let session = session_for_pick.clone();
                         let tab_id = tab_id_for_pick.clone();
                         menu = menu.item(
                             PopupMenuItem::element(move |_window, cx| {
-                                let icon: AnyElement = match builtin_icon {
-                                    Some(path) => {
-                                        img(path).w(px(16.)).h(px(16.)).into_any_element()
-                                    }
+                                let icon: AnyElement = match builtin_id {
+                                    Some(id) => crate::components::common::icon::render_provider_icon(
+                                        id,
+                                        16.,
+                                        cx.theme().foreground,
+                                    ),
                                     None => {
                                         render_letter_avatar(avatar_char, 16.).into_any_element()
                                     }

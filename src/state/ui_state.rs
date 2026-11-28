@@ -1,0 +1,535 @@
+// UI 状态管理方法：对话框、输入框、焦点句柄等
+
+use super::SessionState;
+use crate::components::monitor::DetailDialogState;
+use crate::components::sftp::{FileListView, PathBarEvent, PathBarState};
+use crate::services::monitor::{MonitorEvent, MonitorService, MonitorSettings};
+use crate::terminal::TerminalState;
+use gpui_kit::prelude::*;
+use gpui_kit::{Entity, FocusHandle};
+use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
+use tracing::debug;
+
+impl SessionState {
+    /// 确保 Monitor 详情弹窗状态已创建
+    pub fn ensure_monitor_detail_dialog(
+        &mut self,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> Entity<DetailDialogState> {
+        if self.monitor_detail_dialog.is_none() {
+            self.monitor_detail_dialog = Some(cx.new(|_| DetailDialogState::default()));
+        }
+        self.monitor_detail_dialog.clone().unwrap()
+    }
+
+    /// 确保 SFTP 文件列表视图已创建
+    pub fn ensure_sftp_file_list_view(
+        &mut self,
+        tab_id: &str,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> Entity<FileListView> {
+        if !self.sftp_file_list_views.contains_key(tab_id) {
+            let view = cx.new(|cx| FileListView::new(window, cx));
+
+            // 订阅 TableEvent 以处理双击事件
+            let tab_id_for_table = tab_id.to_string();
+            let view_for_table = view.clone();
+            cx.subscribe_in(
+                &view,
+                window,
+                move |this, _emitter, event: &gpui_kit::component::table::TableEvent, _window, cx| {
+                    use gpui_kit::component::table::TableEvent;
+                    match event {
+                        TableEvent::DoubleClickedRow(row_ix) => {
+                            // 获取文件路径并触发打开事件
+                            if let Some(path) = view_for_table.read(cx).get_file_path(*row_ix, cx) {
+                                let tab_id = tab_id_for_table.clone();
+                                // 直接在 this 上操作，避免嵌套 update
+                                this.sftp_open(&tab_id, path, cx);
+                            }
+                        }
+                        TableEvent::SelectRow(_) | _ => {}
+                    }
+                },
+            )
+            .detach();
+
+            // 订阅 FileListContextMenuEvent 以处理右键菜单和键盘快捷键事件
+            let tab_id_for_context = tab_id.to_string();
+            let view_for_context = view.clone();
+            cx.subscribe_in(
+                &view,
+                window,
+                move |this,
+                      _emitter,
+                      event: &crate::components::sftp::FileListContextMenuEvent,
+                      window,
+                      cx| {
+                    use crate::components::sftp::FileListContextMenuEvent;
+                    let tab_id = tab_id_for_context.clone();
+                    match event {
+                        FileListContextMenuEvent::Delete(path) => {
+                            this.sftp_request_delete(&tab_id, path.clone(), window, cx);
+                        }
+                        FileListContextMenuEvent::Refresh => {
+                            this.sftp_refresh(&tab_id, cx);
+                        }
+                        FileListContextMenuEvent::OpenFolder(path) => {
+                            this.sftp_navigate_to(&tab_id, path.clone(), cx);
+                        }
+                        FileListContextMenuEvent::OpenItem(path) => {
+                            this.sftp_open(&tab_id, path.clone(), cx);
+                        }
+                        FileListContextMenuEvent::GoUp => {
+                            this.sftp_go_up(&tab_id, cx);
+                        }
+                        FileListContextMenuEvent::Rename(path) => {
+                            // 开始内联重命名
+                            view_for_context.update(cx, |view, cx| {
+                                view.start_rename(path.clone(), window, cx);
+                            });
+                        }
+                        FileListContextMenuEvent::RenameConfirmed { old_path, new_name } => {
+                            this.sftp_rename(&tab_id, old_path.clone(), new_name.clone(), cx);
+                        }
+                        FileListContextMenuEvent::RenameCancelled => {}
+                        FileListContextMenuEvent::Download(path) => {
+                            // 下载单个文件 - 需要获取文件信息
+                            if let Some(tab) = this.tabs.iter().find(|t| t.id == tab_id) {
+                                if let Some(sftp_state) = &tab.sftp_state {
+                                    if let Some(file) =
+                                        sftp_state.file_list.iter().find(|e| e.path == *path)
+                                    {
+                                        this.sftp_download_file(
+                                            &tab_id,
+                                            file.path.clone(),
+                                            file.name.clone(),
+                                            file.size,
+                                            cx,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        FileListContextMenuEvent::DownloadFolder(path) => {
+                            // 下载文件夹
+                            this.sftp_download_folder_with_picker(&tab_id, path.clone(), cx);
+                        }
+                        FileListContextMenuEvent::UploadFile => {
+                            // 上传单个文件到当前目录
+                            if let Some(current_path) = this
+                                .tabs
+                                .iter()
+                                .find(|t| t.id == tab_id)
+                                .and_then(|t| t.sftp_state.as_ref())
+                                .map(|s| s.current_path.clone())
+                            {
+                                this.sftp_upload_file(&tab_id, current_path, cx);
+                            }
+                        }
+                        FileListContextMenuEvent::UploadFolder => {
+                            // 上传文件夹到当前目录
+                            if let Some(current_path) = this
+                                .tabs
+                                .iter()
+                                .find(|t| t.id == tab_id)
+                                .and_then(|t| t.sftp_state.as_ref())
+                                .map(|s| s.current_path.clone())
+                            {
+                                this.sftp_upload_folder_with_picker(&tab_id, current_path, cx);
+                            }
+                        }
+                        FileListContextMenuEvent::DropFiles { paths, target_dir } => {
+                            // 拖放上传 - 根据路径类型调用不同的上传方法
+                            for path in paths {
+                                if path.is_dir() {
+                                    // 上传文件夹
+                                    this.sftp_upload_folder(
+                                        &tab_id,
+                                        path.clone(),
+                                        target_dir.clone(),
+                                        cx,
+                                    );
+                                } else if path.is_file() {
+                                    // 上传单个文件
+                                    this.sftp_upload_file_direct(
+                                        &tab_id,
+                                        path.clone(),
+                                        target_dir.clone(),
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
+                        FileListContextMenuEvent::NewFolder => {
+                            // 新建文件夹
+                            this.sftp_open_new_folder_dialog(&tab_id, cx);
+                        }
+                        FileListContextMenuEvent::NewFile => {
+                            // 新建文件
+                            this.sftp_open_new_file_dialog(&tab_id, cx);
+                        }
+                        FileListContextMenuEvent::OpenInTerminal(path) => {
+                            // 在终端中打开目录
+                            this.sftp_open_in_terminal(&tab_id, path.clone(), cx);
+                        }
+                        FileListContextMenuEvent::Properties(path) => {
+                            // 显示属性对话框
+                            this.sftp_open_properties_dialog(&tab_id, path.clone(), cx);
+                        }
+                        FileListContextMenuEvent::EditFile(path) => {
+                            // 编辑文件（外置编辑器）
+                            this.sftp_edit_file(&tab_id, path.clone(), cx);
+                        }
+                        FileListContextMenuEvent::CopyName(name) => {
+                            // 复制文件名到剪贴板
+                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(name.clone()));
+                        }
+                        FileListContextMenuEvent::CopyPath(path) => {
+                            // 复制完整路径到剪贴板
+                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(path.clone()));
+                        }
+                    }
+                },
+            )
+            .detach();
+
+            self.sftp_file_list_views.insert(tab_id.to_string(), view);
+        }
+        self.sftp_file_list_views.get(tab_id).unwrap().clone()
+    }
+
+    /// 获取 SFTP 文件列表视图（如果存在）
+    pub fn get_sftp_file_list_view(&self, tab_id: &str) -> Option<Entity<FileListView>> {
+        self.sftp_file_list_views.get(tab_id).cloned()
+    }
+
+    /// 确保 SFTP 路径栏状态已创建
+    pub fn ensure_sftp_path_bar_state(
+        &mut self,
+        tab_id: &str,
+        session_state: Entity<SessionState>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> Entity<PathBarState> {
+        if !self.sftp_path_bar_states.contains_key(tab_id) {
+            let tab_id_for_event = tab_id.to_string();
+            let view = cx.new(|cx| {
+                PathBarState::new(window, cx, move |event, cx| match event {
+                    PathBarEvent::Navigate(path) => {
+                        session_state.update(cx, |state, cx| {
+                            state.sftp_navigate_to(&tab_id_for_event, path, cx);
+                        });
+                    }
+                })
+            });
+            self.sftp_path_bar_states.insert(tab_id.to_string(), view);
+        }
+        self.sftp_path_bar_states.get(tab_id).unwrap().clone()
+    }
+
+    /// 获取 SFTP 路径栏状态（如果存在）
+    pub fn get_sftp_path_bar_state(&self, tab_id: &str) -> Option<Entity<PathBarState>> {
+        self.sftp_path_bar_states.get(tab_id).cloned()
+    }
+
+    /// 确保命令输入框已创建，并更新占位符为当前语言
+    pub fn ensure_command_input_created(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        let lang = crate::services::storage::cached_settings()
+            .theme
+            .language
+            .clone();
+        let placeholder = crate::i18n::t(&lang, "session.terminal.command_placeholder");
+
+        if self.command_input.is_none() {
+            // 首次创建
+            self.command_input = Some(cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .placeholder(placeholder)
+                    .auto_grow(1, 20) // 1-20 行自动增长，支持多行输入
+            }));
+        } else {
+            // 更新占位符（语言可能已变化）
+            if let Some(input) = &self.command_input {
+                input.update(cx, |state, cx| {
+                    state.set_placeholder(placeholder, window, cx);
+                });
+            }
+        }
+    }
+
+    /// 设置命令输入框的文本内容
+    pub fn set_command_input_text(
+        &self,
+        text: String,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        if let Some(input) = &self.command_input {
+            input.update(cx, |state, cx| {
+                state.set_value(text, window, cx);
+            });
+        }
+    }
+
+    /// 获取当前激活标签中激活终端的 TerminalState 实体
+    pub fn active_terminal_entity(&self) -> Option<Entity<TerminalState>> {
+        let tab_id = self.active_tab_id.as_ref()?;
+        let tab = self.tabs.iter().find(|t| &t.id == tab_id)?;
+        let active_id = tab.active_terminal_id.as_ref()?;
+        tab.terminals
+            .iter()
+            .find(|t| &t.id == active_id)
+            .and_then(|inst| inst.terminal.clone())
+    }
+
+    /// 确保搜索输入框已创建，并订阅其输入事件（首次调用时）。
+    pub fn ensure_search_input_created(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        let lang = crate::services::storage::cached_settings()
+            .theme
+            .language
+            .clone();
+        let placeholder = crate::i18n::t(&lang, "terminal.search.placeholder");
+
+        if self.search_input.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+
+            // 订阅输入事件：Change → 实时搜索；PressEnter → 下/上一个命中
+            let subscription =
+                cx.subscribe(&input, |this, input, event: &InputEvent, cx| match event {
+                    InputEvent::Change => {
+                        let query = input.read(cx).value().to_string();
+                        if let Some(terminal) = this.active_terminal_entity() {
+                            terminal.update(cx, |t, cx| {
+                                t.run_search(&query);
+                                cx.notify();
+                            });
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::PressEnter { secondary, shift } => {
+                        let prev = *secondary || *shift;
+                        if let Some(terminal) = this.active_terminal_entity() {
+                            terminal.update(cx, |t, cx| {
+                                if prev {
+                                    t.search_prev_match();
+                                } else {
+                                    t.search_next_match();
+                                }
+                                cx.notify();
+                            });
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                });
+
+            self.search_input = Some(input);
+            self.search_subscription = Some(subscription);
+        } else if let Some(input) = &self.search_input {
+            input.update(cx, |state, cx| {
+                state.set_placeholder(placeholder, window, cx);
+            });
+        }
+    }
+
+    /// 打开搜索栏并聚焦输入框；若已有关键字则重新运行搜索。
+    pub fn open_terminal_search(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        self.ensure_search_input_created(window, cx);
+        self.search_open = true;
+        if let Some(input) = self.search_input.clone() {
+            let query = input.read(cx).value().to_string();
+            input.update(cx, |state, cx| state.focus(window, cx));
+            if !query.is_empty() {
+                if let Some(terminal) = self.active_terminal_entity() {
+                    terminal.update(cx, |t, cx| {
+                        t.run_search(&query);
+                        cx.notify();
+                    });
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// 关闭搜索栏并清除搜索高亮，焦点回到终端。
+    pub fn close_terminal_search(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        self.search_open = false;
+        if let Some(terminal) = self.active_terminal_entity() {
+            terminal.update(cx, |t, cx| {
+                t.clear_search();
+                cx.notify();
+            });
+        }
+        if let Some(handle) = self.get_terminal_focus_handle() {
+            window.focus(&handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// 切换搜索栏开合。
+    pub fn toggle_terminal_search(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        if self.search_open {
+            self.close_terminal_search(window, cx);
+        } else {
+            self.open_terminal_search(window, cx);
+        }
+    }
+
+    /// 确保终端焦点句柄已创建
+    pub fn ensure_terminal_focus_handle_created(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> FocusHandle {
+        if self.terminal_focus_handle.is_none() {
+            self.terminal_focus_handle = Some(cx.focus_handle());
+        }
+
+        let focus_handle = self.terminal_focus_handle.clone().unwrap();
+        if self.terminal_focus_subscriptions.is_empty() {
+            self.terminal_focus_subscriptions.push(cx.on_focus(
+                &focus_handle,
+                window,
+                |state, _window, cx| {
+                    state.send_terminal_focus_report(true, cx);
+                },
+            ));
+            self.terminal_focus_subscriptions.push(cx.on_blur(
+                &focus_handle,
+                window,
+                |state, _window, cx| {
+                    state.send_terminal_focus_report(false, cx);
+                },
+            ));
+        }
+
+        focus_handle
+    }
+
+    /// 获取终端焦点句柄（如果存在）
+    pub fn get_terminal_focus_handle(&self) -> Option<FocusHandle> {
+        self.terminal_focus_handle.clone()
+    }
+
+    /// 启动 Monitor 服务
+    /// 在终端 PTY 创建成功后调用，开始收集服务器监控数据
+    pub fn start_monitor_service(&self, tab_id: String, cx: &mut gpui_kit::Context<Self>) {
+        debug!("[Monitor] Starting monitor service for tab {}", tab_id);
+
+        // 获取 SSH session
+        let ssh_manager = crate::ssh::manager::SshManager::global();
+        let Some(ssh_session) = ssh_manager.get_session(&tab_id) else {
+            tracing::error!("[Monitor] No SSH session found for tab {}", tab_id);
+            return;
+        };
+
+        // 使用默认监控设置
+        let settings = MonitorSettings::default();
+
+        // 创建 MonitorService（需要使用 SSH manager 的 runtime）
+        let (service, mut receiver) =
+            MonitorService::new(tab_id.clone(), ssh_session, settings, ssh_manager.runtime());
+
+        // 存储 service
+        if let Ok(mut services) = self.monitor_services.lock() {
+            services.insert(tab_id.clone(), service);
+        }
+
+        // 在 GPUI 异步上下文中处理事件
+        let session_state = cx.entity().clone();
+        let tab_id_for_task = tab_id.clone();
+        cx.to_async()
+            .spawn(async move |async_cx| {
+                debug!("[Monitor] Event loop started for tab {}", tab_id_for_task);
+
+                // 处理监控事件
+                loop {
+                    match receiver.recv().await {
+                        Some(event) => {
+                            let tab_id_clone = tab_id_for_task.clone();
+                            let tab_still_exists = async_cx.update(|cx| {
+                                session_state.update(cx, |state, cx| {
+                                    if let Some(tab) =
+                                        state.tabs.iter_mut().find(|t| t.id == tab_id_clone)
+                                    {
+                                        match event {
+                                            MonitorEvent::SystemInfo(info) => {
+                                                let server_id = tab.server_id.clone();
+                                                let os_name = info.host.os.trim().to_string();
+                                                tab.monitor_state.update_system_info(info);
+                                                if !os_name.is_empty() && os_name != "unknown" {
+                                                    if let Err(error) = crate::services::storage::update_server_os(
+                                                        &server_id,
+                                                        &os_name,
+                                                    ) {
+                                                        tracing::warn!(
+                                                            "[Monitor] Failed to persist OS for server {}: {}",
+                                                            server_id,
+                                                            error
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            MonitorEvent::LoadInfo(info) => {
+                                                tab.monitor_state.update_load_info(info);
+                                            }
+                                            MonitorEvent::NetworkInfo(info) => {
+                                                tab.monitor_state.update_network_info(info);
+                                            }
+                                            MonitorEvent::DiskIo(info) => {
+                                                tab.monitor_state.update_disk_io(info);
+                                            }
+                                            MonitorEvent::DiskInfo(info) => {
+                                                tab.monitor_state.update_disk_info(info);
+                                            }
+                                            MonitorEvent::Error(e) => {
+                                                tracing::error!("[Monitor] Error: {}", e);
+                                            }
+                                        }
+                                        cx.notify();
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                })
+                            });
+                            if !tab_still_exists {
+                                // 标签页已关闭，退出循环
+                                break;
+                            }
+                        }
+                        None => {
+                            // Channel 关闭，退出循环
+                            break;
+                        }
+                    }
+                }
+
+                debug!("[Monitor] Event loop ended for tab {}", tab_id_for_task);
+                Some(())
+            })
+            .detach();
+    }
+}

@@ -1,0 +1,381 @@
+// 终端桥接器 - 连接 PTY channel 和终端状态
+// 负责尺寸计算、PTY 数据读取循环
+
+use std::sync::Arc;
+
+use gpui_kit::{
+    px, App, ClipboardItem, Entity, Font, FontFeatures, FontStyle, FontWeight as GpuiFontWeight,
+    Pixels, Window,
+};
+use tracing::{debug, error, info, trace, warn};
+
+use crate::models::settings::{
+    BellStyle, FontWeight as TerminalFontWeight, Osc52Policy, TerminalSettings,
+};
+use crate::ssh::session::{PtyRequest, TerminalChannel};
+use crate::state::{SessionState, TerminalPtyState};
+use crate::terminal::TerminalState;
+
+/// 返回真正可用于终端网格的像素宽度，统一扣除左右内容起点的 padding。
+pub fn terminal_content_width(area_width: f32, padding: u32, cell_width: f32) -> f32 {
+    (area_width - padding as f32).max(cell_width)
+}
+
+/// 使用 GPUI text_system 精确计算终端尺寸
+///
+/// 通过测量字体中 'm' 字符的实际 advance width 来精确计算终端的列数和行数
+pub fn calculate_terminal_size(
+    area_width: f32,
+    area_height: f32,
+    settings: &TerminalSettings,
+    window: &Window,
+    _cx: &App,
+) -> (u32, u32, f32, f32) {
+    let text_system = window.text_system();
+
+    // 构建字体
+    let font = Font {
+        family: settings.font_family.clone().into(),
+        features: FontFeatures::default(),
+        fallbacks: None,
+        weight: match settings.font_weight {
+            TerminalFontWeight::Normal => GpuiFontWeight::NORMAL,
+            TerminalFontWeight::Bold => GpuiFontWeight::BOLD,
+        },
+        style: FontStyle::Normal,
+    };
+
+    // 解析字体 ID
+    let font_id = text_system.resolve_font(&font);
+    let font_size: Pixels = px(settings.font_size as f32);
+
+    // 精确测量 'm' 字符的 advance width 作为 cell_width
+    let cell_width = text_system
+        .advance(font_id, font_size, 'm')
+        .map(|size| f32::from(size.width))
+        .unwrap_or_else(|_| {
+            // fallback: 估算值
+            warn!("[Terminal] Warning: Failed to measure font advance, using estimation");
+            settings.font_size as f32 * 0.6
+        });
+
+    // 行高计算
+    let line_height = settings.font_size as f32 * settings.line_height;
+
+    // 计算列数时减去左侧 padding 宽度
+    let effective_width = terminal_content_width(area_width, settings.padding, cell_width);
+    let cols = (effective_width / cell_width).floor() as u32;
+    let rows = (area_height / line_height).floor() as u32;
+
+    debug!(
+        "[Terminal] Precise size calculation: cell_width={:.2}px, line_height={:.2}px, cols={}, rows={} (with padding={}px)",
+        cell_width, line_height, cols.max(1), rows.max(1), settings.padding
+    );
+
+    (cols.max(1), rows.max(1), cell_width, line_height)
+}
+
+/// 根据已计算的尺寸创建 PTY 请求
+pub fn create_pty_request(
+    cols: u32,
+    rows: u32,
+    cell_width: f32,
+    line_height: f32,
+    settings: &TerminalSettings,
+) -> PtyRequest {
+    let term_type = settings.term_type.trim();
+    PtyRequest {
+        term: if term_type.is_empty() {
+            "xterm-256color".to_string()
+        } else {
+            term_type.to_string()
+        },
+        col_width: cols,
+        row_height: rows,
+        pix_width: (cols as f32 * cell_width) as u32,
+        pix_height: (rows as f32 * line_height) as u32,
+        modes: vec![],
+        command: terminal_command(settings),
+    }
+}
+
+fn terminal_command(settings: &TerminalSettings) -> Option<String> {
+    let shell = settings.default_shell.trim();
+    if shell.is_empty() {
+        return None;
+    }
+    let args = settings.shell_args.trim();
+    Some(if args.is_empty() {
+        shell.to_string()
+    } else {
+        format!("{} {}", shell, args)
+    })
+}
+
+/// 连接后注入远端 shell 的命令：让 `ls` 输出目录/可执行文件等颜色。
+///
+/// - 开头的空格让 bash/zsh 不把它记入历史（需 ignorespace，默认多数发行版已开）；
+/// - 先探测 `ls --color=auto` 是否被支持，BSD/macOS 的 ls 不认该参数，避免每次 `ls` 都报错；
+/// - 指定了自定义 shell 命令（exec 通道，没有交互 shell）时不注入。
+pub fn ls_color_injection(settings: &TerminalSettings) -> Option<Vec<u8>> {
+    if !settings.auto_color_ls || terminal_command(settings).is_some() {
+        return None;
+    }
+    Some(b" ls --color=auto -d . >/dev/null 2>&1 && alias ls='ls --color=auto'\n".to_vec())
+}
+
+/// 启动 PTY 读取循环 (fire-and-forget)
+/// 读取循环会持续运行直到通道关闭
+pub fn start_pty_reader(
+    channel: Arc<TerminalChannel>,
+    terminal: Entity<TerminalState>,
+    session_state: Entity<SessionState>,
+    tab_id: String,
+    terminal_id: String,
+    cx: &App,
+) {
+    // 使用与 connector.rs 相同的 spawn 模式
+    cx.spawn(async move |async_cx| {
+        debug!("[PTY Reader] Started");
+
+        loop {
+            // 读取 PTY 输出
+            let result = channel.read().await;
+            match result {
+                Ok(Some(data)) if !data.is_empty() => {
+                    trace!("[PTY Reader] Received {} bytes", data.len());
+                    // 将数据喂给终端，并收集需要回写 PTY 的字节（DA/DSR/CPR 回复、
+                    // 颜色/尺寸查询、OSC 52 剪贴板读取等）。
+                    let terminal_clone = terminal.clone();
+                    let session_state_clone = session_state.clone();
+                    let tab_id_for_title = tab_id.clone();
+                    let terminal_id_for_title = terminal_id.clone();
+                    let write_back = async_cx.update(|cx| {
+                        let (out, terminal_settings) = terminal_clone.update(cx, |t, cx| {
+                            let out = t.input(&data);
+                            let terminal_settings = t.settings().clone();
+                            cx.notify();
+                            (out, terminal_settings)
+                        });
+
+                        let mut bytes = out.pty_writes;
+
+                        // OSC 52：应用请求读取剪贴板并回写 PTY
+                        if matches!(terminal_settings.osc52_policy, Osc52Policy::ReadWrite) {
+                            for formatter in &out.clipboard_load {
+                                let text = cx
+                                    .read_from_clipboard()
+                                    .and_then(|c| c.text())
+                                    .unwrap_or_default();
+                                bytes.extend_from_slice(formatter(&text).as_bytes());
+                            }
+                        }
+
+                        // OSC 52：应用请求写入剪贴板
+                        if !matches!(terminal_settings.osc52_policy, Osc52Policy::Disabled) {
+                            if let Some(store) = out.clipboard_store {
+                                cx.write_to_clipboard(ClipboardItem::new_string(store));
+                            }
+                        }
+
+                        // 响铃：按 bell_style 触发视觉闪烁或系统声音。
+                        if out.bell {
+                            if matches!(terminal_settings.bell_style, BellStyle::Visual) {
+                                terminal_clone.update(cx, |t, cx| {
+                                    t.set_bell_flash(true);
+                                    cx.notify();
+                                });
+                                // 120ms 后清除闪烁（非阻塞）
+                                let terminal_for_bell = terminal_clone.clone();
+                                async_cx
+                                    .spawn(async move |acx| {
+                                        acx.background_executor()
+                                            .timer(std::time::Duration::from_millis(120))
+                                            .await;
+                                        acx.update(|cx| {
+                                            terminal_for_bell.update(cx, |t, cx| {
+                                                t.set_bell_flash(false);
+                                                cx.notify();
+                                            });
+                                        });
+                                    })
+                                    .detach();
+                            } else if matches!(terminal_settings.bell_style, BellStyle::Sound) {
+                                play_bell_sound();
+                            }
+                        }
+
+                        // OSC 0/2：窗口/标签标题
+                        if let Some(title) = out.title {
+                            let title: String = title.chars().take(128).collect();
+                            session_state_clone.update(cx, |state, cx| {
+                                if let Some(tab) =
+                                    state.tabs.iter_mut().find(|t| t.id == tab_id_for_title)
+                                {
+                                    if let Some(inst) = tab
+                                        .terminals
+                                        .iter_mut()
+                                        .find(|t| t.id == terminal_id_for_title)
+                                    {
+                                        inst.title = (!title.is_empty()).then_some(title);
+                                    }
+                                }
+                                cx.notify();
+                            });
+                        }
+
+                        bytes
+                    });
+
+                    if !write_back.is_empty() {
+                        if let Err(e) = channel.queue_write(write_back) {
+                            error!("[PTY Reader] Write-back error: {:?}", e);
+                        }
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    debug!("[PTY Reader] Channel closed");
+                    break;
+                }
+                Err(e) => {
+                    error!("[PTY Reader] Error: {:?}", e);
+                    break;
+                }
+            }
+        }
+
+        // 通道结束后的处理
+        //
+        // 服务器关机或重启 sshd 时，往往先关闭 shell 通道、紧接着才断开连接，
+        // 所以稍等片刻再判断：连接仍在才算 shell 正常退出，否则按连接断开处理。
+        async_cx
+            .background_executor()
+            .timer(std::time::Duration::from_millis(500))
+            .await;
+
+        let session = crate::ssh::manager::SshManager::global().get_session(&tab_id);
+        let session_alive = session.as_ref().is_some_and(|session| session.is_alive());
+        let reason = session.as_ref().and_then(|session| session.close_reason());
+        async_cx.update(|cx| {
+            let mut connection_lost = false;
+            session_state.update(cx, |state, cx| {
+                // 终端已关闭，或已被重连重置/换上新通道：这个读取循环属于旧连接，不再处理
+                let Some(instance) = state
+                    .tabs
+                    .iter_mut()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(|tab| {
+                        tab.terminals
+                            .iter_mut()
+                            .find(|terminal| terminal.id == terminal_id)
+                    })
+                    .filter(|instance| {
+                        instance
+                            .pty_channel
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &channel))
+                    })
+                else {
+                    debug!(
+                        "[PTY Reader] Terminal {} in tab {} was closed or already reset",
+                        terminal_id, tab_id
+                    );
+                    return;
+                };
+
+                instance.pty_channel = None;
+                if session_alive {
+                    // 只有这个 shell 退出了，连接仍在：保留终端历史，提示可重新启动
+                    instance.pty_state = TerminalPtyState::Exited;
+                } else {
+                    // 连接已断开：终端保留历史，重连成功后自动重新打开
+                    instance.pty_state = TerminalPtyState::NotStarted;
+                    connection_lost = true;
+                }
+                cx.notify();
+            });
+
+            if connection_lost {
+                info!("[PTY Reader] Connection lost for tab {}", tab_id);
+                crate::ssh::handle_connection_lost(
+                    tab_id.clone(),
+                    session_state.clone(),
+                    reason,
+                    cx,
+                );
+            }
+        });
+
+        debug!("[PTY Reader] Stopped");
+    })
+    .detach();
+}
+
+fn play_bell_sound() {
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("afplay")
+        .arg("/System/Library/Sounds/Tink.aiff")
+        .spawn();
+
+    #[cfg(target_os = "linux")]
+    let result = std::process::Command::new("canberra-gtk-play")
+        .args(["-i", "bell"])
+        .spawn();
+
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("rundll32")
+        .arg("user32.dll,MessageBeep")
+        .spawn();
+
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+    match result {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(error) => debug!("[Terminal] Unable to play bell sound: {:?}", error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_width_subtracts_padding_and_never_collapses_grid() {
+        assert_eq!(terminal_content_width(800.0, 8, 10.0), 792.0);
+        assert_eq!(terminal_content_width(4.0, 8, 10.0), 10.0);
+    }
+
+    #[test]
+    fn pty_request_uses_cell_aligned_pixels_and_custom_term() {
+        let mut settings = TerminalSettings::default();
+        settings.term_type = "screen-256color".to_string();
+        let request = create_pty_request(80, 24, 9.5, 17.0, &settings);
+        assert_eq!(request.term, "screen-256color");
+        assert_eq!(request.pix_width, 760);
+        assert_eq!(request.pix_height, 408);
+    }
+
+    #[test]
+    fn custom_shell_is_forwarded_as_remote_command() {
+        let mut settings = TerminalSettings::default();
+        settings.default_shell = "/bin/zsh".to_string();
+        settings.shell_args = "-l".to_string();
+        let request = create_pty_request(80, 24, 8.0, 16.0, &settings);
+        assert_eq!(request.command.as_deref(), Some("/bin/zsh -l"));
+    }
+
+    #[test]
+    fn ls_color_injection_only_when_enabled_and_interactive_shell() {
+        let mut settings = TerminalSettings::default();
+        assert!(ls_color_injection(&settings).is_none());
+        settings.auto_color_ls = true;
+        let cmd = String::from_utf8(ls_color_injection(&settings).unwrap()).unwrap();
+        assert!(cmd.starts_with(' ') && cmd.ends_with('\n') && cmd.contains("alias ls="));
+        settings.default_shell = "/bin/zsh".to_string();
+        assert!(ls_color_injection(&settings).is_none());
+    }
+}

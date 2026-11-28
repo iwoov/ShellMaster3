@@ -1,0 +1,24 @@
+name: Feature Request
+description: Suggest a new feature or improvement for ShellMaster3
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Use Case
+      description: Describe the workflow problem or scenario this feature would solve.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How would you like this feature to work?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered (Optional)
+      description: Any workarounds or alternative designs you considered.

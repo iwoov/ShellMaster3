@@ -1,0 +1,88 @@
+// Terminal 模块 - 基于 alacritty_terminal 的终端模拟器
+
+mod batched_run;
+mod colors;
+pub mod highlight;
+mod input;
+mod keys;
+mod mouse;
+mod renderer;
+mod scroll_handle;
+mod snapshot;
+mod state;
+mod terminal_bridge;
+
+// pub use batched_run::*; // 内部使用，不导出
+pub use colors::*;
+pub use input::*;
+pub use keys::*;
+pub use mouse::*;
+pub use renderer::*;
+pub use scroll_handle::*;
+pub use snapshot::*;
+pub use state::*;
+pub use terminal_bridge::*;
+
+use gpui_kit::{actions, App, KeyBinding};
+
+// 定义终端专用 actions
+actions!(
+    terminal,
+    [
+        SendTab,
+        SendBackTab,
+        SendEscape,
+        SendEnter,
+        SendUp,
+        SendDown,
+        SendLeft,
+        SendRight,
+        TerminalCopy,
+        TerminalPaste,
+        TerminalSelectAll,
+        TerminalSearch,
+    ]
+);
+
+/// 终端上下文名称
+pub const TERMINAL_CONTEXT: &str = "Terminal";
+
+/// 初始化终端模块
+/// 注册 Terminal 上下文的按键绑定，确保特殊按键（如 Tab）能正确发送到 PTY
+pub fn init(cx: &mut App) {
+    // 在 Terminal 上下文中，绑定特殊按键
+    // 这些绑定会覆盖默认的焦点切换行为
+    cx.bind_keys([
+        // Tab 键：发送到终端而非切换焦点
+        KeyBinding::new("tab", SendTab, Some(TERMINAL_CONTEXT)),
+        // Root 默认把 Shift+Tab 用于向前切换焦点；终端上下文必须显式覆盖，
+        // 否则 Codex/Claude Code 等 TUI 永远收不到反向 Tab。
+        KeyBinding::new("shift-tab", SendBackTab, Some(TERMINAL_CONTEXT)),
+        // 其他常用按键
+        KeyBinding::new("escape", SendEscape, Some(TERMINAL_CONTEXT)),
+        KeyBinding::new("enter", SendEnter, Some(TERMINAL_CONTEXT)),
+        KeyBinding::new("up", SendUp, Some(TERMINAL_CONTEXT)),
+        KeyBinding::new("down", SendDown, Some(TERMINAL_CONTEXT)),
+        KeyBinding::new("left", SendLeft, Some(TERMINAL_CONTEXT)),
+        KeyBinding::new("right", SendRight, Some(TERMINAL_CONTEXT)),
+        // 复制粘贴快捷键：终端优先，保留 Ctrl-C/Ctrl-V 控制字符语义
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-c", TerminalCopy, Some(TERMINAL_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-v", TerminalPaste, Some(TERMINAL_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-c", TerminalCopy, Some(TERMINAL_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-v", TerminalPaste, Some(TERMINAL_CONTEXT)),
+        // 全选
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-a", TerminalSelectAll, Some(TERMINAL_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-a", TerminalSelectAll, Some(TERMINAL_CONTEXT)),
+        // 搜索
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-f", TerminalSearch, Some(TERMINAL_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-f", TerminalSearch, Some(TERMINAL_CONTEXT)),
+    ]);
+}

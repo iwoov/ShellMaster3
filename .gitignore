@@ -1,0 +1,30 @@
+# Build artifacts
+/target/
+/dist/
+debug/
+*.pdb
+
+# IDE & Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs & Secrets
+*.log
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Keep only public README screenshots under docs/
+docs/*
+!docs/images/
+!docs/images/**

@@ -1,0 +1,96 @@
+[package]
+name = "shellmaster3"
+version = "0.0.1"
+edition = "2021"
+authors = ["ShellMaster Team"]
+description = "A modern cross-platform SSH & SFTP desktop client built with Rust and GPUI"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/iwoov/ShellMaster3"
+keywords = ["ssh", "sftp", "terminal", "gpui", "client"]
+categories = ["command-line-utilities", "network-programming", "gui"]
+
+[dependencies]
+gpui-kit = { version = "0.10.0", features = ["syntect"] }
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+dirs = "5.0"
+rust-embed = "8"
+smallvec = "1.15.1"
+chrono = "0.4"
+rfd = "0.15"
+
+# SSH 连接
+russh = "0.55.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
+thiserror = "2.0"
+once_cell = "1.21.3"
+
+# 代理支持
+tokio-socks = "0.5"
+async-http-proxy = { version = "1.2", features = ["runtime-tokio", "basic-auth"] }
+
+# 终端模拟
+alacritty_terminal = "0.25"
+
+# 日志
+tracing = "0.1.43"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# SFTP
+russh-sftp = "2.1"
+futures = "0.3.31"
+tokio-util = { version = "0.7.17", features = ["full"] }
+
+# 外置编辑器
+notify = "6"
+
+# AI 模型对话与 Agent
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rig-core = { version = "=0.47.1", default-features = false, features = ["reqwest", "rustls"] }
+rig-agent = { version = "=0.47.1", default-features = false }
+
+# 本地凭据加密（AES-256-GCM）
+aes-gcm = "0.10"
+base64 = "0.22"
+rand = "0.8"
+
+[dev-dependencies]
+# 测试中使用可暂停的虚拟时钟（tokio::test(start_paused = true)）
+tokio = { version = "1", features = ["test-util"] }
+
+# ============================================================
+# cargo-packager 打包配置（替代旧的 cargo-bundle）
+# 安装：cargo install cargo-packager --locked  或  cargo binstall cargo-packager
+# 本地打包：cargo packager --release
+# 资源已通过 rust-embed 嵌入二进制，因此这里无需声明 resources。
+# ============================================================
+[package.metadata.packager]
+product-name = "ShellMaster3"
+identifier = "com.shellmaster.app"
+# 打包前先编译 release 二进制；配合 `cargo packager --release` 使用
+before-packaging-command = "cargo build --release"
+description = "SSH/SFTP 客户端"
+long-description = "一个现代化的 SSH 和 SFTP 客户端，提供终端访问和文件传输功能。"
+authors = ["ShellMaster Team"]
+publisher = "ShellMaster Team"
+copyright = "Copyright (c) 2024 ShellMaster Team. All rights reserved."
+category = "DeveloperTool"
+# 提供 1024x1024 PNG 即可，cargo-packager 会按平台生成 .icns/.ico 等所需图标
+icons = ["assets/app-icon.png", "assets/AppIcon.icns"]
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
+
+[package.metadata.packager.deb]
+# GPUI 在 Linux 的运行时依赖；如目标发行版包名不同可按需调整。
+# AppImage 会自带依赖，deb 则交由系统包管理器解析这些依赖。
+depends = [
+    "libasound2",
+    "libxkbcommon0",
+    "libwayland-client0",
+    "libvulkan1",
+    "libxcb1",
+]

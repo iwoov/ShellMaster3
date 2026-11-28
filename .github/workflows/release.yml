@@ -1,0 +1,126 @@
+name: Release
+
+# 推送形如 v0.1.0 的 tag 时构建并上传到草稿 Release；
+# 也可在 Actions 页面手动触发（workflow_dispatch），仅上传跨平台试装包到 Artifacts，不创建 Release。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "选择要构建的目标平台（默认构建全平台）"
+        type: choice
+        default: all
+        options:
+          - all
+          - macos-arm64
+          - macos-x64
+          - windows-x64
+          - linux-x64
+
+permissions:
+  contents: write # 创建 Release / 上传产物需要
+
+concurrency:
+  group: release-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'all' }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: Select target platforms
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Build platform matrix
+        id: set-matrix
+        shell: bash
+        env:
+          PLATFORM: ${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'all' }}
+        run: |
+          MAC_ARM='{"label":"macOS (Apple Silicon)","artifact":"macos-arm64","os":"macos-15","formats":"dmg"}'
+          MAC_X64='{"label":"macOS (Intel)","artifact":"macos-x64","os":"macos-15-intel","formats":"dmg"}'
+          WIN_X64='{"label":"Windows","artifact":"windows-x64","os":"windows-latest","formats":"nsis"}'
+          LINUX_X64='{"label":"Linux","artifact":"linux-x64","os":"ubuntu-22.04","formats":"deb,appimage"}'
+          case "$PLATFORM" in
+            macos-arm64) MATRIX="[$MAC_ARM]" ;;
+            macos-x64)   MATRIX="[$MAC_X64]" ;;
+            windows-x64) MATRIX="[$WIN_X64]" ;;
+            linux-x64)   MATRIX="[$LINUX_X64]" ;;
+            *)           MATRIX="[$MAC_ARM,$MAC_X64,$WIN_X64,$LINUX_X64]" ;;
+          esac
+          echo "matrix={\"include\":$MATRIX}" >> "$GITHUB_OUTPUT"
+
+  package:
+    name: Package (${{ matrix.label }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+
+      # GPUI 在 Linux 的构建/运行依赖；AppImage 需要 FUSE。
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libfontconfig-dev \
+            libwayland-dev \
+            libxkbcommon-x11-dev \
+            libssl-dev \
+            libxcb1-dev \
+            libvulkan-dev \
+            libfuse2 \
+            cmake \
+            clang
+
+      - name: Install cargo-packager
+        uses: cargo-bins/cargo-binstall@main
+
+      - run: cargo binstall --no-confirm cargo-packager
+
+      # before-packaging-command (Cargo.toml) 会先执行 `cargo build --release`，
+      # 因此这里以 --release 运行；产物统一输出到 dist/。
+      - name: Package
+        run: cargo packager --release --formats ${{ matrix.formats }} --out-dir dist
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          files: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.msi
+            dist/*.deb
+            dist/*.AppImage
+
+      # 非 tag（手动）触发时，把产物存为 workflow artifact 方便下载试用，不创建 Release。
+      - name: Upload build artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: shellmaster3-${{ matrix.artifact }}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.msi
+            dist/*.deb
+            dist/*.AppImage
+          retention-days: 14
+          if-no-files-found: error

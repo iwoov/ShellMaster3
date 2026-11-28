@@ -72,6 +72,8 @@ pub struct HomePage {
     pub connecting_progress: HashMap<String, Entity<ConnectingProgress>>,
     /// 上一次的 show_home 状态，用于检测视图切换
     last_show_home: bool,
+    /// 已同步到界面的服务端数据版本号
+    last_sync_revision: u64,
 }
 
 impl HomePage {
@@ -94,6 +96,52 @@ impl HomePage {
 
         // 从存储加载服务器数据
         let server_groups = Self::load_server_groups();
+        let last_sync_revision = crate::services::sync::data_revision();
+
+        // 若启用了自动同步，在后台执行启动同步并在完成后刷新首页视图
+        let startup_sync_cfg = storage::load_settings()
+            .ok()
+            .map(|s| s.sync)
+            .filter(|sync| {
+                sync.enabled && sync.auto_sync && !sync.webdav_url.trim().is_empty()
+            });
+        if let Some(sync_cfg) = startup_sync_cfg {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            crate::ssh::manager::SshManager::global()
+                .runtime()
+                .spawn(async move {
+                    let res = crate::services::sync::sync_webdav(&sync_cfg).await;
+                    let _ = tx.send(res);
+                });
+
+            let home_weak = cx.entity().downgrade();
+            cx.to_async()
+                .spawn(async move |async_cx| {
+                    if let Ok(result) = rx.await {
+                        match result {
+                            Ok(report) => {
+                                tracing::info!(
+                                    "启动自动同步完成: {} hosts, {} groups, {} snippets, {} keys",
+                                    report.servers_count,
+                                    report.groups_count,
+                                    report.snippets_count,
+                                    report.keys_synced
+                                );
+                                let _ = async_cx.update(|cx| {
+                                    let _ = home_weak.update(cx, |this, cx| {
+                                        this.reload_synced_data(cx);
+                                    });
+                                });
+                            }
+                            Err(e) => {
+                                tracing::warn!("启动 WebDAV 自动同步失败: {}", e);
+                            }
+                        }
+                    }
+                    Some(())
+                })
+                .detach();
+        }
 
         Self {
             server_groups,
@@ -108,7 +156,19 @@ impl HomePage {
             known_hosts_state,
             connecting_progress: HashMap::new(),
             last_show_home: true,
+            last_sync_revision,
         }
+    }
+
+    /// 同步完成后刷新首页服务器、代码片段以及设置缓存状态
+    fn reload_synced_data(&mut self, cx: &mut Context<Self>) {
+        self.last_sync_revision = crate::services::sync::data_revision();
+        self.reload_servers();
+        self.snippets_state.update(cx, |s, cx| {
+            s.refresh();
+            cx.notify();
+        });
+        cx.notify();
     }
 
     /// 从存储加载服务器分组数据
@@ -267,6 +327,21 @@ impl HomePage {
         let selected_menu = self.sidebar_state.read(cx).selected_menu;
         let dialog_visible = self.dialog_state.read(cx).visible;
         let settings_dialog_visible = self.settings_dialog_state.read(cx).visible;
+        let current_rev = crate::services::sync::data_revision();
+        let sync_flagged = self.settings_dialog_state.read(cx).sync_data_updated;
+        if current_rev != self.last_sync_revision || sync_flagged {
+            if sync_flagged {
+                self.settings_dialog_state.update(cx, |s, _| {
+                    s.sync_data_updated = false;
+                });
+            }
+            self.last_sync_revision = current_rev;
+            self.reload_servers();
+            self.snippets_state.update(cx, |s, cx| {
+                s.refresh();
+                cx.notify();
+            });
+        }
         let dialog_state = self.dialog_state.clone();
         let settings_dialog_state = self.settings_dialog_state.clone();
         let lang = self

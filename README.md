@@ -76,7 +76,10 @@ Seamlessly switch between tuned Dark and Light themes. The right sidebar collaps
 
 ## Download & Installation
 
-Pre-built installers for macOS (`.dmg`), Windows (`-setup.exe`), and Linux (`.deb`, `.AppImage`) are published on the [GitHub Releases](https://github.com/iwoov/ShellMaster3/releases) page.
+Pre-built installers for all major desktop architectures are published on the [GitHub Releases](https://github.com/iwoov/ShellMaster3/releases) page:
+- **macOS**: `ShellMaster3_*_aarch64.dmg` (Apple Silicon) / `ShellMaster3_*_x64.dmg` (Intel)
+- **Windows**: `shellmaster3_*_x64-setup.exe` (x64) / `shellmaster3_*_arm64-setup.exe` (ARM64)
+- **Linux**: `shellmaster3_*_amd64.deb` & `*_x86_64.AppImage` (x64) / `shellmaster3_*_arm64.deb` & `*_aarch64.AppImage` (ARM64)
 
 > **First-Launch Note (Unsigned Builds)**
 > - **macOS**: Pre-built `.dmg` binaries are not currently signed/notarized with an Apple Developer certificate. If Gatekeeper reports the app is damaged or from an unidentified developer, run the following command after moving `ShellMaster3.app` into `/Applications`:
@@ -97,7 +100,7 @@ Pre-built installers for macOS (`.dmg`), Windows (`-setup.exe`), and Linux (`.de
 | Terminal Emulation | `alacritty_terminal` |
 | AI Agent | `rig-core`, `rig-agent`, `reqwest` |
 | Async Runtime | `tokio` |
-| Packaging & CI | `cargo-packager`, GitHub Actions (macOS arm64/x64, Windows, Linux) |
+| Packaging & CI | `cargo-packager`, GitHub Actions (macOS / Windows / Linux, x64 & ARM64) |
 
 ---
 

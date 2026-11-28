@@ -17,6 +17,9 @@ pub struct AppSettings {
     /// 设置文件格式版本；旧文件没有该字段，按 0 处理
     #[serde(default)]
     pub settings_version: u32,
+    /// 最近一次在设置面板保存的时间戳（RFC3339），供多端同步判断配置新旧
+    #[serde(default)]
+    pub updated_at: Option<String>,
     pub theme: ThemeSettings,
     pub terminal: TerminalSettings,
     pub sftp: SftpSettings,
@@ -32,6 +35,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             settings_version: CURRENT_SETTINGS_VERSION,
+            updated_at: None,
             theme: ThemeSettings::default(),
             terminal: TerminalSettings::default(),
             sftp: SftpSettings::default(),
@@ -1268,13 +1272,17 @@ pub enum SyncInterval {
     Daily,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum ConflictStrategy {
     #[default]
     Ask,
     LocalFirst,
     RemoteFirst,
     Merge,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1288,10 +1296,18 @@ pub struct SyncSettings {
     pub webdav_username: String,
     pub webdav_password: String,
     pub webdav_path: String,
+    /// 端到端同步加密口令（非空时对上传的同步包做 AES-256-GCM 加密，可安全同步密码与 API Key）
+    #[serde(default)]
+    pub sync_passphrase: String,
+    /// 最近一次成功同步的时间戳（RFC3339）
+    #[serde(default)]
+    pub last_sync_at: Option<String>,
     // 同步内容
     pub sync_servers: bool,
     pub sync_groups: bool,
     pub sync_settings: bool,
+    #[serde(default = "default_true")]
+    pub sync_snippets: bool,
     pub sync_keybindings: bool,
     pub sync_keys: bool,
     // 冲突处理
@@ -1303,19 +1319,22 @@ impl Default for SyncSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            method: SyncMethod::None,
+            method: SyncMethod::WebDAV,
             auto_sync: false,
             sync_interval: SyncInterval::Manual,
             webdav_url: String::new(),
             webdav_username: String::new(),
             webdav_password: String::new(),
             webdav_path: "/shellmaster".to_string(),
+            sync_passphrase: String::new(),
+            last_sync_at: None,
             sync_servers: true,
             sync_groups: true,
             sync_settings: true,
+            sync_snippets: true,
             sync_keybindings: true,
             sync_keys: false,
-            conflict_strategy: ConflictStrategy::Ask,
+            conflict_strategy: ConflictStrategy::Merge,
             backup_before_sync: true,
         }
     }

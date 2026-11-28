@@ -1,6 +1,6 @@
 name: Release
 
-# 推送形如 v0.1.0 的 tag 时构建并上传到草稿 Release；
+# 推送形如 v0.0.1 的 tag 时构建全平台（3 系统 × 2 架构 = 6 个目标）并上传到草稿 Release；
 # 也可在 Actions 页面手动触发（workflow_dispatch），仅上传跨平台试装包到 Artifacts，不创建 Release。
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: "选择要构建的目标平台（默认构建全平台）"
+        description: "选择要构建的目标平台（默认构建全平台 6 目标）"
         type: choice
         default: all
         options:
@@ -17,7 +17,9 @@ on:
           - macos-arm64
           - macos-x64
           - windows-x64
+          - windows-arm64
           - linux-x64
+          - linux-arm64
 
 permissions:
   contents: write # 创建 Release / 上传产物需要
@@ -41,14 +43,18 @@ jobs:
         run: |
           MAC_ARM='{"label":"macOS (Apple Silicon)","artifact":"macos-arm64","os":"macos-15","formats":"dmg"}'
           MAC_X64='{"label":"macOS (Intel)","artifact":"macos-x64","os":"macos-15-intel","formats":"dmg"}'
-          WIN_X64='{"label":"Windows","artifact":"windows-x64","os":"windows-latest","formats":"nsis"}'
-          LINUX_X64='{"label":"Linux","artifact":"linux-x64","os":"ubuntu-22.04","formats":"deb,appimage"}'
+          WIN_X64='{"label":"Windows (x64)","artifact":"windows-x64","os":"windows-latest","formats":"nsis"}'
+          WIN_ARM='{"label":"Windows (ARM64)","artifact":"windows-arm64","os":"windows-11-arm","formats":"nsis"}'
+          LINUX_X64='{"label":"Linux (x64)","artifact":"linux-x64","os":"ubuntu-22.04","formats":"deb,appimage"}'
+          LINUX_ARM='{"label":"Linux (ARM64)","artifact":"linux-arm64","os":"ubuntu-22.04-arm","formats":"deb,appimage"}'
           case "$PLATFORM" in
-            macos-arm64) MATRIX="[$MAC_ARM]" ;;
-            macos-x64)   MATRIX="[$MAC_X64]" ;;
-            windows-x64) MATRIX="[$WIN_X64]" ;;
-            linux-x64)   MATRIX="[$LINUX_X64]" ;;
-            *)           MATRIX="[$MAC_ARM,$MAC_X64,$WIN_X64,$LINUX_X64]" ;;
+            macos-arm64)   MATRIX="[$MAC_ARM]" ;;
+            macos-x64)     MATRIX="[$MAC_X64]" ;;
+            windows-x64)   MATRIX="[$WIN_X64]" ;;
+            windows-arm64) MATRIX="[$WIN_ARM]" ;;
+            linux-x64)     MATRIX="[$LINUX_X64]" ;;
+            linux-arm64)   MATRIX="[$LINUX_ARM]" ;;
+            *)             MATRIX="[$MAC_ARM,$MAC_X64,$WIN_X64,$WIN_ARM,$LINUX_X64,$LINUX_ARM]" ;;
           esac
           echo "matrix={\"include\":$MATRIX}" >> "$GITHUB_OUTPUT"
 
@@ -69,7 +75,7 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.os }}
+          key: ${{ matrix.artifact }}
 
       # GPUI 在 Linux 的构建/运行依赖；AppImage 需要 FUSE。
       - name: Install Linux dependencies

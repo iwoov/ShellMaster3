@@ -78,8 +78,8 @@
 
 可直接前往 [GitHub Releases](https://github.com/iwoov/ShellMaster3/releases) 下载对应平台的预构建安装包：
 - **macOS**：`ShellMaster3_*_aarch64.dmg`（Apple Silicon） / `ShellMaster3_*_x64.dmg`（Intel）
-- **Windows**：`shellmaster3_*_x64-setup.exe`
-- **Linux**：`shellmaster3_*_amd64.deb` / `shellmaster3_*_x86_64.AppImage`
+- **Windows**：`shellmaster3_*_x64-setup.exe`（x64） / `shellmaster3_*_arm64-setup.exe`（ARM64）
+- **Linux**：`shellmaster3_*_amd64.deb` & `*_x86_64.AppImage`（x64） / `shellmaster3_*_arm64.deb` & `*_aarch64.AppImage`（ARM64）
 
 > **首次打开说明（未签名安装包）**
 > - **macOS**：目前预构建的 `.dmg` 尚未经过 Apple Developer 签名与公证。若安装后系统提示“已损坏，无法打开”或“无法验证开发者”，将 `ShellMaster3.app` 拖入「应用程序」后在终端执行：
@@ -100,7 +100,7 @@
 | 终端模拟 | `alacritty_terminal` |
 | AI Agent | `rig-core`、`rig-agent`、`reqwest` |
 | 异步运行时 | `tokio` |
-| 打包与发布 | `cargo-packager`、GitHub Actions（macOS / Windows / Linux） |
+| 打包与发布 | `cargo-packager`、GitHub Actions（macOS / Windows / Linux，x64 & ARM64） |
 
 ---
 

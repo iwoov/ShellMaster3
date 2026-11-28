@@ -78,7 +78,6 @@ pub enum SettingsSection {
     Sftp,
     Monitor,
     Connection,
-    #[allow(dead_code)]
     Sync,
     System,
     Ai,
@@ -86,14 +85,15 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
-    /// 导航中的显示顺序（未实现的 Sync 面板暂不在导航中展示）
-    pub const ALL: [SettingsSection; 9] = [
+    /// 导航中的显示顺序
+    pub const ALL: [SettingsSection; 10] = [
         SettingsSection::Theme,
         SettingsSection::Terminal,
         SettingsSection::KeyBindings,
         SettingsSection::Sftp,
         SettingsSection::Monitor,
         SettingsSection::Connection,
+        SettingsSection::Sync,
         SettingsSection::Ai,
         SettingsSection::System,
         SettingsSection::About,
@@ -204,6 +204,15 @@ pub struct SettingsDialogState {
     pub webdav_username_input: Option<Entity<InputState>>,
     pub webdav_password_input: Option<Entity<InputState>>,
     pub webdav_path_input: Option<Entity<InputState>>,
+    pub webdav_passphrase_input: Option<Entity<InputState>>,
+    /// 正在测试 WebDAV 连通性
+    pub sync_testing: bool,
+    /// 正在执行 WebDAV 同步
+    pub sync_running: bool,
+    /// WebDAV 测试或同步的结果提示 (is_ok, message)
+    pub sync_notice: Option<(bool, String)>,
+    /// 同步完成后标记给首页刷新服务器/片段列表
+    pub sync_data_updated: bool,
 
     // ============ 系统设置输入 ============
     pub log_retention_input: Option<Entity<InputState>>,
@@ -298,6 +307,11 @@ impl Default for SettingsDialogState {
             webdav_username_input: None,
             webdav_password_input: None,
             webdav_path_input: None,
+            webdav_passphrase_input: None,
+            sync_testing: false,
+            sync_running: false,
+            sync_notice: None,
+            sync_data_updated: false,
             // 系统
             log_retention_input: None,
             update_state: None,
@@ -344,12 +358,16 @@ impl SettingsDialogState {
         self.scroll_handle.set_offset(Point::default());
         // 清除输入状态以便重新加载
         self.reset_inputs();
-        // 根据持久化的 verified 标志，预填 AI 测试状态
-        self.ai_test_statuses.clear();
-        self.ai_tested_snapshots.clear();
         self.ai_fetching_models.clear();
         self.ai_remote_models.clear();
         self.ai_fetch_notices.clear();
+        self.refresh_ai_verified_snapshots();
+    }
+
+    /// 根据当前 `self.settings` 中持久化的 verified 标志，重建 AI 测试状态与快照
+    fn refresh_ai_verified_snapshots(&mut self) {
+        self.ai_test_statuses.clear();
+        self.ai_tested_snapshots.clear();
         for id in AiProviderId::ALL {
             let r = ProviderRef::Builtin(id);
             let cfg = self.settings.ai.get(id);
@@ -387,6 +405,21 @@ impl SettingsDialogState {
             } else {
                 self.ai_test_statuses.insert(r, AiTestStatus::Untested);
             }
+        }
+    }
+
+    /// 手动「立即同步」成功后回填合并后的最新配置，防止随后点「保存」时用旧快照覆盖或触发二次自动同步
+    pub fn reload_after_sync(&mut self) {
+        if let Ok(fresh) = storage::load_settings() {
+            self.settings = fresh;
+            self.saved_settings = Some(self.settings.clone());
+            self.has_changes = false;
+            self.ai_inputs.clear();
+            self.ai_system_prompt_input = None;
+            self.ai_context_lines_input = None;
+            self.ai_agent_max_turns_input = None;
+            self.ai_agent_timeout_input = None;
+            self.refresh_ai_verified_snapshots();
         }
     }
 
@@ -436,6 +469,10 @@ impl SettingsDialogState {
         self.webdav_username_input = None;
         self.webdav_password_input = None;
         self.webdav_path_input = None;
+        self.webdav_passphrase_input = None;
+        self.sync_testing = false;
+        self.sync_running = false;
+        self.sync_notice = None;
         self.log_retention_input = None;
         self.ai_inputs.clear();
         self.ai_system_prompt_input = None;
@@ -487,8 +524,57 @@ impl SettingsDialogState {
         cx.notify();
     }
 
+    /// 在手动「立即同步」前将弹窗中已通过校验的其他设置落盘（不触发后台自动同步，由当前手动同步一并推送）
+    pub fn flush_before_manual_sync(&mut self, cx: &mut Context<Self>) {
+        if self.validate_ai_for_save(cx).is_err() {
+            return;
+        }
+        self.sync_from_inputs(cx);
+        let disk_current = storage::cached_settings();
+        if Self::settings_equal_ignoring_meta(&self.settings, &disk_current) {
+            return;
+        }
+        if !Self::settings_equal_ignoring_meta_and_sync(&self.settings, &disk_current) {
+            self.settings.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        }
+        let _ = storage::save_settings(&self.settings);
+    }
+
+    fn settings_equal_ignoring_meta(a: &AppSettings, b: &AppSettings) -> bool {
+        let mut na = a.clone();
+        let mut nb = b.clone();
+        na.updated_at = None;
+        nb.updated_at = None;
+        na.sync.last_sync_at = None;
+        nb.sync.last_sync_at = None;
+        match (serde_json::to_vec(&na), serde_json::to_vec(&nb)) {
+            (Ok(va), Ok(vb)) => va == vb,
+            _ => false,
+        }
+    }
+
+    fn settings_equal_ignoring_meta_and_sync(a: &AppSettings, b: &AppSettings) -> bool {
+        let mut nb = b.clone();
+        nb.sync = a.sync.clone();
+        Self::settings_equal_ignoring_meta(a, &nb)
+    }
+
     pub fn save(&mut self) -> anyhow::Result<()> {
+        let disk_current = storage::cached_settings();
+        if Self::settings_equal_ignoring_meta(&self.settings, &disk_current) {
+            self.has_changes = false;
+            self.save_error = None;
+            return Ok(());
+        }
+        let non_sync_changed =
+            !Self::settings_equal_ignoring_meta_and_sync(&self.settings, &disk_current);
+        if non_sync_changed {
+            self.settings.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        }
         storage::save_settings(&self.settings)?;
+        if non_sync_changed {
+            crate::services::sync::notify_local_data_changed();
+        }
         self.has_changes = false;
         self.save_error = None;
         Ok(())
@@ -802,6 +888,17 @@ impl SettingsDialogState {
             let value = self.settings.sync.webdav_path.clone();
             self.webdav_path_input = Some(cx.new(|cx| {
                 let mut state = InputState::new(window, cx).placeholder("/shellmaster");
+                state.set_value(value, window, cx);
+                state
+            }));
+        }
+        if self.webdav_passphrase_input.is_none() {
+            let value = self.settings.sync.sync_passphrase.clone();
+            let placeholder = i18n::t(lang, "settings.sync.passphrase_placeholder");
+            self.webdav_passphrase_input = Some(cx.new(|cx| {
+                let mut state = InputState::new(window, cx)
+                    .placeholder(placeholder)
+                    .masked(true);
                 state.set_value(value, window, cx);
                 state
             }));
@@ -1255,6 +1352,9 @@ impl SettingsDialogState {
         if let Some(input) = &self.webdav_path_input {
             self.settings.sync.webdav_path = input.read(cx).value().to_string();
         }
+        if let Some(input) = &self.webdav_passphrase_input {
+            self.settings.sync.sync_passphrase = input.read(cx).value().to_string();
+        }
 
         // 系统
         if let Some(input) = &self.log_retention_input {
@@ -1387,6 +1487,27 @@ impl SettingsDialogState {
         } else {
             Err(failing)
         }
+    }
+
+    /// 从当前表单实时读取 WebDAV 同步配置（未点击保存也可直接测试连通性与同步）
+    pub fn collect_sync_settings(&self, cx: &App) -> crate::models::settings::SyncSettings {
+        let mut cfg = self.settings.sync.clone();
+        if let Some(input) = &self.webdav_url_input {
+            cfg.webdav_url = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.webdav_username_input {
+            cfg.webdav_username = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.webdav_password_input {
+            cfg.webdav_password = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.webdav_path_input {
+            cfg.webdav_path = input.read(cx).value().to_string();
+        }
+        if let Some(input) = &self.webdav_passphrase_input {
+            cfg.sync_passphrase = input.read(cx).value().to_string();
+        }
+        cfg
     }
 
     /// 新增一个自定义供应商，返回其 ref

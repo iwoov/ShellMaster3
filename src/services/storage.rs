@@ -14,6 +14,7 @@ const CONFIG_FILES: &[&str] = &[
     "known_hosts.json",
     "snippets.json",
     "ui_state.json",
+    "sync_state.json",
     ".secret.key",
 ];
 
@@ -254,6 +255,7 @@ fn ensure_group(config: &mut ServerConfig, group_id: Option<&str>) {
             id: group_id.to_string(),
             name: group_id.to_string(),
             icon_path: "icons/server.svg".to_string(),
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
         });
     }
 }
@@ -281,21 +283,31 @@ fn replace_server(config: &mut ServerConfig, server: ServerData) -> bool {
 }
 
 /// 添加服务器
-pub fn add_server(server: ServerData) -> Result<()> {
+pub fn add_server(mut server: ServerData) -> Result<()> {
+    server.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    let server_id = server.id.clone();
     let mut config = load_servers()?;
     ensure_group(&mut config, server.group_id.as_deref());
     config.servers.push(server);
     save_servers(&config)?;
+    crate::services::sync::record_entity_alive(
+        crate::services::sync::TombstoneKind::Server,
+        &server_id,
+    );
+    crate::services::sync::notify_local_data_changed();
     Ok(())
 }
 
 /// 更新服务器
-pub fn update_server(server: ServerData) -> Result<()> {
+pub fn update_server(mut server: ServerData) -> Result<()> {
+    server.updated_at = Some(chrono::Utc::now().to_rfc3339());
     let mut config = load_servers()?;
     if !replace_server(&mut config, server) {
         anyhow::bail!("服务器已不存在，可能已被删除");
     }
-    save_servers(&config)
+    save_servers(&config)?;
+    crate::services::sync::notify_local_data_changed();
+    Ok(())
 }
 
 /// 更新服务器的最后连接时间
@@ -327,6 +339,11 @@ pub fn delete_server(server_id: &str) -> Result<()> {
     // 自动删除空分组（没有服务器的分组）
     prune_empty_groups(&mut config);
     save_servers(&config)?;
+    crate::services::sync::record_local_deletion(
+        crate::services::sync::TombstoneKind::Server,
+        server_id,
+    );
+    crate::services::sync::notify_local_data_changed();
     Ok(())
 }
 
@@ -528,19 +545,28 @@ pub fn save_snippets(config: &SnippetsConfig) -> Result<()> {
 }
 
 /// 添加命令组
-pub fn add_snippet_group(group: SnippetGroup) -> Result<()> {
+pub fn add_snippet_group(mut group: SnippetGroup) -> Result<()> {
+    group.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    let group_id = group.id.clone();
     let mut config = load_snippets()?;
     config.groups.push(group);
     save_snippets(&config)?;
+    crate::services::sync::record_entity_alive(
+        crate::services::sync::TombstoneKind::SnippetGroup,
+        &group_id,
+    );
+    crate::services::sync::notify_local_data_changed();
     Ok(())
 }
 
 /// 更新命令组
-pub fn update_snippet_group(group: SnippetGroup) -> Result<()> {
+pub fn update_snippet_group(mut group: SnippetGroup) -> Result<()> {
+    group.updated_at = Some(chrono::Utc::now().to_rfc3339());
     let mut config = load_snippets()?;
     if let Some(pos) = config.groups.iter().position(|g| g.id == group.id) {
         config.groups[pos] = group;
         save_snippets(&config)?;
+        crate::services::sync::notify_local_data_changed();
     }
     Ok(())
 }
@@ -564,6 +590,13 @@ pub fn delete_snippet_group(group_id: &str) -> Result<()> {
         i += 1;
     }
 
+    let deleted_command_ids: Vec<String> = config
+        .commands
+        .iter()
+        .filter(|c| c.group_id.as_ref().is_some_and(|gid| to_delete.contains(gid)))
+        .map(|c| c.id.clone())
+        .collect();
+
     // 删除组和相关命令
     config.groups.retain(|g| !to_delete.contains(&g.id));
     config.commands.retain(|c| {
@@ -573,23 +606,41 @@ pub fn delete_snippet_group(group_id: &str) -> Result<()> {
     });
 
     save_snippets(&config)?;
+    crate::services::sync::record_local_deletions(
+        crate::services::sync::TombstoneKind::SnippetGroup,
+        &to_delete,
+    );
+    crate::services::sync::record_local_deletions(
+        crate::services::sync::TombstoneKind::SnippetCommand,
+        &deleted_command_ids,
+    );
+    crate::services::sync::notify_local_data_changed();
     Ok(())
 }
 
 /// 添加命令
-pub fn add_snippet_command(command: SnippetCommand) -> Result<()> {
+pub fn add_snippet_command(mut command: SnippetCommand) -> Result<()> {
+    command.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    let command_id = command.id.clone();
     let mut config = load_snippets()?;
     config.commands.push(command);
     save_snippets(&config)?;
+    crate::services::sync::record_entity_alive(
+        crate::services::sync::TombstoneKind::SnippetCommand,
+        &command_id,
+    );
+    crate::services::sync::notify_local_data_changed();
     Ok(())
 }
 
 /// 更新命令
-pub fn update_snippet_command(command: SnippetCommand) -> Result<()> {
+pub fn update_snippet_command(mut command: SnippetCommand) -> Result<()> {
+    command.updated_at = Some(chrono::Utc::now().to_rfc3339());
     let mut config = load_snippets()?;
     if let Some(pos) = config.commands.iter().position(|c| c.id == command.id) {
         config.commands[pos] = command;
         save_snippets(&config)?;
+        crate::services::sync::notify_local_data_changed();
     }
     Ok(())
 }
@@ -599,6 +650,11 @@ pub fn delete_snippet_command(command_id: &str) -> Result<()> {
     let mut config = load_snippets()?;
     config.commands.retain(|c| c.id != command_id);
     save_snippets(&config)?;
+    crate::services::sync::record_local_deletion(
+        crate::services::sync::TombstoneKind::SnippetCommand,
+        command_id,
+    );
+    crate::services::sync::notify_local_data_changed();
     Ok(())
 }
 
@@ -756,6 +812,7 @@ mod group_tests {
             id: id.to_string(),
             name: name.to_string(),
             icon_path: "icons/server.svg".to_string(),
+            updated_at: None,
         }
     }
 

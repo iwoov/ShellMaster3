@@ -8,4 +8,5 @@ pub mod sftp;
 pub mod ssh;
 pub mod ssh_config_import;
 pub mod storage;
+pub mod sync;
 pub mod updater;

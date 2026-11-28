@@ -109,6 +109,8 @@ pub struct ServerData {
     #[serde(default)]
     pub os_name: Option<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
     pub last_connected_at: Option<String>,
 }
 
@@ -132,6 +134,7 @@ impl Default for ServerData {
             enable_monitor: true,
             os_name: None,
             created_at: String::new(),
+            updated_at: None,
             last_connected_at: None,
         }
     }
@@ -143,6 +146,8 @@ pub struct ServerGroupData {
     pub id: String,
     pub name: String,
     pub icon_path: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 impl Default for ServerGroupData {
@@ -151,6 +156,7 @@ impl Default for ServerGroupData {
             id: String::new(),
             name: "默认分组".to_string(),
             icon_path: "icons/server.svg".to_string(),
+            updated_at: None,
         }
     }
 }

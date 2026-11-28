@@ -294,6 +294,7 @@ where
                     id: gid.clone(),
                     name: gid.clone(),
                     icon_path: "icons/server.svg".to_string(),
+                    updated_at: Some(now.clone()),
                 });
             }
         }
@@ -308,6 +309,7 @@ where
             auth_type,
             private_key_filename: key_filename,
             created_at: now.clone(),
+            updated_at: Some(now.clone()),
             ..ServerData::default()
         });
         summary.imported += 1;
@@ -352,6 +354,7 @@ pub fn import_from_ssh_config_path(path: &Path) -> Result<ImportSummary> {
     });
     if summary.imported > 0 {
         storage::save_servers(&config)?;
+        crate::services::sync::notify_local_data_changed();
     }
     Ok(summary)
 }

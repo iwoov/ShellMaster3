@@ -11,6 +11,8 @@ pub struct SnippetCommand {
     pub description: Option<String>,
     pub group_id: Option<String>, // 所属命令组 ID，None 表示未分组
     pub created_at: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 impl Default for SnippetCommand {
@@ -22,6 +24,7 @@ impl Default for SnippetCommand {
             description: None,
             group_id: None,
             created_at: String::new(),
+            updated_at: None,
         }
     }
 }
@@ -34,6 +37,8 @@ pub struct SnippetGroup {
     pub parent_id: Option<String>, // 父级组 ID，None 表示顶级
     pub description: Option<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 impl Default for SnippetGroup {
@@ -44,6 +49,7 @@ impl Default for SnippetGroup {
             parent_id: None,
             description: None,
             created_at: String::new(),
+            updated_at: None,
         }
     }
 }

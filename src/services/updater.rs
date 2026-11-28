@@ -902,13 +902,28 @@ mod tests {
                 size: 18_000_000,
             },
             GitHubAsset {
+                name: "shellmaster3_0.1.6_arm64-setup.exe".into(),
+                browser_download_url: "https://example.com/arm64-setup.exe".into(),
+                size: 18_000_000,
+            },
+            GitHubAsset {
                 name: "shellmaster3_0.1.6_amd64.deb".into(),
                 browser_download_url: "https://example.com/amd64.deb".into(),
                 size: 15_000_000,
             },
             GitHubAsset {
+                name: "shellmaster3_0.1.6_arm64.deb".into(),
+                browser_download_url: "https://example.com/arm64.deb".into(),
+                size: 15_000_000,
+            },
+            GitHubAsset {
                 name: "shellmaster3_0.1.6_x86_64.AppImage".into(),
                 browser_download_url: "https://example.com/x86_64.AppImage".into(),
+                size: 20_000_000,
+            },
+            GitHubAsset {
+                name: "shellmaster3_0.1.6_aarch64.AppImage".into(),
+                browser_download_url: "https://example.com/aarch64.AppImage".into(),
                 size: 20_000_000,
             },
         ]
@@ -941,8 +956,17 @@ mod tests {
         let win_x64 = select_platform_asset(&assets, "windows", "x86_64", false).unwrap();
         assert_eq!(win_x64.name, "shellmaster3_0.1.6_x64-setup.exe");
 
+        let win_arm = select_platform_asset(&assets, "windows", "aarch64", false).unwrap();
+        assert_eq!(win_arm.name, "shellmaster3_0.1.6_arm64-setup.exe");
+
         let linux_appimage = select_platform_asset(&assets, "linux", "x86_64", true).unwrap();
         assert_eq!(linux_appimage.name, "shellmaster3_0.1.6_x86_64.AppImage");
+
+        let linux_arm_appimage = select_platform_asset(&assets, "linux", "aarch64", true).unwrap();
+        assert_eq!(
+            linux_arm_appimage.name,
+            "shellmaster3_0.1.6_aarch64.AppImage"
+        );
 
         // 无 AppImage 时应回退到 .deb
         let deb_only: Vec<GitHubAsset> = assets
@@ -951,6 +975,9 @@ mod tests {
             .collect();
         let linux_deb = select_platform_asset(&deb_only, "linux", "x86_64", false).unwrap();
         assert_eq!(linux_deb.name, "shellmaster3_0.1.6_amd64.deb");
+
+        let linux_arm_deb = select_platform_asset(&deb_only, "linux", "aarch64", false).unwrap();
+        assert_eq!(linux_arm_deb.name, "shellmaster3_0.1.6_arm64.deb");
     }
 
     #[test]

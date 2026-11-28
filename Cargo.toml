@@ -52,10 +52,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 rig-core = { version = "=0.47.1", default-features = false, features = ["reqwest", "rustls"] }
 rig-agent = { version = "=0.47.1", default-features = false }
 
-# 本地凭据加密（AES-256-GCM）
+# 本地凭据加密与 WebDAV 端到端同步加密（AES-256-GCM + SHA-256 KDF）
 aes-gcm = "0.10"
 base64 = "0.22"
 rand = "0.8"
+sha2 = "0.10"
 
 [dev-dependencies]
 # 测试中使用可暂停的虚拟时钟（tokio::test(start_paused = true)）

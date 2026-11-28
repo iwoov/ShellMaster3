@@ -763,6 +763,7 @@ impl ServerDialogState {
                 .as_ref()
                 .map(|server| server.created_at.clone())
                 .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
             last_connected_at: existing.and_then(|server| server.last_connected_at),
         }
     }

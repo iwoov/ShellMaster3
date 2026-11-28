@@ -158,6 +158,7 @@ pub fn has_plaintext_secrets_in_servers(config: &ServerConfig) -> bool {
 pub fn has_plaintext_secrets_in_settings(settings: &AppSettings) -> bool {
     is_plaintext_secret(&settings.connection.global_proxy_password)
         || is_plaintext_secret(&settings.sync.webdav_password)
+        || is_plaintext_secret(&settings.sync.sync_passphrase)
         || settings
             .ai
             .providers
@@ -209,6 +210,7 @@ pub fn encrypt_app_settings_with_key(
     let mut encrypted = settings.clone();
     encrypt_string_with_key(&mut encrypted.connection.global_proxy_password, key)?;
     encrypt_string_with_key(&mut encrypted.sync.webdav_password, key)?;
+    encrypt_string_with_key(&mut encrypted.sync.sync_passphrase, key)?;
     for provider in encrypted.ai.providers.values_mut() {
         encrypt_string_with_key(&mut provider.api_key, key)?;
     }
@@ -225,6 +227,7 @@ pub fn decrypt_app_settings_with_key(
 ) -> Result<()> {
     decrypt_string_with_key(&mut settings.connection.global_proxy_password, key)?;
     decrypt_string_with_key(&mut settings.sync.webdav_password, key)?;
+    decrypt_string_with_key(&mut settings.sync.sync_passphrase, key)?;
     for provider in settings.ai.providers.values_mut() {
         decrypt_string_with_key(&mut provider.api_key, key)?;
     }
@@ -265,6 +268,7 @@ pub fn encrypt_app_settings(settings: &AppSettings) -> Result<AppSettings> {
 pub fn decrypt_app_settings(settings: &mut AppSettings) -> Result<()> {
     let has_any_encrypted = is_encrypted(&settings.connection.global_proxy_password)
         || is_encrypted(&settings.sync.webdav_password)
+        || is_encrypted(&settings.sync.sync_passphrase)
         || settings
             .ai
             .providers

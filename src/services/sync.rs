@@ -1079,13 +1079,37 @@ fn is_strong_etag(etag: Option<&str>) -> Option<&str> {
     }
 }
 
+#[derive(Clone, Debug)]
+struct FetchedRemote {
+    bundle: Option<SyncBundle>,
+    etag: Option<String>,
+    was_encrypted: bool,
+    file_exists: bool,
+}
+
+fn normalize_bundle_for_compare(b: &SyncBundle) -> serde_json::Value {
+    let mut copy = b.clone();
+    copy.updated_at.clear();
+    if let Some(s) = &mut copy.settings {
+        s.updated_at = None;
+        s.sync = SyncSettings::default();
+        s.sftp.local_default_path.clear();
+        s.sftp.external_editor_path.clear();
+    }
+    serde_json::to_value(&copy).unwrap_or(serde_json::Value::Null)
+}
+
+pub(crate) fn bundle_content_equal(a: &SyncBundle, b: &SyncBundle) -> bool {
+    normalize_bundle_for_compare(a) == normalize_bundle_for_compare(b)
+}
+
 /// 拉取远端同步包及强 ETag：
 /// 对 CloudDrive2 / Alist 等挂载网盘常见的瞬时 5xx / 429 或网络抖动自动退避重试，并保留服务端错误详情。
 async fn fetch_remote_bundle_with_retry(
     client: &Client,
     bundle_url: &str,
     cfg: &SyncSettings,
-) -> Result<(Option<SyncBundle>, Option<String>), String> {
+) -> Result<FetchedRemote, String> {
     let mut last_err = String::new();
     for retry in 0..=HTTP_MAX_RETRIES {
         if retry > 0 {
@@ -1125,10 +1149,20 @@ async fn fetch_remote_bundle_with_retry(
             200 => match resp.text().await {
                 Ok(text) => {
                     if text.trim().is_empty() {
-                        return Ok((None, remote_etag));
+                        return Ok(FetchedRemote {
+                            bundle: None,
+                            etag: remote_etag,
+                            was_encrypted: false,
+                            file_exists: true,
+                        });
                     }
-                    let (bundle, _) = open_bundle(&text, &cfg.sync_passphrase)?;
-                    return Ok((Some(bundle), remote_etag));
+                    let (bundle, was_enc) = open_bundle(&text, &cfg.sync_passphrase)?;
+                    return Ok(FetchedRemote {
+                        bundle: Some(bundle),
+                        etag: remote_etag,
+                        was_encrypted: was_enc,
+                        file_exists: true,
+                    });
                 }
                 Err(e) => {
                     last_err = format!("读取远端同步文件流失败: {e}");
@@ -1138,7 +1172,14 @@ async fn fetch_remote_bundle_with_retry(
                     return Err(last_err);
                 }
             },
-            404 => return Ok((None, None)),
+            404 => {
+                return Ok(FetchedRemote {
+                    bundle: None,
+                    etag: None,
+                    was_encrypted: false,
+                    file_exists: false,
+                });
+            }
             401 | 403 => {
                 return Err(format!(
                     "WebDAV 认证失败 (HTTP {status})，请检查用户名或密码"
@@ -1158,53 +1199,12 @@ async fn fetch_remote_bundle_with_retry(
     Err(last_err)
 }
 
-/// 发送 PUT 请求：
-/// - 若携带强 ETag，优先尝试 `If-Match`；若挂载网盘网关不兼容 `If-Match`（返回 400/405/409/500/501），自动降级为无条件 PUT；
-/// - 若无条件 PUT 遇到瞬时 5xx / 429 或网络抖动，自动退避重试；
-/// - 若返回 `412 Precondition Failed` 则由外层重新拉取并执行 3-Way 合并。
-async fn put_bundle_with_etag(
+async fn put_raw_with_retry(
     client: &Client,
     url: &str,
     cfg: &SyncSettings,
     payload: &str,
-    etag: Option<&str>,
 ) -> Result<(u16, String), String> {
-    if let Some(strong) = is_strong_etag(etag) {
-        let conditional_resp = apply_auth(
-            client
-                .put(url)
-                .header("Content-Type", "application/json; charset=utf-8")
-                .header("If-Match", strong)
-                .body(payload.to_string()),
-            cfg,
-        )
-        .send()
-        .await;
-
-        match conditional_resp {
-            Ok(resp) => {
-                let code = resp.status().as_u16();
-                if (200..300).contains(&code) || code == 412 {
-                    return Ok((code, String::new()));
-                }
-                if matches!(code, 401 | 403) {
-                    let body = resp.text().await.unwrap_or_default();
-                    return Ok((code, body));
-                }
-                tracing::info!(
-                    "WebDAV 带 If-Match 写入返回 HTTP {}，自动降级为无条件 PUT...",
-                    code
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "WebDAV 带 If-Match 写入网络异常 ({})，自动降级为无条件 PUT...",
-                    e
-                );
-            }
-        }
-    }
-
     let mut last_err = String::new();
     for retry in 0..=HTTP_MAX_RETRIES {
         if retry > 0 {
@@ -1256,17 +1256,124 @@ async fn put_bundle_with_etag(
     Err(last_err)
 }
 
+/// 原子提交前通过轻量 `HEAD` 校验远端强 ETag 是否被其他设备并发更新
+async fn check_remote_etag_unchanged(
+    client: &Client,
+    bundle_url: &str,
+    cfg: &SyncSettings,
+    expected_strong_etag: &str,
+) -> bool {
+    let Ok(resp) = apply_auth(client.head(bundle_url), cfg).send().await else {
+        return true;
+    };
+    if resp.status().as_u16() != 200 {
+        return true;
+    }
+    let current = resp
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok());
+    match is_strong_etag(current) {
+        Some(strong_now) => strong_now == expected_strong_etag,
+        None => true,
+    }
+}
+
+/// 原子上传同步包（彻底解决 Nginx WebDAV + CloudDrive2 FUSE 原地覆盖 `O_TRUNC` 破坏 OneDrive 句柄的问题）：
+/// 1. 先 `PUT` 写入同目录下的全新临时文件 `shellmaster-sync-<hex>.tmp.json`（创建新 inode，中途断网不损毁原文件）；
+/// 2. 若本轮带有强 `ETag`，通过 `HEAD` 校验远端未被其他设备抢先修改（若已修改则清理临时文件并返回 `412` 重新 3-Way 合并）；
+/// 3. 发送 WebDAV `MOVE (Overwrite: T)` 原子替换为 `shellmaster-sync.json`；
+/// 4. 若非标 WebDAV 服务不支持 `MOVE`，自动清理临时文件并回退为 `DELETE` 旧文件 + `PUT` 新文件（同样规避原地截断覆盖）。
+async fn upload_bundle_atomic(
+    client: &Client,
+    dir_url: &str,
+    bundle_url: &str,
+    cfg: &SyncSettings,
+    payload: &str,
+    expected_etag: Option<&str>,
+    remote_file_exists: bool,
+) -> Result<(u16, String), String> {
+    let mut rnd = [0u8; 4];
+    rand::thread_rng().fill_bytes(&mut rnd);
+    let tmp_url = format!(
+        "{dir_url}/shellmaster-sync-{:02x}{:02x}{:02x}{:02x}.tmp.json",
+        rnd[0], rnd[1], rnd[2], rnd[3]
+    );
+
+    if let Ok((tmp_code, tmp_body)) = put_raw_with_retry(client, &tmp_url, cfg, payload).await {
+        if matches!(tmp_code, 401 | 403) {
+            return Ok((tmp_code, tmp_body));
+        }
+        if (200..300).contains(&tmp_code) {
+            if let Some(strong_expected) = is_strong_etag(expected_etag) {
+                if !check_remote_etag_unchanged(client, bundle_url, cfg, strong_expected).await {
+                    let _ = apply_auth(client.delete(&tmp_url), cfg).send().await;
+                    return Ok((412, String::new()));
+                }
+            }
+
+            let move_method = Method::from_bytes(b"MOVE").map_err(|e| e.to_string())?;
+            let mv_res = apply_auth(
+                client
+                    .request(move_method, &tmp_url)
+                    .header("Destination", bundle_url)
+                    .header("Overwrite", "T"),
+                cfg,
+            )
+            .send()
+            .await;
+
+            match mv_res {
+                Ok(mv_resp) => {
+                    let mv_code = mv_resp.status().as_u16();
+                    if (200..300).contains(&mv_code) {
+                        return Ok((mv_code, String::new()));
+                    }
+                    if matches!(mv_code, 401 | 403) {
+                        let body = mv_resp.text().await.unwrap_or_default();
+                        let _ = apply_auth(client.delete(&tmp_url), cfg).send().await;
+                        return Ok((mv_code, body));
+                    }
+                    tracing::info!(
+                        "WebDAV MOVE 返回 HTTP {}，清理临时文件并回退为 DELETE + PUT...",
+                        mv_code
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "WebDAV MOVE 网络异常 ({})，清理临时文件并回退为 DELETE + PUT...",
+                        e
+                    );
+                }
+            }
+            let _ = apply_auth(client.delete(&tmp_url), cfg).send().await;
+        }
+    }
+
+    // 回退路径：不支持 MOVE 时，先校验 ETag，再先 DELETE 旧文件后 PUT 新文件，避免 FUSE 原地截断覆盖
+    if let Some(strong_expected) = is_strong_etag(expected_etag) {
+        if !check_remote_etag_unchanged(client, bundle_url, cfg, strong_expected).await {
+            return Ok((412, String::new()));
+        }
+    }
+    if remote_file_exists {
+        let _ = apply_auth(client.delete(bundle_url), cfg).send().await;
+    }
+    put_raw_with_retry(client, bundle_url, cfg, payload).await
+}
+
 /// 执行 WebDAV 3-Way 加密双向同步：
 /// 1. 进程内互斥加锁，并取消早于本轮读盘的待执行防抖任务；
 /// 2. 直接读取远端 `shellmaster-sync.json` 与强 `ETag`（文件已存在时跳过目录探测，省去多余 `MKCOL`）；
 /// 3. 基于 `sync_state.json` 执行 3-Way 合并与墓碑删除传播；
-/// 4. 仅在远端尚无同步文件时按需懒创建缺失子目录，随后上传合并包（支持 `412` 重试与非标网关降级）；
+/// 4. 若合并结果与远端内容完全一致则跳过上传；否则通过 `PUT .tmp + MOVE` 原子替换远端同步包；
 /// 5. 上传完成后在本地创建备份、持久化合并后配置与同步基线，并记录同步完成冷却时间戳。
 pub async fn sync_webdav(cfg: &SyncSettings) -> Result<SyncReport, String> {
     let _guard = SYNC_LOCK.lock().await;
     // 本轮即将读取磁盘最新快照，作废此前排队的防抖自动同步任务
     AUTO_SYNC_SEQ.fetch_add(1, Ordering::SeqCst);
 
+    let dir_url = join_webdav_url(&cfg.webdav_url, &cfg.webdav_path)?;
     let bundle_url = remote_bundle_url(&cfg.webdav_url, &cfg.webdav_path)?;
     let client = build_client(HTTP_SYNC_TIMEOUT_SECS)?;
 
@@ -1293,8 +1400,12 @@ pub async fn sync_webdav(cfg: &SyncSettings) -> Result<SyncReport, String> {
 
     for attempt in 0..2 {
         // 1. 拉取远端同步包及 ETag（自动退避重试瞬时 5xx/超时）
-        let (remote_bundle, remote_etag) =
-            fetch_remote_bundle_with_retry(&client, &bundle_url, cfg).await?;
+        let fetched = fetch_remote_bundle_with_retry(&client, &bundle_url, cfg).await?;
+        let remote_etag = fetched.etag;
+        let remote_file_exists = fetched.file_exists;
+        let remote_was_encrypted = fetched.was_encrypted;
+        let remote_snapshot = fetched.bundle.clone();
+        let remote_bundle = fetched.bundle;
 
         had_remote = remote_bundle.is_some();
         let now_dt = Utc::now();
@@ -1457,43 +1568,53 @@ pub async fn sync_webdav(cfg: &SyncSettings) -> Result<SyncReport, String> {
             snippets: cfg.sync_snippets.then(|| snippets_work.clone()),
             settings: cfg.sync_settings.then(|| {
                 let mut s = settings_work.clone();
-                s.sync.webdav_password.clear();
-                s.sync.sync_passphrase.clear();
+                // 仅同步跨设备共享偏好与 AI 配置，不把本机 WebDAV 凭据及系统专属路径写入远端包
+                s.sync = SyncSettings::default();
+                s.sftp.local_default_path.clear();
+                s.sftp.external_editor_path.clear();
                 s
             }),
             tombstones: sync_state.tombstones.clone(),
             private_keys: final_upload_keys.clone(),
         };
 
-        if !had_remote && !dir_ensured {
-            ensure_remote_dir_lazy(&client, cfg).await?;
-            dir_ensured = true;
-        }
+        let skip_upload = remote_snapshot
+            .as_ref()
+            .is_some_and(|r| remote_was_encrypted == encrypted && bundle_content_equal(&upload_bundle, r));
 
-        let payload = seal_bundle(&upload_bundle, &cfg.sync_passphrase)?;
-        let (put_status, put_err_body) = put_bundle_with_etag(
-            &client,
-            &bundle_url,
-            cfg,
-            &payload,
-            if attempt == 0 {
-                remote_etag.as_deref()
-            } else {
-                None
-            },
-        )
-        .await?;
+        if !skip_upload {
+            if !remote_file_exists && !dir_ensured {
+                ensure_remote_dir_lazy(&client, cfg).await?;
+                dir_ensured = true;
+            }
 
-        if put_status == 412 && attempt == 0 {
-            tracing::info!("WebDAV ETag 并发冲突 (412)，重新拉取最新云端配置合并...");
-            continue;
-        }
-        if !(200..300).contains(&put_status) {
-            return Err(format_http_error(
-                "上传同步文件失败",
-                put_status,
-                &put_err_body,
-            ));
+            let payload = seal_bundle(&upload_bundle, &cfg.sync_passphrase)?;
+            let (put_status, put_err_body) = upload_bundle_atomic(
+                &client,
+                &dir_url,
+                &bundle_url,
+                cfg,
+                &payload,
+                if attempt == 0 {
+                    remote_etag.as_deref()
+                } else {
+                    None
+                },
+                remote_file_exists,
+            )
+            .await?;
+
+            if put_status == 412 && attempt == 0 {
+                tracing::info!("WebDAV ETag 并发冲突 (412)，重新拉取最新云端配置合并...");
+                continue;
+            }
+            if !(200..300).contains(&put_status) {
+                return Err(format_http_error(
+                    "上传同步文件失败",
+                    put_status,
+                    &put_err_body,
+                ));
+            }
         }
 
         // 记录合并后基线
@@ -1914,7 +2035,7 @@ mod tests {
     }
 
     #[test]
-    fn get_and_put_recover_from_transient_500_and_incompatible_if_match() {
+    fn atomic_upload_uses_put_tmp_then_move_and_recovers_from_transient_get_500() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
 
@@ -1937,13 +2058,16 @@ mod tests {
             let server_task = tokio::spawn(async move {
                 // 1) 第一次 GET 返回 500（模拟挂载网盘正在回源刷新）
                 // 2) 第二次 GET 返回 200 + ETag
-                // 3) 第一次 PUT 带 If-Match 返回 500（模拟挂载网盘不兼容 If-Match 覆盖）
-                // 4) 降级无条件 PUT 返回 204 成功
-                for step in 0..4 {
+                // 3) PUT 写入全新 .tmp.json 临时文件返回 201
+                // 4) HEAD 校验原文件 ETag 未变返回 200
+                // 5) MOVE 临时文件覆盖目标文件 (Overwrite: T) 返回 204
+                for step in 0..5 {
                     let (mut sock, _) = listener.accept().await.unwrap();
                     let mut buf = vec![0u8; 8192];
                     let n = sock.read(&mut buf).await.unwrap();
-                    let req = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let first_line = req.lines().next().unwrap_or("");
+                    let req_lower = req.to_lowercase();
 
                     let resp = match step {
                         0 => {
@@ -1960,11 +2084,19 @@ mod tests {
                             body_for_get
                         ),
                         2 => {
-                            assert!(req.contains("if-match: \"etag-1\""));
-                            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+                            assert!(first_line.starts_with("PUT /dav/shellmaster/shellmaster-sync-"));
+                            assert!(first_line.contains(".tmp.json HTTP/1.1"));
+                            "HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
                         }
                         3 => {
-                            assert!(!req.contains("if-match:"));
+                            assert_eq!(first_line, "HEAD /dav/shellmaster/shellmaster-sync.json HTTP/1.1");
+                            "HTTP/1.1 200 OK\r\nETag: \"etag-1\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+                        }
+                        4 => {
+                            assert!(first_line.starts_with("MOVE /dav/shellmaster/shellmaster-sync-"));
+                            assert!(req_lower.contains("destination: http://"));
+                            assert!(req_lower.contains("/dav/shellmaster/shellmaster-sync.json\r\n"));
+                            assert!(req_lower.contains("overwrite: t\r\n"));
                             "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
                         }
                         _ => unreachable!(),
@@ -1978,22 +2110,157 @@ mod tests {
             cfg.webdav_path = "shellmaster".into();
             cfg.sync_passphrase = "pass123".into();
 
+            let dir_url = join_webdav_url(&cfg.webdav_url, &cfg.webdav_path).unwrap();
             let url = remote_bundle_url(&cfg.webdav_url, &cfg.webdav_path).unwrap();
             let client = build_client(5).unwrap();
 
-            let (fetched, etag) = fetch_remote_bundle_with_retry(&client, &url, &cfg)
+            let fetched = fetch_remote_bundle_with_retry(&client, &url, &cfg)
                 .await
                 .unwrap();
-            assert!(fetched.is_some());
-            assert_eq!(etag.as_deref(), Some("\"etag-1\""));
+            assert!(fetched.bundle.is_some());
+            assert!(fetched.file_exists);
+            assert_eq!(fetched.etag.as_deref(), Some("\"etag-1\""));
 
-            let (put_code, _) =
-                put_bundle_with_etag(&client, &url, &cfg, &sealed_payload, etag.as_deref())
-                    .await
-                    .unwrap();
+            let (put_code, _) = upload_bundle_atomic(
+                &client,
+                &dir_url,
+                &url,
+                &cfg,
+                &sealed_payload,
+                fetched.etag.as_deref(),
+                fetched.file_exists,
+            )
+            .await
+            .unwrap();
             assert_eq!(put_code, 204);
 
             server_task.await.unwrap();
         });
+    }
+
+    #[test]
+    fn atomic_upload_falls_back_to_delete_and_put_when_move_unsupported_and_detects_etag_412() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let server_task = tokio::spawn(async move {
+                // 场景 A：ETag 已变化 -> PUT .tmp -> HEAD 返回新 ETag -> DELETE .tmp -> 返回 412
+                // 场景 B：MOVE 返回 405 -> DELETE .tmp -> DELETE 原文件 -> PUT 原文件 -> 201
+                let expected_steps = 8;
+                for step in 0..expected_steps {
+                    let (mut sock, _) = listener.accept().await.unwrap();
+                    let mut buf = vec![0u8; 8192];
+                    let n = sock.read(&mut buf).await.unwrap();
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let first_line = req.lines().next().unwrap_or("");
+
+                    let resp = match step {
+                        // --- 场景 A (412 冲突检测) ---
+                        0 => {
+                            assert!(first_line.starts_with("PUT "));
+                            "HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        }
+                        1 => {
+                            assert!(first_line.starts_with("HEAD "));
+                            "HTTP/1.1 200 OK\r\nETag: \"etag-changed\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        }
+                        2 => {
+                            assert!(first_line.starts_with("DELETE ") && first_line.contains(".tmp.json"));
+                            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        }
+                        // --- 场景 B (MOVE 405 回退 DELETE + PUT) ---
+                        3 => {
+                            assert!(first_line.starts_with("PUT ") && first_line.contains(".tmp.json"));
+                            "HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        }
+                        4 => {
+                            assert!(first_line.starts_with("MOVE "));
+                            "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        }
+                        5 => {
+                            assert!(first_line.starts_with("DELETE ") && first_line.contains(".tmp.json"));
+                            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        }
+                        6 => {
+                            assert_eq!(first_line, "DELETE /dav/shellmaster/shellmaster-sync.json HTTP/1.1");
+                            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        }
+                        7 => {
+                            assert_eq!(first_line, "PUT /dav/shellmaster/shellmaster-sync.json HTTP/1.1");
+                            "HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        }
+                        _ => unreachable!(),
+                    };
+                    sock.write_all(resp.as_bytes()).await.unwrap();
+                }
+            });
+
+            let mut cfg = SyncSettings::default();
+            cfg.webdav_url = format!("http://{addr}/dav");
+            cfg.webdav_path = "shellmaster".into();
+
+            let dir_url = join_webdav_url(&cfg.webdav_url, &cfg.webdav_path).unwrap();
+            let url = remote_bundle_url(&cfg.webdav_url, &cfg.webdav_path).unwrap();
+            let client = build_client(5).unwrap();
+
+            let (code_412, _) = upload_bundle_atomic(
+                &client,
+                &dir_url,
+                &url,
+                &cfg,
+                "{}",
+                Some("\"etag-old\""),
+                true,
+            )
+            .await
+            .unwrap();
+            assert_eq!(code_412, 412);
+
+            let (code_fb, _) =
+                upload_bundle_atomic(&client, &dir_url, &url, &cfg, "{}", None, true)
+                    .await
+                    .unwrap();
+            assert_eq!(code_fb, 201);
+
+            server_task.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn bundle_content_equal_ignores_hashmap_order_and_machine_local_fields() {
+        let mut a = SyncBundle {
+            updated_at: "2026-11-28T10:00:00Z".into(),
+            settings: Some(AppSettings::default()),
+            ..SyncBundle::default()
+        };
+        a.tombstones.servers.insert("s1".into(), "2026-11-01T00:00:00Z".into());
+        a.tombstones.servers.insert("s2".into(), "2026-11-02T00:00:00Z".into());
+        if let Some(sa) = &mut a.settings {
+            sa.sftp.local_default_path = "/Users/alice/Downloads".into();
+            sa.sync.webdav_url = "https://a.example.com/dav".into();
+        }
+
+        let mut b = SyncBundle {
+            updated_at: "2026-11-28T12:00:00Z".into(),
+            settings: Some(AppSettings::default()),
+            ..SyncBundle::default()
+        };
+        b.tombstones.servers.insert("s2".into(), "2026-11-02T00:00:00Z".into());
+        b.tombstones.servers.insert("s1".into(), "2026-11-01T00:00:00Z".into());
+        if let Some(sb) = &mut b.settings {
+            sb.sftp.local_default_path = r"C:\Users\bob\Downloads".into();
+            sb.sync.webdav_url = "https://b.example.com/dav".into();
+        }
+
+        assert!(bundle_content_equal(&a, &b));
     }
 }

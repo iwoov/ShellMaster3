@@ -547,7 +547,7 @@ impl SettingsDialogState {
         nb.updated_at = None;
         na.sync.last_sync_at = None;
         nb.sync.last_sync_at = None;
-        match (serde_json::to_vec(&na), serde_json::to_vec(&nb)) {
+        match (serde_json::to_value(&na), serde_json::to_value(&nb)) {
             (Ok(va), Ok(vb)) => va == vb,
             _ => false,
         }
